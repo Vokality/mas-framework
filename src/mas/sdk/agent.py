@@ -12,7 +12,7 @@ from mas.sdk.state import (
     AgentStateModel,
     GlobalAction,
     GlobalStateModel,
-    PersistentStateProvider,
+    InMemoryStateProvider,
     StateStore,
 )
 
@@ -48,20 +48,16 @@ class Agent(ABC):
         self._state_model = state_model
 
         # Initialize state management
-        self._local_provider = PersistentStateProvider(
-            runtime.persistence,
-            f"agent:{runtime.agent_id}:state",
-            AgentStateModel,
+        self._local_provider = InMemoryStateProvider[AgentStateModel](
+            model_class=state_model
         )
-        self._global_provider = PersistentStateProvider(
-            runtime.persistence,
-            "global:state",
-            GlobalStateModel,
+        self._global_provider = InMemoryStateProvider[GlobalStateModel](
+            model_class=GlobalStateModel
         )
 
         # Create state stores
         self._local_store = StateStore(
-            initial_state=self._state_model(),
+            initial_state=state_model(),
             reducer=AgentAction.reducer,
         )
         self._global_store = StateStore(
@@ -97,26 +93,26 @@ class Agent(ABC):
 
         return agent
 
-    async def initialize_state(self):
+    async def initialize_state(self) -> None:
         """Initialize state from persistence"""
-        local_state = await self._local_provider.load()
-        global_state = await self._global_provider.load()
+        local_state = await self._local_provider.get(self.id)
+        global_state = await self._global_provider.get(self.id)
 
         await self._local_store.dispatch(
             AgentAction(
                 type=ActionType.UPDATE,
-                payload=local_state.data,
+                payload=local_state.model_dump(),
             )
         )
 
         await self._global_store.dispatch(
             GlobalAction(
                 type=ActionType.UPDATE,
-                payload=global_state.shared_data,
+                payload=global_state.model_dump(),
             )
         )
 
-    async def update_local_state(self, data: Dict[str, Any]):
+    async def update_local_state(self, data: Dict[str, Any]) -> None:
         """Update local state"""
         await self._local_store.dispatch(
             AgentAction(
@@ -124,9 +120,9 @@ class Agent(ABC):
                 payload=data,
             )
         )
-        await self._local_provider.save(self._local_store.state)
+        await self._local_provider.set(self.id, self._local_store.state)
 
-    async def update_global_state(self, data: Dict[str, Any]):
+    async def update_global_state(self, data: Dict[str, Any]) -> None:
         """Update global state"""
         await self._global_store.dispatch(
             GlobalAction(
@@ -134,7 +130,7 @@ class Agent(ABC):
                 payload=data,
             )
         )
-        await self._global_provider.save(self._global_store.state)
+        await self._global_provider.set(self.id, self._global_store.state)
 
     @property
     def id(self) -> str:

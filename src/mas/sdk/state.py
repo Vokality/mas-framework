@@ -110,58 +110,75 @@ class GlobalStateModel(BaseStateModel):
     agents: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
-class StateProvider(ABC, Generic[T]):
-    """Interface for state providers"""
+class BaseStateProvider(ABC, Generic[T]):
+    """Base interface for state storage"""
 
     @abstractmethod
-    async def load(self) -> T:
-        """Load state"""
+    async def get(self, key: str) -> T:
+        """Get state by key"""
         pass
 
     @abstractmethod
-    async def save(self, state: T) -> None:
-        """Save state"""
+    async def set(self, key: str, state: T) -> None:
+        """Set state for key"""
         pass
 
 
-class InMemoryStateProvider(StateProvider[T]):
-    """In-memory state provider."""
+class InMemoryStateProvider(BaseStateProvider[T]):
+    """Simple in-memory state storage"""
 
-    def __init__(self) -> None:
-        self._state: Dict[str, Dict[str, Any]] = {}
+    def __init__(self, model_class: type[T]) -> None:
+        self._states: Dict[str, T] = {}
+        self._model_class = model_class
 
-    async def get(self, namespace: str) -> Dict[str, T] | None:
-        """Load state from memory."""
-        return self._state.get(namespace)
+    @override
+    async def get(self, key: str) -> T:
+        """Get state by key, returning default model instance if not found"""
+        return self._states.get(key, self._model_class())
 
-    async def set(self, namespace: str, state: Dict[str, Dict[str, Any]]) -> None:
-        """Save state to memory."""
-        self._state[namespace] = state
+    @override
+    async def set(self, key: str, state: T) -> None:
+        """Set state for key"""
+        self._states[key] = state
 
 
-class PersistentStateProvider(StateProvider[T]):
-    """Persistent state provider using persistence layer"""
+class SerializedState(BaseModel):
+    """Container for serialized state data"""
+
+    data: Dict[str, Any]
+
+
+class PersistentStateProvider(BaseStateProvider[T]):
+    """Persistent state provider using a storage backend"""
 
     def __init__(
         self,
-        persistence: InMemoryStateProvider,
-        namespace: str,
         model_class: type[T],
+        storage: Optional[BaseStateProvider[SerializedState]] = None,
     ) -> None:
-        self.persistence = persistence
-        self.namespace = namespace
+        self.storage = storage or InMemoryStateProvider[SerializedState](
+            model_class=SerializedState
+        )
         self.model_class = model_class
 
     @override
-    async def load(self) -> T:
-        data = await self.persistence.get(self.namespace)
-        if data is None:
+    async def get(self, key: str) -> T:
+        """Get and deserialize state"""
+        try:
+            serialized = await self.storage.get(key)
+            return self.model_class.model_validate(serialized.data)
+        except Exception as _:
+            # Return a new instance if anything fails
             return self.model_class()
-        return self.model_class.model_validate(data)
 
     @override
-    async def save(self, state: T) -> None:
-        await self.persistence.set(self.namespace, state.model_dump())
+    async def set(self, key: str, state: T) -> None:
+        """Serialize and save state"""
+        try:
+            serialized = SerializedState(data=state.model_dump())
+            await self.storage.set(key, serialized)
+        except Exception as e:
+            raise StateError(f"Failed to save state: {str(e)}") from e
 
 
 class AgentAction(BaseAction[AgentStateModel]):
