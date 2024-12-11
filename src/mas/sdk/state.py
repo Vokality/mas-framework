@@ -2,9 +2,9 @@ import asyncio
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Callable, Dict, Generic, Optional, TypeVar
-from typing_extensions import override
 
 from pydantic import BaseModel, Field
+from typing_extensions import override
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -54,7 +54,7 @@ class StateStore(Generic[State, Action]):
         initial_state: State,
         reducer: Callable[[State, Action], State],
         middleware: Optional[list[Callable]] = None,
-    ):
+    ) -> None:
         self._state = initial_state
         self._reducer = reducer
         self._middleware = middleware or []
@@ -90,7 +90,7 @@ class StateStore(Generic[State, Action]):
         """Subscribe to state changes"""
         self._subscribers.append(callback)
 
-        def unsubscribe():
+        def unsubscribe() -> None:
             self._subscribers.remove(callback)
 
         return unsubscribe
@@ -124,10 +124,30 @@ class StateProvider(ABC, Generic[T]):
         pass
 
 
+class InMemoryStateProvider(StateProvider[T]):
+    """In-memory state provider."""
+
+    def __init__(self) -> None:
+        self._state: Dict[str, Dict[str, Any]] = {}
+
+    async def get(self, namespace: str) -> Dict[str, T] | None:
+        """Load state from memory."""
+        return self._state.get(namespace)
+
+    async def set(self, namespace: str, state: Dict[str, Dict[str, Any]]) -> None:
+        """Save state to memory."""
+        self._state[namespace] = state
+
+
 class PersistentStateProvider(StateProvider[T]):
     """Persistent state provider using persistence layer"""
 
-    def __init__(self, persistence, namespace: str, model_class: type[T]):
+    def __init__(
+        self,
+        persistence: InMemoryStateProvider,
+        namespace: str,
+        model_class: type[T],
+    ) -> None:
         self.persistence = persistence
         self.namespace = namespace
         self.model_class = model_class
@@ -137,11 +157,11 @@ class PersistentStateProvider(StateProvider[T]):
         data = await self.persistence.get(self.namespace)
         if data is None:
             return self.model_class()
-        return self.model_class.model_validate_json(data)
+        return self.model_class.model_validate(data)
 
     @override
     async def save(self, state: T) -> None:
-        await self.persistence.set(self.namespace, state.model_dump_json())
+        await self.persistence.set(self.namespace, state.model_dump())
 
 
 class AgentAction(BaseAction[AgentStateModel]):
