@@ -1,0 +1,23 @@
+from datetime import UTC, datetime
+from typing import Any, Dict
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, Field
+
+from .types import MessageType
+
+
+def now() -> datetime:
+    """Get the current UTC datetime."""
+    return datetime.now(UTC)
+
+
+class Message(BaseModel):
+    """Base message type."""
+
+    id: UUID = Field(default_factory=uuid4)
+    timestamp: datetime = Field(default_factory=now)
+    sender_id: str
+    target_id: str
+    message_type: MessageType
+    payload: Dict[str, Any]
