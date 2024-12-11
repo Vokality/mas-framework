@@ -6,11 +6,11 @@ MAS AI is a Python framework for building multi-agent systems, focusing on relia
 
 ## Core SDK Features
 
-- **Simple Agent Creation** - Declarative agent definition with capabilities
-- **Type-Safe State Management** - Local and global state with Pydantic models
-- **Message Routing** - Reliable agent-to-agent communication
-- **Agent Discovery** - Find agents by capabilities
-- **Lifecycle Management** - Controlled agent startup/shutdown
+-   **Simple Agent Creation** - Declarative agent definition with capabilities
+-   **Type-Safe State Management** - Local and global state with Pydantic models
+-   **Message Routing** - Reliable agent-to-agent communication
+-   **Agent Discovery** - Find agents by capabilities
+-   **Lifecycle Management** - Controlled agent startup/shutdown
 
 ## Quick Start
 
@@ -135,24 +135,24 @@ class MyAgent(Agent):
 
 As this is experimental software, there are several limitations:
 
-- No authentication/authorization system yet
-- Limited error recovery mechanisms
-- Message delivery is not guaranteed
-- No persistent storage (in-memory only)
-- APIs may change without notice
-- Limited testing in distributed environments
-- No proper documentation yet
+-   No authentication/authorization system yet
+-   Limited error recovery mechanisms
+-   Message delivery is not guaranteed
+-   No persistent storage (in-memory only)
+-   APIs may change without notice
+-   Limited testing in distributed environments
+-   No proper documentation yet
 
 ## Development Status
 
 This project is under active development. Current focus areas:
 
-- Stabilizing core APIs
-- Improving error handling
-- Adding authentication
-- Adding persistent storage
-- Documentation
-- Testing infrastructure
+-   Stabilizing core APIs
+-   Improving error handling
+-   Adding authentication
+-   Adding persistent storage
+-   Documentation
+-   Testing infrastructure
 
 ## Contributing
 
