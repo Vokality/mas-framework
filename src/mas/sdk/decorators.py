@@ -1,11 +1,13 @@
 from functools import wraps
-from typing import Any, Callable, Dict, List, Set, Type
+from typing import Any, Callable, Dict, List, Set, Type, TypeVar
+from .state import AgentStateModel
 
 
 def agent(
     agent_id: str,
     capabilities: List[str] | Set[str] | None = None,
     metadata: Dict[str, Any] | None = None,
+    state_model: Type[AgentStateModel] | None = None,
 ) -> Callable:
     """
     Decorator to configure an agent class with runtime properties.
@@ -24,6 +26,7 @@ def agent(
         cls.agent_id = agent_id
         cls.capabilities = set(capabilities or [])
         cls.metadata = metadata or {}
+        cls.state_model = state_model
 
         # Store original init
         original_init = cls.__init__

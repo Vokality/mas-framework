@@ -2,7 +2,16 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import AsyncGenerator, AsyncIterator, Dict, Optional, Tuple, override
+from typing import (
+    AsyncGenerator,
+    AsyncIterator,
+    Dict,
+    Optional,
+    Tuple,
+    override,
+    Coroutine,
+    Any,
+)
 from uuid import uuid4
 
 from redis.asyncio.client import PubSub
@@ -11,7 +20,7 @@ from redis.exceptions import ConnectionError, RedisError
 
 from mas.logger import get_logger
 from mas.protocol import Message
-from mas.transport.interfaces import ITransport
+from mas.transport.interfaces import BaseTransport
 from mas.transport.metrics import TransportMetrics
 from mas.transport.task import TaskManager
 
@@ -70,7 +79,7 @@ class DeliveryState:
     max_retries: int = 3
 
 
-class RedisTransport(ITransport):
+class RedisTransport(BaseTransport):
     """Redis-based transport implementation with enhanced reliability."""
 
     def __init__(
@@ -101,6 +110,7 @@ class RedisTransport(ITransport):
         self.metrics = TransportMetrics()
         self._loop = asyncio.get_running_loop()
 
+    @override
     async def initialize(self) -> None:
         """Initialize the transport with delivery tracking."""
         logger.info("Starting transport initialization")
@@ -450,6 +460,7 @@ class RedisTransport(ITransport):
                 state.subscriber_count = 0
                 await self._cleanup_subscription(channel)
 
+    @override
     async def cleanup(self) -> None:
         """Enhanced cleanup with proper task handling."""
         async with self._shutdown_lock:

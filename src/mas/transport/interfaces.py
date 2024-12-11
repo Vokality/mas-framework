@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
 
 from mas.protocol import Message
+from typing import AsyncGenerator, Any, Coroutine
 
 
-class ITransport(ABC):
+class BaseTransport(ABC):
     """Transport layer interface."""
 
     @abstractmethod
@@ -39,14 +40,5 @@ class ITransport(ABC):
 
         Args:
             channel: Channel to unsubscribe from
-        """
-        pass
-
-    @abstractmethod
-    async def get_message_stream(self, channel: str):
-        """Stream messages from a channel.
-
-        Args:
-            channel: Channel to stream from
         """
         pass

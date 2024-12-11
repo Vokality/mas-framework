@@ -21,6 +21,7 @@ from .runtime import AgentRuntime
 logger = get_logger()
 
 T = TypeVar("T", bound="Agent")
+S = TypeVar("S", bound="AgentStateModel")
 
 
 class Agent(ABC):
@@ -30,8 +31,13 @@ class Agent(ABC):
     agent_id: ClassVar[str]
     metadata: ClassVar[dict]
     capabilities: ClassVar[Set[str]]
+    state_model: ClassVar[Type[AgentStateModel]]
 
-    def __init__(self, runtime: AgentRuntime) -> None:
+    def __init__(
+        self,
+        runtime: AgentRuntime,
+        state_model: Type[AgentStateModel] = AgentStateModel,
+    ) -> None:
         self.runtime = runtime
         self._loop = asyncio.get_running_loop()
         self._tasks = []
@@ -39,6 +45,7 @@ class Agent(ABC):
         self._metrics = AgentRuntimeMetric()
         self._lock = asyncio.Lock()
         self._metric_lock = asyncio.Lock()
+        self._state_model = state_model
 
         # Initialize state management
         self._local_provider = PersistentStateProvider(
@@ -54,7 +61,7 @@ class Agent(ABC):
 
         # Create state stores
         self._local_store = StateStore(
-            initial_state=AgentStateModel(),
+            initial_state=self._state_model(),
             reducer=AgentAction.reducer,
         )
         self._global_store = StateStore(
@@ -84,7 +91,7 @@ class Agent(ABC):
             capabilities=set(cls.capabilities),
         )
 
-        agent = cls(runtime)
+        agent = cls(runtime, state_model=cls.state_model)
         await agent.start()
         await agent.initialize_state()
 

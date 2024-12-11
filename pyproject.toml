@@ -42,6 +42,14 @@ pythonPlatform = "All"
 typeCheckingMode = "standard"
 reportMissingImports = "error"
 reportMissingTypeStubs = false
+enableReachabilityAnalysis = true
+reportUnusedFunction = "warning"
+reportUnusedVariable = "warning"
+reportDuplicateImport = "warning"
+reportUnnecessaryIsInstance = "warning"
+reportUnnecessaryCast = "warning"
+reportUnnecessaryComparison = "warning"
+reportImplicitOverride = "warning"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mas"]

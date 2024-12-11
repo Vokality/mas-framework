@@ -6,7 +6,7 @@ from typing import Dict, Set
 from mas.logger import get_logger
 from mas.protocol import Message
 
-from .interfaces import ITransport
+from .redis import RedisTransport
 
 logger = get_logger()
 
@@ -26,7 +26,7 @@ class TransportService:
     Does not directly manage transport connections.
     """
 
-    def __init__(self, transport: ITransport):
+    def __init__(self, transport: RedisTransport):
         logger.info("Initializing TransportService")
         self.transport = transport
         self._state = ServiceState.INITIALIZED

@@ -2,6 +2,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Callable, Dict, Generic, Optional, TypeVar
+from typing_extensions import override
 
 from pydantic import BaseModel, Field
 
@@ -131,12 +132,14 @@ class PersistentStateProvider(StateProvider[T]):
         self.namespace = namespace
         self.model_class = model_class
 
+    @override
     async def load(self) -> T:
         data = await self.persistence.get(self.namespace)
         if data is None:
             return self.model_class()
         return self.model_class.model_validate_json(data)
 
+    @override
     async def save(self, state: T) -> None:
         await self.persistence.set(self.namespace, state.model_dump_json())
 
