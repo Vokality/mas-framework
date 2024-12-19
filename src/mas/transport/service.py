@@ -119,14 +119,14 @@ class TransportService:
         Args:
             message: Message to send
         """
-        logger.info(
+        logger.debug(
             f"Attempting to send message from {message.sender_id} to {message.target_id}"
         )
         if self._state != ServiceState.RUNNING:
             logger.error("Cannot send message: Transport service not running")
         try:
             await self.transport.publish(message)
-            logger.info(f"Successfully sent message {message.id}")
+            logger.debug(f"Successfully sent message {message.id}")
         except Exception as e:
             logger.error(f"Failed to send message {message.id}: {e}")
             raise
