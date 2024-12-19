@@ -6,22 +6,14 @@ from mas.logger import get_logger
 from mas.mas import MASContext
 from mas.protocol import AgentRuntimeMetric, AgentStatus, Message
 from mas.protocol.types import MessageType
-from mas.sdk.state import (
-    ActionType,
-    AgentAction,
-    AgentStateModel,
-    GlobalAction,
-    GlobalStateModel,
-    InMemoryStateProvider,
-    StateStore,
-)
+from mas.sdk.state import AgentState, StateManager, StateCallback
 
 from .runtime import AgentRuntime
 
 logger = get_logger()
 
 T = TypeVar("T", bound="Agent")
-S = TypeVar("S", bound="AgentStateModel")
+S = TypeVar("S", bound=AgentState)
 
 
 class Agent(ABC):
@@ -29,41 +21,23 @@ class Agent(ABC):
 
     # Add class variable type annotations
     agent_id: ClassVar[str]
-    metadata: ClassVar[dict]
+    metadata: ClassVar[Dict[str, Any]]
     capabilities: ClassVar[Set[str]]
-    state_model: ClassVar[Type[AgentStateModel]]
+    state_model: ClassVar[Type[AgentState]]
 
     def __init__(
         self,
         runtime: AgentRuntime,
-        state_model: Type[AgentStateModel] = AgentStateModel,
+        state_model: Type[AgentState] = AgentState,
     ) -> None:
         self.runtime = runtime
         self._loop = asyncio.get_running_loop()
-        self._tasks = []
+        self._tasks: list[asyncio.Task] = []
         self._running = False
         self._metrics = AgentRuntimeMetric()
-        self._lock = asyncio.Lock()
         self._metric_lock = asyncio.Lock()
         self._state_model = state_model
-
-        # Initialize state management
-        self._local_provider = InMemoryStateProvider[AgentStateModel](
-            model_class=state_model
-        )
-        self._global_provider = InMemoryStateProvider[GlobalStateModel](
-            model_class=GlobalStateModel
-        )
-
-        # Create state stores
-        self._local_store = StateStore(
-            initial_state=state_model(),
-            reducer=AgentAction.reducer,
-        )
-        self._global_store = StateStore(
-            initial_state=GlobalStateModel(),
-            reducer=GlobalAction.reducer,
-        )
+        self._state_manager = StateManager(state_model)
 
     @classmethod
     async def build(
@@ -80,8 +54,8 @@ class Agent(ABC):
             An initialized agent instance
         """
         runtime = AgentRuntime(
-            agent_id=cls.agent_id,  # This will come from the @agent decorator
-            metadata=cls.metadata,  # This will come from the @agent decorator
+            agent_id=cls.agent_id,
+            metadata=cls.metadata,
             transport=mas_context.transport,
             persistence=mas_context.persistence,
             capabilities=set(cls.capabilities),
@@ -89,48 +63,28 @@ class Agent(ABC):
 
         agent = cls(runtime, state_model=cls.state_model)
         await agent.start()
-        await agent.initialize_state()
-
         return agent
 
-    async def initialize_state(self) -> None:
-        """Initialize state from persistence"""
-        local_state = await self._local_provider.get(self.id)
-        global_state = await self._global_provider.get(self.id)
+    @property
+    def state(self) -> AgentState:
+        """Get current agent state"""
+        return self._state_manager.state
 
-        await self._local_store.dispatch(
-            AgentAction(
-                type=ActionType.UPDATE,
-                payload=local_state.model_dump(),
-            )
-        )
+    async def update_state(self, data: Dict[str, Any]) -> None:
+        """Update agent state"""
+        await self._state_manager.update(data)
 
-        await self._global_store.dispatch(
-            GlobalAction(
-                type=ActionType.UPDATE,
-                payload=global_state.model_dump(),
-            )
-        )
+    async def reset_state(self) -> None:
+        """Reset agent state"""
+        await self._state_manager.reset()
 
-    async def update_local_state(self, data: Dict[str, Any]) -> None:
-        """Update local state"""
-        await self._local_store.dispatch(
-            AgentAction(
-                type=ActionType.UPDATE,
-                payload=data,
-            )
-        )
-        await self._local_provider.set(self.id, self._local_store.state)
+    def subscribe_to_state(self, callback: StateCallback[AgentState]) -> None:
+        """Subscribe to state changes"""
+        self._state_manager.subscribe(callback)
 
-    async def update_global_state(self, data: Dict[str, Any]) -> None:
-        """Update global state"""
-        await self._global_store.dispatch(
-            GlobalAction(
-                type=ActionType.UPDATE,
-                payload=data,
-            )
-        )
-        await self._global_provider.set(self.id, self._global_store.state)
+    def unsubscribe_from_state(self, callback: StateCallback[AgentState]) -> None:
+        """Unsubscribe from state changes"""
+        self._state_manager.unsubscribe(callback)
 
     @property
     def id(self) -> str:
@@ -149,6 +103,7 @@ class Agent(ABC):
                 )
             )
             await self.runtime.register()
+            await self.on_start()
         except Exception as e:
             logger.error(f"Failed to start agent {self.id}: {e}")
             await self.stop()

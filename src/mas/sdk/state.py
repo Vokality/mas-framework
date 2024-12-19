@@ -1,221 +1,77 @@
 import asyncio
-from abc import ABC, abstractmethod
-from enum import Enum
-from typing import Any, Callable, Dict, Generic, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Generic, List, TypeVar, Union
 
 from pydantic import BaseModel, Field
-from typing_extensions import override
-
-T = TypeVar("T", bound=BaseModel)
-
-State = TypeVar("State", bound="BaseStateModel")
-Action = TypeVar("Action", bound="BaseAction")
 
 
-class StateError(Exception):
-    """Base exception for state-related errors"""
+class AgentState(BaseModel):
+    """Base model for agent state"""
 
-    pass
-
-
-class ActionType(str, Enum):
-    """Base class for action types"""
-
-    RESET = "RESET"
-    UPDATE = "UPDATE"
-
-
-class BaseStateModel(BaseModel):
-    """Base model for all state models"""
-
-    version: int = Field(default=0, description="State version number")
+    data: Dict[str, Any] = Field(default_factory=dict)
+    version: int = Field(default=0)
     last_updated: float = Field(default_factory=lambda: asyncio.get_event_loop().time())
 
     class Config:
         arbitrary_types_allowed = True
 
+    def update(self, data: Dict[str, Any]) -> "AgentState":
+        """Create a new state instance with updated data"""
+        return self.model_copy(
+            update={
+                "data": {**self.data, **data},
+                "version": self.version + 1,
+                "last_updated": asyncio.get_event_loop().time(),
+            }
+        )
 
-class BaseAction(BaseModel, Generic[State]):
-    """Base class for all actions"""
-
-    type: ActionType
-    payload: Optional[Dict[str, Any]] = None
-
-    def reduce(self, state: State) -> State:
-        """Default reducer implementation"""
-        raise NotImplementedError
+    def reset(self) -> "AgentState":
+        """Reset state to initial values"""
+        return self.__class__()
 
 
-class StateStore(Generic[State, Action]):
-    """Redux-like state store with async support"""
+T = TypeVar("T", bound=AgentState)
+StateCallback = Union[Callable[[T], None], Callable[[T], Awaitable[None]]]
 
-    def __init__(
-        self,
-        initial_state: State,
-        reducer: Callable[[State, Action], State],
-        middleware: Optional[list[Callable]] = None,
-    ) -> None:
-        self._state = initial_state
-        self._reducer = reducer
-        self._middleware = middleware or []
-        self._subscribers: list[Callable[[State], None]] = []
-        self._lock = asyncio.Lock()
+
+class StateManager(Generic[T]):
+    """Simple state manager for agents"""
+
+    def __init__(self, state_model: type[T]) -> None:
+        self._state: T = state_model()
+        self._state_model: type[T] = state_model
+        self._lock: asyncio.Lock = asyncio.Lock()
+        self._subscribers: List[StateCallback[T]] = []
 
     @property
-    def state(self) -> State:
+    def state(self) -> T:
         """Get current state"""
         return self._state
 
-    async def dispatch(self, action: Action) -> None:
-        """Dispatch an action to update state"""
+    async def update(self, data: Dict[str, Any]) -> None:
+        """Update state with new data"""
         async with self._lock:
-            # Apply middleware
-            for middleware in self._middleware:
-                action = await middleware(self, action)
+            self._state = self._state.update(data)  # type: ignore
+            await self._notify_subscribers()
 
-            # Update state
-            new_state = self._reducer(self._state, action)
-            new_state.version += 1
-            new_state.last_updated = asyncio.get_event_loop().time()
-            self._state = new_state
+    async def reset(self) -> None:
+        """Reset state to initial values"""
+        async with self._lock:
+            self._state = self._state.reset()  # type: ignore
+            await self._notify_subscribers()
 
-            # Notify subscribers
-            for subscriber in self._subscribers:
-                if asyncio.iscoroutinefunction(subscriber):
-                    await subscriber(new_state)
-                else:
-                    subscriber(new_state)
-
-    def subscribe(self, callback: Callable[[State], None]) -> Callable[[], None]:
+    def subscribe(self, callback: StateCallback[T]) -> None:
         """Subscribe to state changes"""
         self._subscribers.append(callback)
 
-        def unsubscribe() -> None:
+    def unsubscribe(self, callback: StateCallback[T]) -> None:
+        """Unsubscribe from state changes"""
+        if callback in self._subscribers:
             self._subscribers.remove(callback)
 
-        return unsubscribe
-
-
-class AgentStateModel(BaseStateModel):
-    """Agent state model with validation"""
-
-    data: Dict[str, Any] = Field(default_factory=dict)
-    meta: Dict[str, Any] = Field(default_factory=dict)
-
-
-class GlobalStateModel(BaseStateModel):
-    """Global state model with validation"""
-
-    shared_data: Dict[str, Any] = Field(default_factory=dict)
-    agents: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-
-
-class BaseStateProvider(ABC, Generic[T]):
-    """Base interface for state storage"""
-
-    @abstractmethod
-    async def get(self, key: str) -> T:
-        """Get state by key"""
-        pass
-
-    @abstractmethod
-    async def set(self, key: str, state: T) -> None:
-        """Set state for key"""
-        pass
-
-
-class InMemoryStateProvider(BaseStateProvider[T]):
-    """Simple in-memory state storage"""
-
-    def __init__(self, model_class: type[T]) -> None:
-        self._states: Dict[str, T] = {}
-        self._model_class = model_class
-
-    @override
-    async def get(self, key: str) -> T:
-        """Get state by key, returning default model instance if not found"""
-        return self._states.get(key, self._model_class())
-
-    @override
-    async def set(self, key: str, state: T) -> None:
-        """Set state for key"""
-        self._states[key] = state
-
-
-class SerializedState(BaseModel):
-    """Container for serialized state data"""
-
-    data: Dict[str, Any]
-
-
-class PersistentStateProvider(BaseStateProvider[T]):
-    """Persistent state provider using a storage backend"""
-
-    def __init__(
-        self,
-        model_class: type[T],
-        storage: Optional[BaseStateProvider[SerializedState]] = None,
-    ) -> None:
-        self.storage = storage or InMemoryStateProvider[SerializedState](
-            model_class=SerializedState
-        )
-        self.model_class = model_class
-
-    @override
-    async def get(self, key: str) -> T:
-        """Get and deserialize state"""
-        try:
-            serialized = await self.storage.get(key)
-            return self.model_class.model_validate(serialized.data)
-        except Exception as _:
-            # Return a new instance if anything fails
-            return self.model_class()
-
-    @override
-    async def set(self, key: str, state: T) -> None:
-        """Serialize and save state"""
-        try:
-            serialized = SerializedState(data=state.model_dump())
-            await self.storage.set(key, serialized)
-        except Exception as e:
-            raise StateError(f"Failed to save state: {str(e)}") from e
-
-
-class AgentAction(BaseAction[AgentStateModel]):
-    """Agent-specific actions"""
-
-    type: ActionType
-    payload: Optional[Dict[str, Any]] = None
-
-    @staticmethod
-    def reducer(state: AgentStateModel, action: "AgentAction") -> AgentStateModel:
-        if action.type == ActionType.UPDATE:
-            return AgentStateModel(
-                data={**state.data, **(action.payload or {})},
-                meta=state.meta,
-                version=state.version,
-                last_updated=state.last_updated,
-            )
-        elif action.type == ActionType.RESET:
-            return AgentStateModel()
-        return state
-
-
-class GlobalAction(BaseAction[GlobalStateModel]):
-    """Global state actions"""
-
-    type: ActionType
-    payload: Optional[Dict[str, Any]] = None
-
-    @staticmethod
-    def reducer(state: GlobalStateModel, action: "GlobalAction") -> GlobalStateModel:
-        if action.type == ActionType.UPDATE:
-            return GlobalStateModel(
-                shared_data={**state.shared_data, **(action.payload or {})},
-                agents=state.agents,
-                version=state.version,
-                last_updated=state.last_updated,
-            )
-        elif action.type == ActionType.RESET:
-            return GlobalStateModel()
-        return state
+    async def _notify_subscribers(self) -> None:
+        """Notify subscribers of state changes"""
+        for subscriber in self._subscribers:
+            if asyncio.iscoroutinefunction(subscriber):
+                await subscriber(self._state)
+            else:
+                subscriber(self._state)

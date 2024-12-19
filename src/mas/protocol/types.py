@@ -1,6 +1,15 @@
 from enum import Enum
 
 
+class MessageStatus(str, Enum):
+    """Message status."""
+
+    FAILED = "failed"
+    PENDING = "pending"
+    REJECTED = "rejected"
+    DELIVERED = "delivered"
+
+
 class MessageType(str, Enum):
     """Core message types."""
 

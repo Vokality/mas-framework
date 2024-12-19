@@ -7,7 +7,7 @@ MAS AI is a Python framework for building multi-agent systems, focusing on relia
 ## Core SDK Features
 
 -   **Simple Agent Creation** - Declarative agent definition with capabilities
--   **Type-Safe State Management** - Local and global state with Pydantic models
+-   **Type-Safe State Management** - Immutable state management with Pydantic models
 -   **Message Routing** - Reliable agent-to-agent communication
 -   **Agent Discovery** - Find agents by capabilities
 -   **Lifecycle Management** - Controlled agent startup/shutdown
@@ -30,21 +30,34 @@ pip install mas-framework
 from mas.sdk.agent import Agent
 from mas.sdk.decorators import agent
 from mas.protocol import Message
+from mas.sdk.state import AgentState
+from pydantic import Field
+
+# Optional: Define custom state model
+class MyState(AgentState):
+    counter: int = Field(default=0)
+    name: str = Field(default="")
 
 @agent(
     agent_id="example_agent",
     capabilities=["math", "storage"],
-    metadata={"version": "0.1.0"}
+    metadata={"version": "0.1.0"},
+    state_model=MyState  # Optional custom state model
 )
 class ExampleAgent(Agent):
     async def on_message(self, message: Message) -> None:
         # Handle incoming messages
         print(f"Got message: {message.payload}")
 
-        # Update agent's local state
-        await self.update_local_state({
-            "last_message": message.payload
+        # Update agent's state
+        await self.update_state({
+            "counter": 42,
+            "name": "example"
         })
+
+        # Access current state
+        current_state = self.state
+        print(f"Counter: {current_state.data['counter']}")
 ```
 
 3. Run the Agent:
@@ -70,30 +83,32 @@ if __name__ == "__main__":
 
 ### State Management
 
-Agents maintain both local and shared state:
+Agents maintain immutable state with type-safe updates:
 
 ```python
-# Local state updates
-await agent.update_local_state({
+# Define custom state model
+class MyState(AgentState):
+    counter: int = Field(default=0)
+    status: str = Field(default="idle")
+
+# Update state
+await agent.update_state({
     "counter": 42,
     "status": "ready"
 })
 
-# Global shared state
-await agent.update_global_state({
-    "shared_resource": "value"
-})
-```
+# Access state
+current_state = agent.state
+print(f"Counter: {current_state.data['counter']}")
 
-Custom state models with validation:
+# Reset state to initial values
+await agent.reset_state()
 
-```python
-from mas.sdk.state import BaseStateModel
-from pydantic import Field
+# Subscribe to state changes
+async def on_state_change(new_state: MyState) -> None:
+    print(f"State changed: {new_state.model_dump()}")
 
-class AgentState(BaseStateModel):
-    counter: int = Field(default=0)
-    messages: List[str] = Field(default_factory=list)
+agent.subscribe_to_state(on_state_change)
 ```
 
 ### Message Handling
@@ -124,7 +139,7 @@ await agent.runtime.discover_agents(capabilities=["math"])
 class MyAgent(Agent):
     async def on_start(self) -> None:
         """Called when agent starts"""
-        await self.update_local_state({"status": "starting"})
+        await self.update_state({"status": "starting"})
 
     async def on_stop(self) -> None:
         """Called when agent stops"""
