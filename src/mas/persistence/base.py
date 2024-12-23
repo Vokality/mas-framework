@@ -5,7 +5,7 @@ from uuid import UUID
 from mas.protocol import Agent, AgentStatus, Message
 
 
-class IPersistenceProvider(ABC):
+class BasePersistenceProvider(ABC):
     """Interface that must be implemented by persistence providers."""
 
     @abstractmethod

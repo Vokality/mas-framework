@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Type
 
 from mas.logger import get_logger
-from mas.persistence.interfaces import IPersistenceProvider
-from mas.persistence.memory import InMemoryProvider
+from mas.persistence.base import BasePersistenceProvider
+from mas.persistence.memory import MemoryPersistenceProvider
 from mas.protocol import AgentStatus, Message, MessageType
-from mas.transport.redis import RedisTransport
 from mas.transport.service import TransportService
 
 from .discovery.service import DiscoveryService
@@ -21,7 +20,7 @@ class MAS:
     def __init__(
         self,
         transport: TransportService,
-        persistence: IPersistenceProvider,
+        persistence: BasePersistenceProvider,
     ) -> None:
         self._loop = asyncio.get_running_loop()
         self._tasks: List[asyncio.Task] = []
@@ -29,7 +28,7 @@ class MAS:
         self._running: bool = False
         self._transport: TransportService = transport
         self._discovery: DiscoveryService = DiscoveryService(persistence)
-        self._persistence: IPersistenceProvider = persistence
+        self._persistence: BasePersistenceProvider = persistence
         self._message_handler: Optional[asyncio.Task] = None
         self._handlers: Dict[MessageType, Any] = {
             MessageType.STATUS_UPDATE: self._handle_status_update,
@@ -49,6 +48,7 @@ class MAS:
             await self._persistence.initialize()
             await self._transport.start()
             await self._discovery.initialize()
+
             self._running = True
             self._message_handler = self._loop.create_task(
                 self._message_stream(),
@@ -226,7 +226,7 @@ class MAS:
             )
         )
 
-    async def _perform_health_checks(self):
+    async def _perform_health_checks(self) -> None:
         while self._running:
             agents = await self._discovery.find_agents()
             for agent in agents:
@@ -245,17 +245,17 @@ class MAS:
 class MASContext:
     mas: MAS
     transport: TransportService
-    persistence: IPersistenceProvider
+    persistence: BasePersistenceProvider
 
 
 @asynccontextmanager
 async def mas_service(
-    provider: Type[IPersistenceProvider] = InMemoryProvider,
+    provider: Type[BasePersistenceProvider] = MemoryPersistenceProvider,
 ) -> AsyncIterator[MASContext]:
     """Run the MAS service until the shutdown signal is received or context exits."""
 
     # Create all our services
-    transport = TransportService(transport=RedisTransport())
+    transport = TransportService()
     storage = provider()
     mas = MAS(transport, storage)
 

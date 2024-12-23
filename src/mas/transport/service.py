@@ -26,9 +26,9 @@ class TransportService:
     Does not directly manage transport connections.
     """
 
-    def __init__(self, transport: RedisTransport):
+    def __init__(self, transport: RedisTransport | None = None) -> None:
         logger.info("Initializing TransportService")
-        self.transport = transport
+        self.transport = transport or RedisTransport()
         self._state = ServiceState.INITIALIZED
         self._state_lock = asyncio.Lock()
         self._active_components: Set[str] = set()

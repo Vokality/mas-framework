@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 
 from mas.protocol import Message
-from typing import AsyncGenerator, Any, Coroutine
 
 
 class BaseTransport(ABC):

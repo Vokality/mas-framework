@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set
 
-from mas.persistence.interfaces import IPersistenceProvider
+from mas.persistence.base import BasePersistenceProvider
 from mas.protocol import AgentStatus, Message, MessageType
 from mas.transport.service import TransportService
 
@@ -12,7 +12,7 @@ class AgentRuntime:
 
     agent_id: str
     transport: TransportService
-    persistence: IPersistenceProvider
+    persistence: BasePersistenceProvider
     core_id: str = field(default="core")
     capabilities: Set[str] = field(default_factory=set)
     metadata: Dict[str, Any] = field(default_factory=dict)

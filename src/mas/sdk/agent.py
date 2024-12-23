@@ -1,12 +1,19 @@
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict, Set, Type, TypeVar
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    Set,
+    Type,
+    TypeVar,
+)
 
 from mas.logger import get_logger
 from mas.mas import MASContext
 from mas.protocol import AgentRuntimeMetric, AgentStatus, Message
 from mas.protocol.types import MessageType
-from mas.sdk.state import AgentState, StateManager, StateCallback
+from mas.sdk.state import AgentState, StateCallback, StateManager
 
 from .runtime import AgentRuntime
 
@@ -179,7 +186,6 @@ class Agent(ABC):
                         await self.stop()
                 except KeyError:
                     logger.error("Failed to process status update response")
-
             case MessageType.HEALTH_CHECK:
                 payload = {
                     **self._metrics.model_dump(),

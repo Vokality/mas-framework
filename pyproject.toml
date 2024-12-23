@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mas-framework"
-version = "0.1.13"
+dynamic = ["version"]
 authors = [{ name = "Lemuel Boyce", email = "lemuel@vokality.com" }]
+keywords = ["multi-agent", "AI", "agent", "framework"]
 description = "A Multi-Agent System Framework"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.5.2", "psutil>=6.1.0", "redis[hiredis]>=5.2.0"]
+dependencies = ["pydantic>=2.5.4", "psutil>=6.1.1", "redis[hiredis]>=5.2.1"]
 readme = "README.md"
 license = { text = "MIT" }
 classifiers = [
@@ -44,6 +45,9 @@ reportUnnecessaryIsInstance = "warning"
 reportUnnecessaryCast = "warning"
 reportUnnecessaryComparison = "warning"
 reportImplicitOverride = "warning"
+
+[tool.hatch.version]
+path = "src/mas/__version__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mas"]

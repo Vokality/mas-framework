@@ -4,10 +4,10 @@ from uuid import UUID
 
 from mas.protocol import AgentStatus, Message
 
-from .interfaces import Agent, IPersistenceProvider
+from .base import Agent, BasePersistenceProvider
 
 
-class InMemoryProvider(IPersistenceProvider):
+class MemoryPersistenceProvider(BasePersistenceProvider):
     """In-memory persistence implementation."""
 
     def __init__(self) -> None:

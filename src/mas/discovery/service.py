@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import List, Optional, Set
 
 from mas.logger import get_logger
-from mas.persistence.interfaces import IPersistenceProvider
+from mas.persistence.base import BasePersistenceProvider
 from mas.protocol import Agent, AgentStatus
 
 logger = get_logger()
@@ -12,7 +12,7 @@ logger = get_logger()
 class DiscoveryService:
     """Discovery service for agent registration and lookup."""
 
-    def __init__(self, persistence: IPersistenceProvider):
+    def __init__(self, persistence: BasePersistenceProvider) -> None:
         self.persistence = persistence
         self.active_timeout = timedelta(minutes=5)
         self._cleanup_task: Optional[asyncio.Task] = None

@@ -1,13 +1,10 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
+from ._util import empty_dict, empty_list, utc_now
 from .types import AgentStatus
-
-
-def datetime_utc_now():
-    return datetime.now(UTC)
 
 
 class Agent(BaseModel):
@@ -16,9 +13,9 @@ class Agent(BaseModel):
     id: str
     token: str
     status: AgentStatus
-    capabilities: List[str]
-    metadata: Dict[str, Any]
-    last_seen: datetime = Field(default_factory=datetime_utc_now)
+    capabilities: List[str] = Field(default_factory=empty_list)
+    metadata: Dict[str, Any] = Field(default_factory=empty_dict)
+    last_seen: datetime = Field(default_factory=utc_now)
 
 
 class AgentRuntimeMetric(BaseModel):

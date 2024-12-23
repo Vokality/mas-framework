@@ -9,8 +9,6 @@ from typing import (
     Optional,
     Tuple,
     override,
-    Coroutine,
-    Any,
 )
 from uuid import uuid4
 
@@ -20,7 +18,7 @@ from redis.exceptions import ConnectionError, RedisError
 
 from mas.logger import get_logger
 from mas.protocol import Message
-from mas.transport.interfaces import BaseTransport
+from mas.transport.base import BaseTransport
 from mas.transport.metrics import TransportMetrics
 from mas.transport.task import TaskManager
 
@@ -94,7 +92,7 @@ class RedisTransport(BaseTransport):
             url: Redis URL (used only if pool not provided)
             pool: Optional pre-configured connection pool
         """
-        logger.info(f"Initializing RedisTransport with url={url}")
+        logger.debug(f"Initializing RedisTransport with url={url}")
         self.connection_manager = RedisConnectionManager(
             url=url,
             pool=pool,
@@ -113,7 +111,7 @@ class RedisTransport(BaseTransport):
     @override
     async def initialize(self) -> None:
         """Initialize the transport with delivery tracking."""
-        logger.info("Starting transport initialization")
+        logger.debug("Starting transport initialization")
         self._shutdown_event.clear()  # Reset shutdown flag
         await self.connection_manager.initialize()
         await self.metrics.initialize()
@@ -156,7 +154,9 @@ class RedisTransport(BaseTransport):
                     and datetime.now(UTC) - delivery.timestamp < timedelta(minutes=5)
                 ):
                     await self.metrics.record_duplicate_attempt(
-                        str(message.id), message.sender_id, message.target_id
+                        str(message.id),
+                        message.sender_id,
+                        message.target_id,
                     )
                     raise ValueError("Duplicate message detected")
 
