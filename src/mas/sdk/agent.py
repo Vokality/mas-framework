@@ -47,7 +47,7 @@ class Agent(ABC):
         self._state_manager = StateManager(state_model)
 
     @classmethod
-    async def build(
+    async def create_agent(
         cls: Type[T],
         mas_context: MASContext,
     ) -> T:
@@ -96,6 +96,15 @@ class Agent(ABC):
     @property
     def id(self) -> str:
         return self.runtime.agent_id
+    
+
+    async def send_message(self, message: Message) -> None:
+        """Send a message to another agent."""
+        await self.runtime.send_message(
+            content=message.model_dump(),
+            target_id=message.target_id,
+            message_type=message.message_type,
+        )
 
     async def start(self) -> None:
         """Start the agent."""
@@ -105,7 +114,7 @@ class Agent(ABC):
             self._running = True
             self._tasks.append(
                 self._loop.create_task(
-                    self._agent_message_stream(),
+                    self._message_stream(),
                     name=f"{self.id}_message_stream",
                 )
             )
@@ -143,7 +152,7 @@ class Agent(ABC):
         """Handle incoming messages."""
         pass
 
-    async def _agent_message_stream(self) -> None:
+    async def _message_stream(self) -> None:
         """Handle messages to other agents."""
         try:
             async with self.runtime.transport.message_stream(
