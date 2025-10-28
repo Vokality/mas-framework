@@ -43,7 +43,7 @@ class TaskManager:
 
                 async def wrapped():
                     try:
-                        return await asyncio.wait_for(coro, timeout=timeout)
+                        return await asyncio.wait_for(coro(), timeout=timeout)
                     except asyncio.TimeoutError:
                         logger.error(f"Task {name} timed out")
                         raise

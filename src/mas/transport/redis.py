@@ -425,10 +425,7 @@ class RedisTransport(BaseTransport):
                 state = SubscriptionState(channel=channel)
                 self._subscriptions[channel] = state
                 state.pubsub = await self.connection_manager.get_pubsub(channel)
-                state.task = self._loop.create_task(
-                    self._message_listener(state),
-                    name=f"message_listener_{channel}",
-                )
+                # Task will be started in get_message_stream
 
     async def get_message_stream(self, channel: str) -> AsyncGenerator[Message, None]:
         """Get message stream for a channel."""
@@ -441,6 +438,13 @@ class RedisTransport(BaseTransport):
                 raise RuntimeError(f"Not subscribed to channel: {channel}")
 
             subscriber_id, queue = await state.add_subscriber()
+
+            # Start the listener task if not already started
+            if not state.task:
+                state.task = self._loop.create_task(
+                    self._message_listener(state),
+                    name=f"message_listener_{channel}",
+                )
 
         try:
             while not self._shutdown_event.is_set():

@@ -8,8 +8,13 @@ dynamic = ["version"]
 authors = [{ name = "Lemuel Boyce", email = "lemuel@vokality.com" }]
 keywords = ["multi-agent", "AI", "agent", "framework"]
 description = "A Multi-Agent System Framework"
-requires-python = ">=3.11"
-dependencies = ["pydantic>=2.5.4", "psutil>=6.1.1", "redis[hiredis]>=5.2.1"]
+requires-python = ">=3.14"
+dependencies = [
+    "psutil>=6.1.1",
+    "pydantic>=2.12.3",
+    "redis[hiredis]>=5.2.1",
+    "starlette>=0.45.2",
+]
 readme = "README.md"
 license = { text = "MIT" }
 classifiers = [
@@ -58,7 +63,6 @@ dev = [
     "isort>=5.12.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.8.1",
-    "ruff-lsp>=0.0.59",
     "pytest-timeout>=2.3.1",
     "pyright>=1.1.390",
 ]

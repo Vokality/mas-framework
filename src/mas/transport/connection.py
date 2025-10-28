@@ -66,7 +66,7 @@ class RedisConnectionManager:
         # Validate pool with test connection
         redis = Redis(connection_pool=self._pool)
         try:
-            await redis.ping()
+            await redis.ping()  # type: ignore[general-type-issues]
         finally:
             await redis.aclose()
 
@@ -142,7 +142,7 @@ class RedisConnectionManager:
         while self._running:
             try:
                 async with self.get_connection() as redis:
-                    await redis.ping()
+                    await redis.ping()  # type: ignore[general-type-issues]
 
                 self._state.last_health_check = datetime.now(UTC)
                 self._state.is_healthy = True
