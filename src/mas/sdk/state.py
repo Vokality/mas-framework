@@ -1,18 +1,17 @@
 import asyncio
 from typing import Any, Awaitable, Callable, Dict, Generic, List, TypeVar, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentState(BaseModel):
     """Base model for agent state"""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     data: Dict[str, Any] = Field(default_factory=dict)
     version: int = Field(default=0)
     last_updated: float = Field(default_factory=lambda: asyncio.get_event_loop().time())
-
-    class Config:
-        arbitrary_types_allowed = True
 
     def update(self, data: Dict[str, Any]) -> "AgentState":
         """Create a new state instance with updated data"""
