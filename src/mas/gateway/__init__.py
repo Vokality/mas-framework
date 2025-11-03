@@ -21,6 +21,16 @@ from .priority_queue import (
 )
 from .metrics import MetricsCollector, get_metrics, get_content_type
 from .message_signing import MessageSigningModule, SignatureResult
+from .config import (
+    GatewaySettings,
+    RedisSettings,
+    RateLimitSettings,
+    FeaturesSettings,
+    CircuitBreakerSettings,
+    PriorityQueueSettings,
+    MessageSigningSettings,
+    load_settings,
+)
 from .gateway import GatewayService, GatewayResult
 
 __all__ = [
@@ -51,6 +61,14 @@ __all__ = [
     "get_content_type",
     "MessageSigningModule",
     "SignatureResult",
+    "GatewaySettings",
+    "RedisSettings",
+    "RateLimitSettings",
+    "FeaturesSettings",
+    "CircuitBreakerSettings",
+    "PriorityQueueSettings",
+    "MessageSigningSettings",
+    "load_settings",
     "GatewayService",
     "GatewayResult",
 ]

@@ -1,0 +1,36 @@
+# Gateway Service Configuration Example
+# Copy this file to gateway.yaml and customize for your environment
+
+redis:
+  url: redis://localhost:6379
+  decode_responses: true
+  socket_timeout: null
+
+rate_limit:
+  per_minute: 100
+  per_hour: 1000
+
+features:
+  dlp: true
+  priority_queue: false
+  rbac: false
+  message_signing: false
+  circuit_breaker: true
+
+circuit_breaker:
+  failure_threshold: 5
+  success_threshold: 2
+  timeout_seconds: 60
+  window_seconds: 300
+
+priority_queue:
+  default_ttl: 300
+  critical_weight: 10
+  high_weight: 5
+  normal_weight: 2
+  low_weight: 1
+  bulk_weight: 0
+
+message_signing:
+  max_timestamp_drift: 300
+  nonce_ttl: 300
