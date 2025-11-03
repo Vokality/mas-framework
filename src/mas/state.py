@@ -39,7 +39,7 @@ class StateManager:
         data = await self.redis.hgetall(key)  # type: ignore
 
         if data:
-            if self._state_model == dict:
+            if self._state_model is dict:
                 self._state = data
             else:
                 # Pydantic model - convert string values to proper types
@@ -53,7 +53,7 @@ class StateManager:
                     self._state = self._state_model()
         else:
             # Initialize with defaults
-            if self._state_model == dict:
+            if self._state_model is dict:
                 self._state = {}
             else:
                 self._state = self._state_model()
@@ -89,7 +89,7 @@ class StateManager:
 
     async def reset(self) -> None:
         """Reset state to defaults."""
-        if self._state_model == dict:
+        if self._state_model is dict:
             self._state = {}
         else:
             self._state = self._state_model()

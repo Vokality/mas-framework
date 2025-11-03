@@ -121,9 +121,9 @@ class TestAuthenticationModule:
         assert is_revoked
 
         # New token should work
-        result = await auth_module.authenticate(agent_id, new_token)
         # Note: This will fail because we didn't set status and expires
         # In real usage, the registry would handle this
+        await auth_module.authenticate(agent_id, new_token)
 
 
 class TestAuthorizationModule:
