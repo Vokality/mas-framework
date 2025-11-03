@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 from mas import Agent, MASService, AgentMessage
 
 # Use anyio for async test support
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture(autouse=True)

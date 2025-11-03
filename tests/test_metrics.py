@@ -18,7 +18,7 @@ from mas.gateway.metrics import (
 )
 
 # Use anyio for async test support
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture

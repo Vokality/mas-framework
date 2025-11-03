@@ -9,7 +9,7 @@ from mas.gateway.priority_queue import (
 )
 
 # Use anyio for async test support
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture

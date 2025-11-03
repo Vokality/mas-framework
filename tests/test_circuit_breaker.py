@@ -11,7 +11,7 @@ from mas.gateway.circuit_breaker import (
 )
 
 # Use anyio for async test support
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture

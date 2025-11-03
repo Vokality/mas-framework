@@ -9,7 +9,7 @@ from mas.gateway.dlp import (
 )
 
 # Use anyio for async test support
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 
 class TestDLPModule:
