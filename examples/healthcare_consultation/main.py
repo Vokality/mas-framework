@@ -19,6 +19,7 @@ load_dotenv(dotenv_path=dotenv_path)
 
 from mas import MASService
 from mas.gateway import GatewayService
+from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings
 from patient_agent import PatientAgent
 from doctor_agent import DoctorAgent
 
@@ -70,13 +71,19 @@ async def main() -> None:
 
     # Start Gateway service (required for gateway mode)
     logger.info("Starting Gateway Service...")
-    gateway = GatewayService(
-        redis_url=redis_url,
-        rate_limit_per_minute=100,
-        rate_limit_per_hour=1000,
-        enable_dlp=True,  # Enable DLP for PHI/PII detection
-        enable_priority_queue=False,
+
+    # Configure gateway with example-friendly settings
+    gateway_settings = GatewaySettings(
+        rate_limit=RateLimitSettings(per_minute=100, per_hour=1000),
+        features=FeaturesSettings(
+            dlp=True,  # Enable DLP for PHI/PII detection
+            priority_queue=False,
+            rbac=False,  # Use simple ACL for this example
+            message_signing=False,  # Simplified for demo
+            circuit_breaker=True,
+        ),
     )
+    gateway = GatewayService(settings=gateway_settings)
     await gateway.start()
     logger.info("✓ Gateway Service started")
     logger.info("")
@@ -93,6 +100,11 @@ async def main() -> None:
         redis_url=redis_url,
         openai_api_key=api_key,
     )
+
+    # Configure agents to use the gateway
+    doctor.set_gateway(gateway)
+    patient.set_gateway(gateway)
+    logger.info("✓ Agents configured to use gateway")
 
     # Configure authorization before agents start (using high-level API)
     logger.info("Configuring gateway authorization...")
