@@ -8,7 +8,7 @@ dynamic = ["version"]
 authors = [{ name = "Lemuel Boyce", email = "lemuel@vokality.com" }]
 keywords = ["multi-agent", "AI", "agent", "framework"]
 description = "A Multi-Agent System Framework"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     "psutil>=6.1.1",
     "pydantic>=2.12.3",
@@ -21,8 +21,7 @@ classifiers = [
     "Development Status :: 1 - Planning",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
