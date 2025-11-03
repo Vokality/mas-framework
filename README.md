@@ -1,22 +1,31 @@
 # MAS Framework - Multi-Agent System
 
-A Python framework for building multi-agent systems with Redis.
+A Python framework for building multi-agent systems with Redis. Supports two messaging modes:
 
 ## Architecture
 
+### Mode 1: Peer-to-Peer (Default)
 ```
 MAS Service (Registry & Discovery)
          ↓ ↑
        Redis
          ↓ ↑
-  Agent ↔ Agent (Peer-to-Peer)
+  Agent ↔ Agent (Direct Pub/Sub)
 ```
 
-**Key Design Principles:**
-- **Peer-to-peer messaging** - Agents communicate directly via Redis pub/sub channels
-- **MAS Service** - Provides agent registration and discovery (does not route messages)
+### Mode 2: Gateway (Enterprise)
+```
+Agent A → Gateway Service → Redis Streams → Agent B
+          (auth, authz,
+           rate limit,
+           audit, DLP)
+```
+
+**Key Capabilities:**
+- **Dual messaging modes** - Peer-to-peer (default) or gateway-mediated (enterprise)
+- **Agent registry** - Capability-based discovery via MAS Service
 - **Auto-persisted state** - Agent state saved to Redis hash structures
-- **Direct communication** - No central message router or bottleneck
+- **Configurable routing** - Choose between P2P (low latency) or gateway (security/audit)
 
 ## Quick Start
 
@@ -80,11 +89,11 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## Features
+## Messaging Modes
 
-### Peer-to-Peer Messaging
+### Peer-to-Peer Mode (Default)
 
-Agents communicate directly without going through a central router:
+Agents communicate directly via Redis pub/sub channels:
 
 ```python
 import asyncio
@@ -106,8 +115,59 @@ if __name__ == "__main__":
 **Characteristics:**
 - Direct agent-to-agent communication via Redis pub/sub
 - No central message routing overhead
-- Message delivery depends on Redis pub/sub semantics
-- Agents can run on different machines connected to same Redis instance
+- At-most-once delivery (Redis pub/sub semantics)
+- Suitable for high-throughput, low-latency scenarios
+
+### Gateway Mode (Enterprise)
+
+Messages routed through centralized gateway for security and compliance:
+
+```python
+import asyncio
+from mas import Agent
+
+async def main():
+    # Enable gateway mode
+    agent = Agent("my_agent", use_gateway=True)
+    await agent.start()
+    
+    # Messages now routed through gateway
+    # Gateway provides: auth, authz, rate limiting, DLP, audit
+    await agent.send("target_agent", {"data": "hello"})
+    
+    await agent.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**Capabilities:**
+- **Authentication** - Token-based agent authentication
+- **Authorization** - Role-based access control (RBAC)
+- **Rate Limiting** - Per-agent token bucket rate limits
+- **Data Loss Prevention** - PII/PHI detection and blocking
+- **Audit Logging** - Complete immutable audit trail
+- **Circuit Breakers** - Automatic failure isolation
+- **Message Signing** - Cryptographic message verification
+- **At-least-once delivery** - Uses Redis Streams for reliability
+
+See [GATEWAY.md](GATEWAY.md) for complete gateway documentation.
+
+### Choosing a Mode
+
+| Requirement | Use Peer-to-Peer | Use Gateway |
+|-------------|------------------|-------------|
+| Low latency required | ✅ | ❌ |
+| High throughput required | ✅ | ⚠️ (scaled) |
+| Audit trail required | ❌ | ✅ |
+| Compliance (SOC2, HIPAA, etc.) | ❌ | ✅ |
+| PII/PHI data protection | ❌ | ✅ |
+| Rate limiting needed | ❌ | ✅ |
+| Message reliability critical | ❌ | ✅ |
+| Simple dev/test environment | ✅ | ❌ |
+| Production enterprise deployment | ⚠️ | ✅ |
+
+## Features
 
 ### Auto-Persisted State
 
@@ -330,28 +390,47 @@ if __name__ == "__main__":
 
 ## Examples
 
-### Chemistry Tutoring Demo
+### Chemistry Tutoring (Peer-to-Peer Mode)
 
-A complete example showing two OpenAI-powered agents exchanging information:
+Simple P2P messaging with two OpenAI-powered agents:
 
 - **Student Agent**: Asks chemistry homework questions
 - **Professor Agent**: Provides educational explanations
+- **Mode**: Peer-to-peer (direct Redis pub/sub)
+- **Use case**: Development, low-latency scenarios
 
 ```bash
 cd examples/chemistry_tutoring
-
-# Add your OpenAI API key to .env file in project root
 echo "OPENAI_API_KEY=your-key-here" >> ../../.env
-
-# Run the demo (installs dependencies automatically)
 ./run.sh
-
-# Or manually with uv
-uv pip install openai python-dotenv
-uv run python main.py
 ```
 
-See [examples/chemistry_tutoring/README.md](examples/chemistry_tutoring/README.md) for full documentation.
+See [examples/chemistry_tutoring/README.md](examples/chemistry_tutoring/README.md) for details.
+
+### Healthcare Consultation (Gateway Mode)
+
+Enterprise-grade messaging with security and compliance:
+
+- **Patient Agent**: Asks healthcare questions
+- **Doctor Agent**: Provides medical advice
+- **Mode**: Gateway (authentication, authorization, DLP, audit)
+- **Use case**: Production, HIPAA/SOC2/GDPR compliance
+
+```bash
+cd examples/healthcare_consultation
+echo "OPENAI_API_KEY=your-key-here" >> ../../.env
+./run.sh
+```
+
+**Gateway features demonstrated:**
+- ✅ Authentication & authorization (RBAC)
+- ✅ Rate limiting (token bucket)
+- ✅ Data Loss Prevention (PHI/PII detection)
+- ✅ Complete audit trail (Redis Streams)
+- ✅ Circuit breakers
+- ✅ At-least-once delivery
+
+See [examples/healthcare_consultation/README.md](examples/healthcare_consultation/README.md) for details.
 
 ## Testing
 
@@ -378,27 +457,38 @@ Performance benchmarks are planned for future releases.
 
 ## Documentation
 
-- **[Architecture Guide](ARCHITECTURE.md)** - Detailed system architecture, design decisions, and implementation details
-- **[API Reference](#features)** - Feature documentation and usage examples below
+- **[Architecture Guide](ARCHITECTURE.md)** - Peer-to-peer architecture, design decisions, and implementation details
+- **[Gateway Guide](GATEWAY.md)** - Enterprise gateway pattern with security, audit, and compliance features
+- **[API Reference](#messaging-modes)** - Feature documentation and usage examples
 
 ### Quick Architecture Overview
 
-**Components:**
+**Core Components:**
 - **MAS Service** - Agent registry and health monitor (optional)
-- **Agent** - Base class for implementing agents with peer-to-peer messaging
+- **Agent** - Base class for implementing agents
+- **Gateway Service** - Optional security/audit layer for enterprise deployments
 - **Registry** - Agent discovery by capabilities
 - **State Manager** - State persistence to Redis
 
-**Message Flow (Peer-to-Peer):**
+**Message Flow:**
+
+Peer-to-Peer Mode:
 ```
 Agent A → Redis Pub/Sub (channel: agent.B) → Agent B
+```
+
+Gateway Mode:
+```
+Agent A → Gateway Service → Redis Streams → Agent B
+          (validation)       (reliable delivery)
 ```
 
 **Redis Keys:**
 - `agent:{id}` - Agent metadata
 - `agent:{id}:heartbeat` - Health monitoring (60s TTL)
 - `agent.state:{id}` - Persisted agent state
-- `agent.{id}` - Message channel (pub/sub)
+- `agent.{id}` - Message channel (pub/sub, P2P mode)
+- `agent.stream:{id}` - Message stream (gateway mode)
 - `mas.system` - System events (pub/sub)
 
 For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -406,20 +496,24 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Roadmap
 
 ### Current Features
-- Peer-to-peer messaging
-- Redis-based registry
-- Auto-persisted state
-- Simple agent API
-- Discovery by capabilities
-- Heartbeat monitoring
+- ✅ Peer-to-peer messaging (Redis pub/sub)
+- ✅ Gateway mode with security controls
+- ✅ Authentication and authorization (RBAC)
+- ✅ Rate limiting (token bucket)
+- ✅ Data loss prevention (DLP)
+- ✅ Audit logging (Redis Streams)
+- ✅ Circuit breakers
+- ✅ Message signing and verification
+- ✅ Auto-persisted state
+- ✅ Discovery by capabilities
+- ✅ Heartbeat monitoring
 
 ### In Development
-- [ ] Authentication and authorization (see `src/mas/gateway/`)
-- [ ] Message delivery guarantees with Redis Streams
-- [ ] Circuit breakers for failing agents
-- [ ] Rate limiting
-- [ ] Performance benchmarks
+- [ ] Priority queue for gateway mode
+- [ ] Enhanced metrics and observability
+- [ ] Performance benchmarks for both modes
 - [ ] Prometheus metrics integration
+- [ ] Management dashboard
 
 ### Under Consideration
 - [ ] Multi-region support
@@ -430,7 +524,7 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 ## FAQ
 
 **Q: Why Redis?**
-A: Redis provides pub/sub for messaging, hash structures for state, and TTL for heartbeats. It's a single dependency with well-understood operational characteristics.
+A: Redis provides pub/sub for P2P messaging, Streams for reliable delivery in gateway mode, hash structures for state, and TTL for heartbeats. Single dependency with well-understood operational characteristics.
 
 **Q: What if Redis goes down?**
 A: Agents will lose connection and cannot communicate. Consider Redis Cluster or Sentinel for high availability in production.
@@ -442,7 +536,11 @@ A: Yes. All agents connect to the same Redis instance via the redis:// URL.
 A: The framework has been tested with small numbers of agents. Limits depend on Redis capacity and agent workload.
 
 **Q: Message delivery guarantees?**
-A: Currently uses Redis pub/sub (at-most-once delivery). Support for Redis Streams (at-least-once) is under development.
+A: Depends on mode:
+- **Peer-to-peer mode**: At-most-once (Redis pub/sub)
+- **Gateway mode**: At-least-once (Redis Streams)
+
+Choose based on your requirements: P2P for low latency, gateway for reliability and compliance.
 
 ## Development
 

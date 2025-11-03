@@ -1,0 +1,3 @@
+# Requirements for healthcare consultation example
+openai>=1.0.0
+python-dotenv>=1.0.0
