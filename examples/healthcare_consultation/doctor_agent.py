@@ -50,23 +50,27 @@ class DoctorAgent(Agent):
         self.model = model
         self.consultations_completed = 0
         self.specialist_id: Optional[str] = None
-        self.pending_consultations: dict[str, dict] = {}  # Track consultations awaiting specialist response
+        self.pending_consultations: dict[
+            str, dict
+        ] = {}  # Track consultations awaiting specialist response
 
     async def on_start(self) -> None:
         """Initialize the doctor agent."""
         logger.info(f"Doctor agent {self.id} started (GATEWAY MODE)")
         logger.info("HIPAA-compliant: All messages audited and DLP-scanned")
-        
+
         # Discover specialist agent
         await asyncio.sleep(0.5)
         specialists = await self.discover(capabilities=["healthcare_specialist"])
-        
+
         if specialists:
             self.specialist_id = specialists[0]["id"]
             logger.info(f"Found specialist: {self.specialist_id}")
         else:
-            logger.warning("No specialist found - will handle all consultations directly")
-        
+            logger.warning(
+                "No specialist found - will handle all consultations directly"
+            )
+
         logger.info("Ready for consultations...")
 
     async def on_message(self, message: AgentMessage) -> None:
@@ -101,7 +105,9 @@ class DoctorAgent(Agent):
             logger.info("✓ Gateway validated: auth, authz, rate limit, DLP passed")
 
             # Generate initial diagnosis using OpenAI
-            initial_diagnosis = await self._generate_initial_diagnosis(question, concern)
+            initial_diagnosis = await self._generate_initial_diagnosis(
+                question, concern
+            )
 
             logger.info(f"\n{'=' * 60}")
             logger.info("GP'S INITIAL DIAGNOSIS:")
@@ -111,7 +117,7 @@ class DoctorAgent(Agent):
             # Consult specialist if available
             if self.specialist_id:
                 logger.info(f"Consulting specialist {self.specialist_id}...")
-                
+
                 # Store consultation context
                 consultation_id = f"{message.sender_id}_{self.consultations_completed}"
                 self.pending_consultations[consultation_id] = {
@@ -154,11 +160,15 @@ class DoctorAgent(Agent):
             specialization = message.payload.get("specialization")
 
             if not consultation_id or not isinstance(consultation_id, str):
-                logger.error("Received specialist response without valid consultation_id")
+                logger.error(
+                    "Received specialist response without valid consultation_id"
+                )
                 return
 
             if consultation_id not in self.pending_consultations:
-                logger.error(f"Received specialist response for unknown consultation: {consultation_id}")
+                logger.error(
+                    f"Received specialist response for unknown consultation: {consultation_id}"
+                )
                 return
 
             if not specialist_advice or not isinstance(specialist_advice, str):
@@ -166,7 +176,9 @@ class DoctorAgent(Agent):
                 return
 
             if not patient_question or not isinstance(patient_question, str):
-                logger.error("Received specialist response without valid patient question")
+                logger.error(
+                    "Received specialist response without valid patient question"
+                )
                 return
 
             consultation = self.pending_consultations.pop(consultation_id)

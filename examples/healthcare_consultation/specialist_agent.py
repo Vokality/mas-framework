@@ -43,7 +43,10 @@ class SpecialistAgent(Agent):
         """
         super().__init__(
             agent_id=agent_id,
-            capabilities=["healthcare_specialist", f"specialist_{specialization.lower().replace(' ', '_')}"],
+            capabilities=[
+                "healthcare_specialist",
+                f"specialist_{specialization.lower().replace(' ', '_')}",
+            ],
             redis_url=redis_url,
             use_gateway=True,  # Enable gateway mode for compliance
         )
