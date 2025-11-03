@@ -11,6 +11,14 @@ from .circuit_breaker import (
     CircuitStatus,
     CircuitBreakerConfig,
 )
+from .priority_queue import (
+    PriorityQueueModule,
+    MessagePriority,
+    QueuedMessage,
+    EnqueueResult,
+    DequeueResult,
+    PriorityQueueConfig,
+)
 from .gateway import GatewayService, GatewayResult
 
 __all__ = [
@@ -30,6 +38,12 @@ __all__ = [
     "CircuitState",
     "CircuitStatus",
     "CircuitBreakerConfig",
+    "PriorityQueueModule",
+    "MessagePriority",
+    "QueuedMessage",
+    "EnqueueResult",
+    "DequeueResult",
+    "PriorityQueueConfig",
     "GatewayService",
     "GatewayResult",
 ]

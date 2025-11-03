@@ -12,6 +12,7 @@ from .authorization import AuthorizationModule
 from .audit import AuditModule
 from .rate_limit import RateLimitModule
 from .dlp import DLPModule, ActionPolicy
+from .priority_queue import PriorityQueueModule, MessagePriority
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class GatewayService:
         rate_limit_per_minute: int = 100,
         rate_limit_per_hour: int = 1000,
         enable_dlp: bool = True,
+        enable_priority_queue: bool = False,
     ):
         """
         Initialize gateway service.
@@ -64,6 +66,7 @@ class GatewayService:
             rate_limit_per_minute: Default rate limit per minute
             rate_limit_per_hour: Default rate limit per hour
             enable_dlp: Enable DLP scanning (default: True)
+            enable_priority_queue: Enable priority queue (default: False, MVP uses direct routing)
         """
         self.redis_url = redis_url
         self._redis: Optional[Redis] = None
@@ -75,11 +78,13 @@ class GatewayService:
         self._audit: Optional[AuditModule] = None
         self._rate_limit: Optional[RateLimitModule] = None
         self._dlp: Optional[DLPModule] = None
+        self._priority_queue: Optional[PriorityQueueModule] = None
 
         # Configuration
         self.rate_limit_per_minute = rate_limit_per_minute
         self.rate_limit_per_hour = rate_limit_per_hour
         self.enable_dlp = enable_dlp
+        self.enable_priority_queue = enable_priority_queue
 
     async def start(self) -> None:
         """Start the gateway service."""
@@ -98,10 +103,17 @@ class GatewayService:
         if self.enable_dlp:
             self._dlp = DLPModule()
 
+        if self.enable_priority_queue:
+            self._priority_queue = PriorityQueueModule(self._redis)
+
         self._running = True
         logger.info(
             "Gateway Service started",
-            extra={"redis_url": self.redis_url, "dlp_enabled": self.enable_dlp},
+            extra={
+                "redis_url": self.redis_url,
+                "dlp_enabled": self.enable_dlp,
+                "priority_queue_enabled": self.enable_priority_queue,
+            },
         )
 
     async def stop(self) -> None:
@@ -355,21 +367,76 @@ class GatewayService:
         """
         Route message to target agent's stream.
 
-        Uses Redis Streams for reliable delivery (at-least-once).
+        If priority queue is enabled, enqueues message by priority.
+        Otherwise, uses direct pub/sub for immediate delivery.
 
         Args:
             message: Message to route
         """
-        # For MVP, we'll use the same pub/sub system as before
-        # In future phases, we'll switch to Redis Streams
-        target_channel = f"agent.{message.target_id}"
+        if self.enable_priority_queue and self._priority_queue:
+            # Determine priority from message metadata
+            priority = self._determine_message_priority(message)
 
-        await self._redis.publish(target_channel, message.model_dump_json())
+            # Enqueue message
+            await self._priority_queue.enqueue(
+                message_id=message.message_id,
+                sender_id=message.sender_id,
+                target_id=message.target_id,
+                payload=message.payload,
+                priority=priority,
+            )
 
-        logger.debug(
-            "Message published",
-            extra={"message_id": message.message_id, "target_channel": target_channel},
-        )
+            logger.debug(
+                "Message enqueued",
+                extra={
+                    "message_id": message.message_id,
+                    "priority": priority.name,
+                },
+            )
+        else:
+            # Direct delivery via pub/sub (MVP)
+            target_channel = f"agent.{message.target_id}"
+            await self._redis.publish(target_channel, message.model_dump_json())
+
+            logger.debug(
+                "Message published",
+                extra={
+                    "message_id": message.message_id,
+                    "target_channel": target_channel,
+                },
+            )
+
+    def _determine_message_priority(self, message: AgentMessage) -> MessagePriority:
+        """
+        Determine message priority based on payload markers.
+
+        Priority rules:
+        - payload.priority = "critical" → CRITICAL
+        - payload.priority = "high" → HIGH
+        - payload.priority = "low" → LOW
+        - payload.priority = "bulk" → BULK
+        - Default → NORMAL
+
+        Args:
+            message: Agent message
+
+        Returns:
+            MessagePriority enum
+        """
+        if isinstance(message.payload, dict):
+            priority_str = message.payload.get("priority", "normal").lower()
+
+            priority_map = {
+                "critical": MessagePriority.CRITICAL,
+                "high": MessagePriority.HIGH,
+                "normal": MessagePriority.NORMAL,
+                "low": MessagePriority.LOW,
+                "bulk": MessagePriority.BULK,
+            }
+
+            return priority_map.get(priority_str, MessagePriority.NORMAL)
+
+        return MessagePriority.NORMAL
 
     # Module accessors for management operations
 
@@ -405,6 +472,11 @@ class GatewayService:
     def dlp(self) -> DLPModule | None:
         """Get DLP module (if enabled)."""
         return self._dlp
+
+    @property
+    def priority_queue(self) -> PriorityQueueModule | None:
+        """Get priority queue module (if enabled)."""
+        return self._priority_queue
 
     async def get_stats(self) -> dict:
         """
