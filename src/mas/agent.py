@@ -50,36 +50,50 @@ class Agent:
         capabilities: list[str] | None = None,
         redis_url: str = "redis://localhost:6379",
         state_model: type[BaseModel] | None = None,
+        use_gateway: bool = False,
+        gateway_url: Optional[str] = None,
     ):
         """
         Initialize agent.
-        
+
         Args:
             agent_id: Unique agent identifier
             capabilities: List of agent capabilities for discovery
             redis_url: Redis connection URL
             state_model: Optional Pydantic model for typed state
+            use_gateway: Whether to route messages through gateway
+            gateway_url: Gateway service URL (if different from redis_url)
         """
         self.id = agent_id
         self.capabilities = capabilities or []
         self.redis_url = redis_url
-        
+        self.use_gateway = use_gateway
+        self.gateway_url = gateway_url or redis_url
+
         # Internal state
         self._redis: Optional[Redis] = None
         self._pubsub = None
         self._token: Optional[str] = None
         self._running = False
         self._tasks: list[asyncio.Task] = []
-        
+
         # Registry and state
         self._registry: Optional[AgentRegistry] = None
         self._state_manager: Optional[StateManager] = None
         self._state_model = state_model
+
+        # Gateway client (if use_gateway=True)
+        self._gateway = None
     
     @property
     def state(self) -> Any:
         """Get current state."""
         return self._state_manager.state if self._state_manager else None
+
+    @property
+    def token(self) -> Optional[str]:
+        """Get agent authentication token."""
+        return self._token
     
     async def start(self) -> None:
         """Start the agent."""
@@ -129,10 +143,10 @@ class Agent:
     async def stop(self) -> None:
         """Stop the agent."""
         self._running = False
-        
+
         # Call user hook
         await self.on_stop()
-        
+
         # Publish deregistration event
         if self._redis:
             await self._redis.publish(
@@ -142,57 +156,92 @@ class Agent:
                     "agent_id": self.id,
                 })
             )
-        
+
         # Cancel tasks
         for task in self._tasks:
             task.cancel()
-        
+
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        
+
         # Cleanup
         if self._registry:
             await self._registry.deregister(self.id)
-        
+
         if self._pubsub:
             await self._pubsub.unsubscribe()
             await self._pubsub.aclose()
-        
+
+        # Cleanup gateway if used
+        if self._gateway:
+            await self._gateway.stop()
+
         if self._redis:
             await self._redis.aclose()
-        
+
         logger.info("Agent stopped", extra={"agent_id": self.id})
     
     async def send(self, target_id: str, payload: dict) -> None:
         """
-        Send message directly to target agent.
-        
+        Send message to target agent.
+
+        Routes through gateway if use_gateway=True, otherwise sends P2P.
+
         Args:
             target_id: Target agent identifier
             payload: Message payload dictionary
         """
         if not self._redis:
             raise RuntimeError("Agent not started")
-        
+
         message = AgentMessage(
             sender_id=self.id,
             target_id=target_id,
             payload=payload,
         )
-        
-        # Publish directly to target's channel (peer-to-peer)
-        await self._redis.publish(
-            f"agent.{target_id}",
-            message.model_dump_json()
-        )
-        
-        logger.debug(
-            "Message sent",
-            extra={
-                "from": self.id,
-                "to": target_id,
-                "message_id": message.message_id
-            }
-        )
+
+        if self.use_gateway:
+            # Route through gateway
+            if not self._gateway:
+                # Lazy-load gateway client
+                from .gateway import GatewayService
+                self._gateway = GatewayService(redis_url=self.gateway_url)
+                if not self._gateway._running:
+                    await self._gateway.start()
+
+            if not self._token:
+                raise RuntimeError("No token available for gateway authentication")
+
+            result = await self._gateway.handle_message(message, self._token)
+
+            if not result.success:
+                raise RuntimeError(
+                    f"Gateway rejected message: {result.decision} - {result.message}"
+                )
+
+            logger.debug(
+                "Message sent via gateway",
+                extra={
+                    "from": self.id,
+                    "to": target_id,
+                    "message_id": message.message_id,
+                    "latency_ms": result.latency_ms
+                }
+            )
+        else:
+            # Publish directly to target's channel (peer-to-peer)
+            await self._redis.publish(
+                f"agent.{target_id}",
+                message.model_dump_json()
+            )
+
+            logger.debug(
+                "Message sent (P2P)",
+                extra={
+                    "from": self.id,
+                    "to": target_id,
+                    "message_id": message.message_id
+                }
+            )
     
     async def discover(self, capabilities: list[str] | None = None) -> list[dict]:
         """

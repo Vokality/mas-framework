@@ -4,6 +4,9 @@ import pytest
 from redis.asyncio import Redis
 from mas import Agent, MASService, AgentMessage
 
+# Use anyio for async test support
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture(autouse=True)
 async def cleanup_redis():
