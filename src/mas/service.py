@@ -140,7 +140,7 @@ class MASService:
                                 if asyncio.iscoroutine(_result):
                                     await _result
 
-                # Also detect agents with missing heartbeat keys entirely
+                # Also detect agents with missing heartbeat keys entirely (with grace period)
                 async for agent_key in self._redis.scan_iter("agent:*"):
                     # Skip non-agent hashes like heartbeat keys themselves
                     if agent_key.count(":") != 1:
@@ -149,13 +149,42 @@ class MASService:
                     _hb_exists = self._redis.exists(hb_key)
                     hb_exists = await _hb_exists if asyncio.iscoroutine(_hb_exists) else _hb_exists
                     if not hb_exists:
-                        # If the agent exists but no heartbeat key, mark INACTIVE
-                        _status2 = self._redis.hget(agent_key, "status")
-                        status = await _status2 if asyncio.iscoroutine(_status2) else _status2
-                        if status != "INACTIVE":
-                            _result2 = self._redis.hset(agent_key, "status", "INACTIVE")
-                            if asyncio.iscoroutine(_result2):
-                                await _result2
+                        # If the agent exists but no heartbeat yet, only mark INACTIVE
+                        # if it has exceeded the heartbeat timeout since registration.
+                        _reg_at = self._redis.hget(agent_key, "registered_at")
+                        _reg_at_val: Any = await _reg_at if asyncio.iscoroutine(_reg_at) else _reg_at
+                        reg_at_str: Optional[str]
+                        if isinstance(_reg_at_val, bytes):
+                            try:
+                                reg_at_str = _reg_at_val.decode()
+                            except Exception:
+                                reg_at_str = None
+                        elif isinstance(_reg_at_val, str):
+                            reg_at_str = _reg_at_val
+                        else:
+                            reg_at_str = None
+
+                        try:
+                            reg_at = float(reg_at_str) if reg_at_str is not None else None
+                        except (TypeError, ValueError):
+                            reg_at = None
+
+                        # Determine if grace period has elapsed
+                        grace_elapsed = False
+                        if reg_at is not None:
+                            try:
+                                import time as _time
+                                grace_elapsed = (_time.time() - reg_at) > float(self.heartbeat_timeout)
+                            except Exception:
+                                grace_elapsed = False
+
+                        if grace_elapsed:
+                            _status2 = self._redis.hget(agent_key, "status")
+                            status = await _status2 if asyncio.iscoroutine(_status2) else _status2
+                            if status != "INACTIVE":
+                                _result2 = self._redis.hset(agent_key, "status", "INACTIVE")
+                                if asyncio.iscoroutine(_result2):
+                                    await _result2
 
                 await asyncio.sleep(30)  # Check every 30 seconds
             except Exception as e:
