@@ -221,7 +221,7 @@ class TestGatewayDLPIntegration:
 
         # Find the DLP blocked message
         dlp_blocked = None
-        for msg_id, msg_data in audit_messages:
+        for _, msg_data in audit_messages:
             if msg_data.get("decision") == "DLP_BLOCKED":
                 dlp_blocked = msg_data
                 break
@@ -235,7 +235,7 @@ class TestGatewayDLPIntegration:
 
         # Find DLP violation event
         dlp_event = None
-        for event_id, event_data in security_events:
+        for _, event_data in security_events:
             if event_data.get("event_type") == "DLP_VIOLATION":
                 dlp_event = event_data
                 break

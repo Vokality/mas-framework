@@ -95,7 +95,7 @@ async def test_concurrent_requests():
 
         # Verify all responses
         assert len(responses) == 5
-        for i, response in enumerate(responses):
+        for response in responses:
             assert "Processed: request_" in response.payload.get("result", "")
 
         assert responder.requests_handled == 5

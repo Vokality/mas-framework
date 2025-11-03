@@ -6,7 +6,7 @@ import io
 import json
 import logging
 import time
-from typing import Optional, cast
+from typing import Optional
 from mas.redis_types import AsyncRedisProtocol
 from pydantic import BaseModel, Field
 
