@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 from redis.asyncio import Redis
 from pydantic import BaseModel
 
@@ -16,9 +16,6 @@ from .priority_queue import PriorityQueueModule, MessagePriority
 from .message_signing import MessageSigningModule
 from .metrics import MetricsCollector
 from .config import GatewaySettings
-
-if TYPE_CHECKING:
-    from .auth_manager import AuthorizationManager
 
 logger = logging.getLogger(__name__)
 
