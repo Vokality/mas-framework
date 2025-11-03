@@ -20,6 +20,7 @@ from mas.gateway import GatewayService  # noqa: E402
 from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings  # noqa: E402
 from patient_agent import PatientAgent  # noqa: E402
 from doctor_agent import DoctorAgent  # noqa: E402
+from specialist_agent import SpecialistAgent  # noqa: E402
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +51,7 @@ async def main() -> None:
 
     logger.info("=" * 60)
     logger.info("Healthcare Consultation Demo - GATEWAY MODE")
+    logger.info("3-Agent System: Patient → GP Doctor → Specialist")
     logger.info("=" * 60)
     logger.info("")
     logger.info("Gateway Features Enabled:")
@@ -86,11 +88,18 @@ async def main() -> None:
     logger.info("✓ Gateway Service started")
     logger.info("")
 
-    # Create agents (both with use_gateway=True)
+    # Create agents (all with use_gateway=True)
     doctor = DoctorAgent(
         agent_id="doctor_smith",
         redis_url=redis_url,
         openai_api_key=api_key,
+    )
+
+    specialist = SpecialistAgent(
+        agent_id="specialist_dr_chen",
+        redis_url=redis_url,
+        openai_api_key=api_key,
+        specialization="cardiology",  # Can be any specialization
     )
 
     patient = PatientAgent(
@@ -101,6 +110,7 @@ async def main() -> None:
 
     # Configure agents to use the gateway
     doctor.set_gateway(gateway)
+    specialist.set_gateway(gateway)
     patient.set_gateway(gateway)
     logger.info("✓ Agents configured to use gateway")
 
@@ -108,21 +118,27 @@ async def main() -> None:
     logger.info("Configuring gateway authorization...")
     auth = gateway.auth_manager()
     await auth.allow_bidirectional("patient_jones", "doctor_smith")
-    logger.info("✓ Authorization configured: patient ↔ doctor communication allowed")
+    await auth.allow_bidirectional("doctor_smith", "specialist_dr_chen")
+    logger.info("✓ Authorization configured:")
+    logger.info("  - patient ↔ doctor communication allowed")
+    logger.info("  - doctor ↔ specialist communication allowed")
     logger.info("")
 
     try:
-        # Start agents (doctor first so patient can discover)
+        # Start agents (specialist and doctor first so patient can discover)
+        await specialist.start()
         await doctor.start()
         await patient.start()
 
         # Let the consultation run (patient will ask 3 questions)
         # Each message goes through full gateway validation
+        # Flow: Patient → GP → Specialist → GP → Patient
         logger.info("Consultation in progress...")
+        logger.info("(Message flow: Patient → GP → Specialist → GP → Patient)")
         logger.info("(Each message: auth → authz → rate limit → DLP → audit → deliver)")
         logger.info("")
 
-        await asyncio.sleep(60)  # ~60 seconds for 3 Q&As
+        await asyncio.sleep(90)  # ~90 seconds for 3 Q&As with specialist consultations
 
     except KeyboardInterrupt:
         logger.info("\nShutting down...")
@@ -132,6 +148,7 @@ async def main() -> None:
         logger.info("Stopping agents and services...")
         await patient.stop()
         await doctor.stop()
+        await specialist.stop()
         await gateway.stop()
         await service.stop()
 
@@ -139,6 +156,7 @@ async def main() -> None:
     logger.info("=" * 60)
     logger.info("Demo complete!")
     logger.info("All consultations logged in audit trail for compliance")
+    logger.info("Flow: Patient → GP → Specialist → GP → Patient")
     logger.info("=" * 60)
 
 
