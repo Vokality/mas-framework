@@ -3,19 +3,22 @@
 import logging
 import time
 from typing import Optional
-from redis.asyncio import Redis
+
 from pydantic import BaseModel
+from redis.asyncio import Redis
 
 from ..agent import AgentMessage
+from .audit import AuditModule
+from .auth_manager import AuthorizationManager
 from .authentication import AuthenticationModule
 from .authorization import AuthorizationModule
-from .audit import AuditModule
-from .rate_limit import RateLimitModule
-from .dlp import DLPModule, ActionPolicy
-from .priority_queue import PriorityQueueModule, MessagePriority
+from .circuit_breaker import CircuitBreakerConfig, CircuitBreakerModule
+from .config import GatewaySettings
+from .dlp import ActionPolicy, DLPModule
 from .message_signing import MessageSigningModule
 from .metrics import MetricsCollector
-from .config import GatewaySettings
+from .priority_queue import MessagePriority, PriorityQueueModule
+from .rate_limit import RateLimitModule
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,7 @@ class GatewayService:
         self._dlp: Optional[DLPModule] = None
         self._priority_queue: Optional[PriorityQueueModule] = None
         self._message_signing: Optional[MessageSigningModule] = None
+        self._circuit_breaker: Optional[CircuitBreakerModule] = None
 
     async def start(self) -> None:
         """Start the gateway service."""
@@ -124,6 +128,15 @@ class GatewayService:
                 max_timestamp_drift=self.settings.message_signing.max_timestamp_drift,
                 nonce_ttl=self.settings.message_signing.nonce_ttl,
             )
+
+        if self.settings.features.circuit_breaker:
+            cb_config = CircuitBreakerConfig(
+                failure_threshold=self.settings.circuit_breaker.failure_threshold,
+                success_threshold=self.settings.circuit_breaker.success_threshold,
+                timeout_seconds=self.settings.circuit_breaker.timeout_seconds,
+                window_seconds=self.settings.circuit_breaker.window_seconds,
+            )
+            self._circuit_breaker = CircuitBreakerModule(self._redis, config=cb_config)
 
         # Initialize metrics
         MetricsCollector.set_gateway_info(
@@ -282,7 +295,7 @@ class GatewayService:
             sig_result = await self._message_signing.verify_signature(
                 agent_id=message.sender_id,
                 message_id=message.message_id,
-                payload=message.payload if isinstance(message.payload, dict) else {},
+                payload=message.payload,
                 signature=signature,
                 timestamp=timestamp,
                 nonce=nonce,
@@ -640,6 +653,11 @@ class GatewayService:
         """Get message signing module (if enabled)."""
         return self._message_signing
 
+    @property
+    def circuit_breaker(self) -> CircuitBreakerModule | None:
+        """Get circuit breaker module (if enabled)."""
+        return self._circuit_breaker
+
     def auth_manager(self) -> "AuthorizationManager":
         """
         Get high-level authorization manager for easy configuration.
@@ -651,7 +669,6 @@ class GatewayService:
             auth = gateway.auth_manager()
             await auth.allow_bidirectional("agent1", "agent2")
         """
-        from .auth_manager import AuthorizationManager
 
         return AuthorizationManager(self)
 
