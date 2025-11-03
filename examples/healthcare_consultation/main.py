@@ -5,23 +5,21 @@ import logging
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-# Load environment variables from .env file
-from dotenv import load_dotenv
 
 # Load .env from project root
 project_root = Path(__file__).parent.parent.parent
 dotenv_path = project_root / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
-from mas import MASService
-from mas.gateway import GatewayService
-from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings
-from patient_agent import PatientAgent
-from doctor_agent import DoctorAgent
+from mas import MASService  # noqa: E402
+from mas.gateway import GatewayService  # noqa: E402
+from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings  # noqa: E402
+from patient_agent import PatientAgent  # noqa: E402
+from doctor_agent import DoctorAgent  # noqa: E402
 
 # Configure logging
 logging.basicConfig(

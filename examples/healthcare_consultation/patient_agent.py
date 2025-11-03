@@ -53,7 +53,7 @@ class PatientAgent(Agent):
     async def on_start(self) -> None:
         """Initialize the patient agent."""
         logger.info(f"Patient agent {self.id} started (GATEWAY MODE)")
-        logger.info(f"Security features: Auth, RBAC, Rate Limiting, DLP, Audit")
+        logger.info("Security features: Auth, RBAC, Rate Limiting, DLP, Audit")
 
         # Discover doctor agent
         await asyncio.sleep(0.5)
@@ -80,7 +80,7 @@ class PatientAgent(Agent):
             advice = message.payload.get("advice")
 
             logger.info(f"\n{'=' * 60}")
-            logger.info(f"DOCTOR'S ADVICE:")
+            logger.info("DOCTOR'S ADVICE:")
             logger.info(f"{advice}")
             logger.info(f"{'=' * 60}\n")
 

@@ -75,7 +75,7 @@ class StudentAgent(Agent):
             answer = message.payload.get("answer")
 
             logger.info(f"\n{'=' * 60}")
-            logger.info(f"PROFESSOR'S ANSWER:")
+            logger.info("PROFESSOR'S ANSWER:")
             logger.info(f"{answer}")
             logger.info(f"{'=' * 60}\n")
 

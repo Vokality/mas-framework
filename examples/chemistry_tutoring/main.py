@@ -5,21 +5,19 @@ import logging
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-# Load environment variables from .env file
-from dotenv import load_dotenv
 
 # Load .env from project root (two directories up from this file)
 project_root = Path(__file__).parent.parent.parent
 dotenv_path = project_root / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
-from mas import MASService
-from student_agent import StudentAgent
-from professor_agent import ProfessorAgent
+from mas import MASService  # noqa: E402
+from student_agent import StudentAgent  # noqa: E402
+from professor_agent import ProfessorAgent  # noqa: E402
 
 # Configure logging
 logging.basicConfig(

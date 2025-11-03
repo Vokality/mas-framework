@@ -48,7 +48,7 @@ class DoctorAgent(Agent):
     async def on_start(self) -> None:
         """Initialize the doctor agent."""
         logger.info(f"Doctor agent {self.id} started (GATEWAY MODE)")
-        logger.info(f"HIPAA-compliant: All messages audited and DLP-scanned")
+        logger.info("HIPAA-compliant: All messages audited and DLP-scanned")
         logger.info("Ready for consultations...")
 
     async def on_message(self, message: AgentMessage) -> None:
