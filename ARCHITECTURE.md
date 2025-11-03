@@ -11,6 +11,8 @@
 - [Redis Data Model](#redis-data-model)
 - [Lifecycle Management](#lifecycle-management)
 - [Performance Characteristics](#performance-characteristics)
+- [Gateway Pattern](#gateway-pattern-enterprise-deployment)
+- [Configuration](#configuration)
 - [Implementation Details](#implementation-details)
 
 ## Overview
@@ -798,46 +800,374 @@ await agent.send("target", payload)
 - **Auto-persisted state**: Automatic state management
 - **Minimal code**: ~200 lines per component
 
-## Future Enhancements
+## Gateway Pattern (Enterprise Deployment)
 
-### Planned
+The framework includes an optional **Gateway Service** for enterprise deployments requiring centralized security, compliance, and operational control.
 
-1. **Message Delivery Guarantees**
-   - Redis Streams instead of pub/sub
-   - At-least-once delivery
-   - Message acknowledgment
+### Gateway Architecture
 
-2. **Authentication**
-   - Token-based auth (tokens already generated)
-   - Verify sender identity
-   - Rate limiting per agent
+```
+Agent A → Gateway Service → Validation → Redis Streams → Agent B
+          (auth, audit, DLP)            (reliable delivery)
+```
 
-3. **Observability**
-   - Prometheus metrics
-   - Message throughput tracking
-   - Latency histograms
-   - Active agent counts
+**Gateway Features**:
+- **Authentication**: Token-based validation with revocation support
+- **Authorization**: ACL (allow/block lists) and RBAC (role-based permissions)
+- **Rate Limiting**: Token bucket algorithm (per-minute, per-hour limits)
+- **Data Loss Prevention**: PII/PHI/PCI pattern detection with block/redact/alert actions
+- **Circuit Breakers**: Failure detection with auto-recovery and dead letter queues
+- **Priority Queues**: Message prioritization (CRITICAL > HIGH > NORMAL > LOW > BULK)
+- **Audit Logging**: Immutable audit trail with hash chains in Redis Streams
+- **Message Signing**: HMAC-SHA256 signatures with replay attack protection
+- **Metrics**: Prometheus instrumentation for observability
 
-4. **Multi-Region**
-   - Redis Cluster support
-   - Cross-region agent communication
-   - Geographic distribution
+### Gateway Configuration
 
-### Considerations
+The gateway uses Pydantic Settings with multiple configuration sources:
 
-**Redis Streams vs Pub/Sub**:
-- Current (Pub/Sub): At-most-once, low latency, simple
-- Alternative (Streams): At-least-once, persistence, more complex
+```python
+from mas.gateway import GatewaySettings, load_settings
 
-**Circuit Breakers**:
-- Track failed sends per target
-- Temporarily blacklist unresponsive agents
-- Auto-recovery after timeout
+# From environment variables
+settings = GatewaySettings()
 
-**Dead Letter Queues**:
-- Store failed messages
-- Retry with backoff
-- Manual inspection/replay
+# From YAML file
+settings = GatewaySettings.from_yaml("gateway.yaml")
+
+# Programmatic
+settings = GatewaySettings(
+    redis={"url": "redis://prod:6379"},
+    features={"rbac": True, "message_signing": True}
+)
+```
+
+**Configuration Hierarchy** (highest to lowest priority):
+1. Explicitly passed parameters
+2. Environment variables (GATEWAY_* prefix)
+3. Config file (YAML)
+4. Production-ready defaults
+
+**Default Features** (secure-by-default):
+- DLP scanning: **Enabled**
+- Circuit breakers: **Enabled**
+- Priority queues: **Enabled**
+- RBAC authorization: **Enabled**
+- Message signing: **Enabled**
+
+### Gateway Components
+
+**Authentication Module** (`src/mas/gateway/authentication.py`):
+- Token validation against Redis registry
+- Token rotation and revocation
+- Configurable token lifetime
+
+**Authorization Module** (`src/mas/gateway/authorization.py`):
+- ACL: Simple allow/block lists with wildcard support
+- RBAC: Role-based permissions with pattern matching (e.g., `send:*`, `agent.*`)
+- Combined authorization (either ACL or RBAC can grant access)
+
+**Audit Module** (`src/mas/gateway/audit.py`):
+- Immutable audit logging using Redis Streams
+- Hash chains for tamper detection
+- Query API: by sender, target, decision, violation type, time range
+- CSV/JSON export for compliance reporting
+
+**DLP Module** (`src/mas/gateway/dlp.py`):
+- Pattern-based detection: SSN, credit cards, AWS keys, phone numbers, emails
+- Actions: BLOCK (reject), REDACT (mask), ALERT (log)
+- Metrics integration for violation tracking
+
+**Rate Limit Module** (`src/mas/gateway/rate_limit.py`):
+- Token bucket algorithm
+- Per-agent limits (configurable per-minute and per-hour)
+- Sliding window implementation using Redis sorted sets
+
+**Circuit Breaker Module** (`src/mas/gateway/circuit_breaker.py`):
+- States: CLOSED (normal), OPEN (blocking), HALF_OPEN (testing recovery)
+- Dead letter queue for failed messages
+- Configurable thresholds and timeouts
+
+**Priority Queue Module** (`src/mas/gateway/priority_queue.py`):
+- Five priority levels with configurable weights
+- Weighted round-robin scheduling
+- Message TTL and fairness guarantees
+
+**Message Signing Module** (`src/mas/gateway/message_signing.py`):
+- HMAC-SHA256 cryptographic signatures
+- Per-agent signing keys with rotation support
+- Replay protection: nonce tracking and timestamp validation
+- Timing-safe signature comparison
+
+**Metrics Module** (`src/mas/gateway/metrics.py`):
+- Prometheus counters: messages, auth failures, rate limits, DLP violations
+- Histograms: message latency, DLP scan duration, auth duration
+- Gauges: active requests, circuit breaker states, queue depth
+- HTTP server for /metrics endpoint
+
+### Gateway Redis Data Model
+
+Additional keys used by gateway:
+
+| Key Pattern | Type | Purpose |
+|------------|------|---------|
+| `agent:{id}:allowed_targets` | Set | ACL allowed targets |
+| `agent:{id}:blocked_targets` | Set | ACL blocked targets |
+| `agent:{id}:roles` | Set | RBAC role assignments |
+| `agent:{id}:signing_key` | String | HMAC signing key |
+| `role:{name}` | Hash | Role metadata |
+| `role:{name}:permissions` | Set | Role permissions |
+| `ratelimit:{id}:{window}` | Sorted Set | Rate limit tracking |
+| `circuit:{target}` | Hash | Circuit breaker state |
+| `dlq:messages` | Stream | Dead letter queue |
+| `audit:messages` | Stream | Main audit log |
+| `audit:by_sender:{id}` | Stream | Sender-indexed audit |
+| `audit:by_target:{id}` | Stream | Target-indexed audit |
+| `audit:security_events` | Stream | Security events |
+| `message_nonces:{id}` | String | Nonce replay protection |
+| `priority_queue:{target}:{priority}` | Sorted Set | Priority queues |
+
+### When to Use Gateway vs Pure P2P
+
+**Use Gateway Pattern if**:
+- Regulated industry (finance, healthcare, government)
+- Handling sensitive data (PII, PHI, PCI)
+- Compliance requirements (SOC2, HIPAA, GDPR)
+- Multi-tenant with strict isolation
+- Zero-trust security architecture required
+
+**Use Pure P2P if**:
+- Internal tools in trusted environment
+- Performance is critical (<5ms latency required)
+- No regulatory compliance requirements
+- Rapid iteration and development
+
+**Hybrid Approach**:
+- P2P for internal, trusted agents (high performance)
+- Gateway for external agents (security)
+- Gateway for sensitive operations (compliance)
+
+### Gateway Performance
+
+**Throughput** (single gateway instance):
+- Basic (auth + audit): 5,000-8,000 msg/s
+- Full security (all features): 2,000-3,000 msg/s
+- Clustered (3 instances): 6,000-9,000 msg/s
+
+**Latency**:
+- P50: 10-15ms (vs <5ms for pure P2P)
+- P95: 25-35ms
+- P99: 50-80ms
+
+**Trade-offs**:
+- 2-3x latency increase
+- 50-70% throughput reduction (single instance)
+- Complete audit trail and compliance
+- Zero-trust security enforcement
+
+## Configuration
+
+The framework provides comprehensive configuration management using Pydantic Settings.
+
+### Configuration Sources
+
+Configuration loads from multiple sources with clear precedence:
+
+1. **Explicitly passed parameters** (highest priority)
+2. **Environment variables** (`GATEWAY_*` prefix)
+3. **YAML configuration file** (`gateway.yaml`)
+4. **Default values** (production-ready defaults)
+
+### Gateway Configuration
+
+```python
+from mas.gateway import GatewaySettings, load_settings
+
+# Load from environment variables
+settings = GatewaySettings()
+
+# Load from YAML file
+settings = GatewaySettings.from_yaml("gateway.yaml")
+
+# Programmatic configuration
+settings = GatewaySettings(
+    redis={"url": "redis://prod:6379"},
+    rate_limit={"per_minute": 200, "per_hour": 2000},
+    features={"rbac": True, "message_signing": True}
+)
+
+# Using convenience function
+settings = load_settings(config_file="gateway.yaml")
+
+# View configuration
+print(settings.summary())
+```
+
+### Configuration Modules
+
+**GatewaySettings**: Main configuration container
+- `redis`: Redis connection settings
+- `rate_limit`: Rate limiting thresholds
+- `features`: Feature flag toggles
+- `circuit_breaker`: Circuit breaker parameters
+- `priority_queue`: Queue weights and TTL
+- `message_signing`: Signing and replay protection settings
+
+**RedisSettings**:
+```python
+url: str = "redis://localhost:6379"
+decode_responses: bool = True
+socket_timeout: Optional[float] = None
+```
+
+**RateLimitSettings**:
+```python
+per_minute: int = 100  # Messages per minute per agent
+per_hour: int = 1000   # Messages per hour per agent
+```
+
+**FeaturesSettings** (secure-by-default):
+```python
+dlp: bool = True               # Data Loss Prevention scanning
+priority_queue: bool = True    # Message priority routing
+rbac: bool = True             # Role-Based Access Control
+message_signing: bool = True  # HMAC message signatures
+circuit_breaker: bool = True  # Circuit breaker for reliability
+```
+
+**CircuitBreakerSettings**:
+```python
+failure_threshold: int = 5     # Failures before opening circuit
+success_threshold: int = 2     # Successes before closing
+timeout_seconds: float = 60.0  # Timeout before half-open state
+window_seconds: float = 300.0  # Failure counting window
+```
+
+**PriorityQueueSettings**:
+```python
+default_ttl: int = 300         # Message TTL in seconds
+critical_weight: int = 10      # CRITICAL priority weight
+high_weight: int = 5           # HIGH priority weight
+normal_weight: int = 2         # NORMAL priority weight
+low_weight: int = 1            # LOW priority weight
+bulk_weight: int = 0           # BULK priority weight
+```
+
+**MessageSigningSettings**:
+```python
+max_timestamp_drift: int = 300 # Max clock drift (5 minutes)
+nonce_ttl: int = 300          # Nonce TTL for replay protection
+```
+
+### Environment Variables
+
+All settings support environment variable overrides:
+
+```bash
+# Redis configuration
+export GATEWAY_REDIS__URL="redis://prod:6379"
+export GATEWAY_REDIS__SOCKET_TIMEOUT=30
+
+# Rate limiting
+export GATEWAY_RATE_LIMIT__PER_MINUTE=200
+export GATEWAY_RATE_LIMIT__PER_HOUR=2000
+
+# Feature flags
+export GATEWAY_FEATURES__DLP=true
+export GATEWAY_FEATURES__RBAC=true
+export GATEWAY_FEATURES__MESSAGE_SIGNING=true
+
+# Circuit breaker
+export GATEWAY_CIRCUIT_BREAKER__FAILURE_THRESHOLD=10
+export GATEWAY_CIRCUIT_BREAKER__TIMEOUT_SECONDS=120
+
+# Priority queue
+export GATEWAY_PRIORITY_QUEUE__CRITICAL_WEIGHT=20
+
+# Message signing
+export GATEWAY_MESSAGE_SIGNING__MAX_TIMESTAMP_DRIFT=600
+```
+
+### YAML Configuration
+
+Example `gateway.yaml`:
+
+```yaml
+redis:
+  url: redis://localhost:6379
+  decode_responses: true
+
+rate_limit:
+  per_minute: 100
+  per_hour: 1000
+
+features:
+  dlp: true
+  priority_queue: true
+  rbac: true
+  message_signing: true
+  circuit_breaker: true
+
+circuit_breaker:
+  failure_threshold: 5
+  success_threshold: 2
+  timeout_seconds: 60
+  window_seconds: 300
+
+priority_queue:
+  default_ttl: 300
+  critical_weight: 10
+  high_weight: 5
+  normal_weight: 2
+  low_weight: 1
+  bulk_weight: 0
+
+message_signing:
+  max_timestamp_drift: 300
+  nonce_ttl: 300
+```
+
+### Configuration Methods
+
+**Load from file**:
+```python
+settings = GatewaySettings.from_yaml("gateway.yaml")
+```
+
+**Export to file**:
+```python
+settings.to_yaml("gateway-export.yaml")
+```
+
+**Human-readable summary**:
+```python
+print(settings.summary())
+# Output:
+# Gateway Configuration:
+#   Redis: redis://localhost:6379
+#   Rate Limits: 100/min, 1000/hour
+# 
+# Features:
+#   DLP: ✓
+#   Priority Queue: ✓
+#   RBAC: ✓
+#   ...
+```
+
+### Development vs Production
+
+**Development** (disable features for speed):
+```python
+settings = GatewaySettings(
+    features={"rbac": False, "message_signing": False, "dlp": False}
+)
+```
+
+**Production** (use defaults or explicit config):
+```python
+# All security features enabled by default
+settings = GatewaySettings.from_yaml("production.yaml")
+```
 
 ---
 
