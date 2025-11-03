@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from redis.asyncio import Redis
 from pydantic import BaseModel
 
@@ -16,6 +16,9 @@ from .priority_queue import PriorityQueueModule, MessagePriority
 from .message_signing import MessageSigningModule
 from .metrics import MetricsCollector
 from .config import GatewaySettings
+
+if TYPE_CHECKING:
+    from .auth_manager import AuthorizationManager
 
 logger = logging.getLogger(__name__)
 
@@ -196,8 +199,15 @@ class GatewayService:
         start_time = time.time()
         violations = []
 
+        # Ensure modules are initialized
+        assert self._auth is not None, "Gateway not started"
+        assert self._authz is not None, "Gateway not started"
+        assert self._audit is not None, "Gateway not started"
+        assert self._rate_limit is not None, "Gateway not started"
+        assert self._redis is not None, "Gateway not started"
+
         # Stage 1: Authentication
-        auth_result = await self._auth.authenticate(message.sender_id, token)
+        auth_result = await self._auth.authenticate(message.sender_id, token)  # type: ignore[union-attr]
         if not auth_result.authenticated:
             latency_ms = (time.time() - start_time) * 1000
 
@@ -546,7 +556,7 @@ class GatewayService:
         else:
             # Direct delivery via pub/sub (MVP)
             target_channel = f"agent.{message.target_id}"
-            await self._redis.publish(target_channel, message.model_dump_json())
+            await self._redis.publish(target_channel, message.model_dump_json())  # type: ignore[union-attr]
 
             logger.debug(
                 "Message published",
@@ -655,7 +665,7 @@ class GatewayService:
         Returns:
             Dictionary with gateway stats
         """
-        audit_stats = await self._audit.get_stats()
+        audit_stats = await self._audit.get_stats()  # type: ignore[union-attr]
 
         return {
             "status": "running" if self._running else "stopped",
