@@ -79,8 +79,8 @@ await agent.send("target_agent", {"data": "hello"})
 ```
 
 **Benefits:**
-- 100x throughput vs centralized routing
-- Lower latency (<5ms vs ~50ms)
+- High throughput (10,000+ msg/sec)
+- Low latency (<5ms median)
 - No single point of failure
 - Linear scalability
 
@@ -251,108 +251,44 @@ Typical performance on a single Redis instance:
 | Latency (P95) | <10ms |
 | Latency (P99) | <50ms |
 
-**Comparison with centralized routing:**
+## Documentation
 
-| Architecture | Throughput | Latency P50 |
-|--------------|------------|-------------|
-| Old (central routing) | ~200 msg/sec | ~50ms |
-| New (peer-to-peer) | 10,000+ msg/sec | <5ms |
+- **[Architecture Guide](ARCHITECTURE.md)** - Detailed system architecture, design decisions, and implementation details
+- **[API Reference](#features)** - Feature documentation and usage examples below
 
-## Architecture Details
+### Quick Architecture Overview
 
-### Component Overview
+**Components:**
+- **MAS Service** - Lightweight registry and health monitor (optional)
+- **Agent** - Self-contained agent with peer-to-peer messaging
+- **Registry** - Agent discovery by capabilities
+- **State Manager** - Auto-persisted state to Redis
 
-**MAS Service** (`src/mas/service.py` - 150 lines)
-- Listens for agent registration/deregistration on `mas.system` channel
-- Monitors agent heartbeats
-- Does NOT route messages
-
-**Agent** (`src/mas/agent.py` - 200 lines)
-- Self-contained, only needs Redis URL
-- Subscribes to own channel: `agent.{agent_id}`
-- Sends directly to target channels: `agent.{target_id}`
-- Manages own state in Redis: `agent.state:{agent_id}`
-
-**Registry** (`src/mas/registry.py` - 100 lines)
-- Stores agent metadata in Redis: `agent:{agent_id}`
-- Tracks heartbeats: `agent:{agent_id}:heartbeat`
-- Discovery via Redis SCAN
-
-**State Manager** (`src/mas/state.py` - 80 lines)
-- Persists state to Redis hash: `agent.state:{agent_id}`
-- Supports dict or Pydantic models
-- Automatic load on agent start
-
-### Message Flow
-
-**Old (Centralized):**
+**Message Flow (Peer-to-Peer):**
 ```
-Agent A → Runtime → TransportService → Core MAS → Route → Agent B
+Agent A → Redis Pub/Sub (channel: agent.B) → Agent B
 ```
 
-**New (Peer-to-Peer):**
-```
-Agent A → Redis Pub (agent.B) → Agent B
-```
+**Redis Keys:**
+- `agent:{id}` - Agent metadata
+- `agent:{id}:heartbeat` - Health monitoring (60s TTL)
+- `agent.state:{id}` - Persisted agent state
+- `agent.{id}` - Message channel (pub/sub)
+- `mas.system` - System events (pub/sub)
 
-### Redis Keys
-
-- `agent:{agent_id}` - Agent metadata (hash)
-- `agent:{agent_id}:heartbeat` - Heartbeat timestamp (string with TTL)
-- `agent.state:{agent_id}` - Agent state (hash)
-- `mas.system` - System messages channel (pub/sub)
-- `agent.{agent_id}` - Agent message channel (pub/sub)
-
-## Migration from Old API
-
-### Before (Complex)
-```python
-from mas import mas_service
-from mas.sdk.agent import Agent
-from mas.sdk.runtime import AgentRuntime
-
-async with mas_service() as context:
-    runtime = AgentRuntime(
-        agent_id="my_agent",
-        transport=context.transport,
-        persistence=context.persistence,
-        capabilities={"nlp"},
-        metadata={}
-    )
-    agent = MyAgent(runtime)
-    await agent.start()
-```
-
-### After (Simple)
-```python
-from mas import Agent
-
-agent = Agent("my_agent", capabilities=["nlp"])
-await agent.start()
-```
-
-### Key Changes
-
-| Old | New |
-|-----|-----|
-| `AgentRuntime` required | Not needed (built into Agent) |
-| `mas_service()` context manager | Optional `MASService()` |
-| Transport/persistence injection | Redis URL only |
-| Complex registration flow | Single `await agent.start()` |
-| State in memory only | Auto-persisted to Redis |
-| Messages through MAS core | Direct peer-to-peer |
+For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Roadmap
 
-### Completed ✅
-- [x] Peer-to-peer messaging
-- [x] Redis-based registry
-- [x] Auto-persisted state
-- [x] Simple agent API
-- [x] Discovery by capabilities
-- [x] Heartbeat monitoring
+### Current Features
+- Peer-to-peer messaging
+- Redis-based registry
+- Auto-persisted state
+- Simple agent API
+- Discovery by capabilities
+- Heartbeat monitoring
 
-### Next Steps 🚧
+### Planned
 - [ ] Authentication tokens
 - [ ] Message delivery guarantees (at-least-once)
 - [ ] Circuit breakers for failing agents

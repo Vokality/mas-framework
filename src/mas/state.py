@@ -1,7 +1,7 @@
 """Redis-backed state management."""
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 from redis.asyncio import Redis
 from pydantic import BaseModel
 
