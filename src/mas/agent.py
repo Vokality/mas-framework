@@ -143,6 +143,8 @@ class Agent:
         self._token: Optional[str] = None
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        # Transport readiness gate - set once startup completes
+        self._transport_ready: asyncio.Event = asyncio.Event()
 
         # Registry and state
         self._registry: Optional[AgentRegistry] = None
@@ -204,6 +206,9 @@ class Agent:
         )
 
         logger.info("Agent started", extra={"agent_id": self.id})
+
+        # Signal that transport can begin (registration + subscriptions established)
+        self._transport_ready.set()
 
         # Call user hook
         await self.on_start()
@@ -278,6 +283,8 @@ class Agent:
         )
 
         if self.use_gateway:
+            # Ensure framework signaled readiness before routing via gateway
+            await self._transport_ready.wait()
             # Route through gateway
             if not self._gateway:
                 raise RuntimeError(
@@ -287,6 +294,7 @@ class Agent:
             if not self._token:
                 raise RuntimeError("No token available for gateway authentication")
 
+            # First and only attempt (framework gates readiness)
             result = await self._gateway.handle_message(message, self._token)
 
             if not result.success:
@@ -432,6 +440,18 @@ class Agent:
             raise RuntimeError("Agent not started")
 
         return await self._registry.discover(capabilities)
+
+    async def wait_transport_ready(self, timeout: float | None = None) -> None:
+        """
+        Wait until the framework signals that transport can begin.
+
+        Args:
+            timeout: Optional timeout in seconds to wait.
+        """
+        if timeout is None:
+            await self._transport_ready.wait()
+        else:
+            await asyncio.wait_for(self._transport_ready.wait(), timeout)
 
     async def update_state(self, updates: dict) -> None:
         """

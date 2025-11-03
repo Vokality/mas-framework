@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import Optional, Any
 from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
@@ -118,22 +118,44 @@ class MASService:
                     await asyncio.sleep(30)
                     continue
 
-                # Find stale agents
-                pattern = "agent:*:heartbeat"
-                async for key in self._redis.scan_iter(pattern):
-                    ttl = await self._redis.ttl(key)
-                    if ttl < 0:  # Expired
+                # Find stale agents by existing heartbeat keys (expiring soon or invalid TTL)
+                async for key in self._redis.scan_iter("agent:*:heartbeat"):
+                    _ttl_obj = self._redis.ttl(key)
+                    ttl_any: Any = await _ttl_obj if asyncio.iscoroutine(_ttl_obj) else _ttl_obj
+                    ttl_int: int = int(ttl_any)
+                    if ttl_int <= 0:  # -2 (missing) or -1 (no expiry) or invalid
                         agent_id = key.split(":")[1]
                         logger.warning(
                             "Agent heartbeat expired", extra={"agent_id": agent_id}
                         )
-                        # Mark as inactive
+                        # Mark as inactive if still present
                         agent_key = f"agent:{agent_id}"
-                        exists = await self._redis.exists(agent_key)
+                        _exists = self._redis.exists(agent_key)
+                        exists = await _exists if asyncio.iscoroutine(_exists) else _exists
                         if exists:
-                            result = self._redis.hset(agent_key, "status", "INACTIVE")
-                            if asyncio.iscoroutine(result):
-                                await result
+                            _status = self._redis.hget(agent_key, "status")
+                            status = await _status if asyncio.iscoroutine(_status) else _status
+                            if status != "INACTIVE":
+                                _result = self._redis.hset(agent_key, "status", "INACTIVE")
+                                if asyncio.iscoroutine(_result):
+                                    await _result
+
+                # Also detect agents with missing heartbeat keys entirely
+                async for agent_key in self._redis.scan_iter("agent:*"):
+                    # Skip non-agent hashes like heartbeat keys themselves
+                    if agent_key.count(":") != 1:
+                        continue
+                    hb_key = f"{agent_key}:heartbeat"
+                    _hb_exists = self._redis.exists(hb_key)
+                    hb_exists = await _hb_exists if asyncio.iscoroutine(_hb_exists) else _hb_exists
+                    if not hb_exists:
+                        # If the agent exists but no heartbeat key, mark INACTIVE
+                        _status2 = self._redis.hget(agent_key, "status")
+                        status = await _status2 if asyncio.iscoroutine(_status2) else _status2
+                        if status != "INACTIVE":
+                            _result2 = self._redis.hset(agent_key, "status", "INACTIVE")
+                            if asyncio.iscoroutine(_result2):
+                                await _result2
 
                 await asyncio.sleep(30)  # Check every 30 seconds
             except Exception as e:
