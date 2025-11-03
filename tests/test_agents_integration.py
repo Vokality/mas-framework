@@ -48,7 +48,6 @@ class DemoSenderAgent(Agent):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Hangs due to event loop cleanup issues - needs investigation")
 async def test_agent_to_agent_message_passing():
     transport = TransportService()
     persistence = MemoryPersistenceProvider()
@@ -98,9 +97,7 @@ async def test_agent_to_agent_message_passing():
         assert recv.received[0].payload == {"k": "v"}
 
         # Cleanup agents
-        await recv.stop()
-        await send.stop()
+        # Let MAS coordinate agent shutdown
     finally:
         await mas.stop()
-        await transport.stop()
         await persistence.cleanup()

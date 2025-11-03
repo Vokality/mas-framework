@@ -260,6 +260,9 @@ class RedisTransport(BaseTransport):
                             f"Cleaned up {len(expired_deliveries)} old deliveries"
                         )
 
+            except asyncio.CancelledError:
+                logger.debug("Delivery cleanup task cancelled")
+                raise
             except Exception as e:
                 logger.error(f"Error in delivery cleanup: {e}")
             await asyncio.sleep(60)  # Run cleanup every minute
@@ -427,6 +430,7 @@ class RedisTransport(BaseTransport):
                 state.pubsub = await self.connection_manager.get_pubsub(channel)
                 # Task will be started in get_message_stream
 
+    @override
     async def get_message_stream(self, channel: str) -> AsyncGenerator[Message, None]:
         """Get message stream for a channel."""
         if self._shutdown_event.is_set():

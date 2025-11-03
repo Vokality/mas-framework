@@ -26,6 +26,7 @@ class MAS:
         self._tasks: List[asyncio.Task] = []
         self._channel: str = "core"
         self._running: bool = False
+        self._shutting_down: bool = False
         self._transport: TransportService = transport
         self._discovery: DiscoveryService = DiscoveryService(persistence)
         self._persistence: BasePersistenceProvider = persistence
@@ -68,16 +69,53 @@ class MAS:
             await self.stop()  # Clean up any partially initialized services
             raise
 
+    async def _signal_agents_shutdown(self) -> None:
+        """Signal all registered agents to shutdown gracefully."""
+        agents = await self._discovery.find_agents()
+        logger.debug(f"Signaling {len(agents)} agents to shutdown")
+        for agent in agents:
+            try:
+                await self._transport.send_message(
+                    Message(
+                        sender_id=self._channel,
+                        target_id=agent.id,
+                        message_type=MessageType.STATUS_UPDATE_RESPONSE,
+                        payload={"status": "shutdown"},
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Failed to signal shutdown to {agent.id}: {e}")
+
     async def stop(self) -> None:
-        """Stop MAS in a controlled manner."""
+        """Stop MAS in a controlled, coordinated manner."""
         if not self._running:
             return
 
         logger.info("Stopping MAS...")
+        self._shutting_down = True
         self._running = False
 
         try:
-            # Cancel message handler
+            # Step 1: Signal all agents to shutdown
+            logger.info("Signaling agents to shutdown...")
+            await self._signal_agents_shutdown()
+            
+            # Step 2: Prepare transport for shutdown (keeps it operational for deregistration)
+            logger.info("Preparing transport for shutdown...")
+            await self._transport.prepare_shutdown()
+            
+            # Step 3: Wait for agents to deregister (with timeout)
+            logger.info("Waiting for agents to deregister...")
+            try:
+                await asyncio.wait_for(
+                    self._transport.wait_for_agents_deregistration(),
+                    timeout=5.0
+                )
+                logger.info("All agents deregistered successfully")
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for agents to deregister, proceeding with shutdown")
+
+            # Step 3: Cancel message handler and background tasks
             if self._message_handler:
                 logger.info("Stopping message handler...")
                 self._message_handler.cancel()
@@ -90,10 +128,15 @@ class MAS:
                 task.cancel()
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
-            # Cleanup services in reverse order
+            # Step 4: Cleanup services in reverse order
+            logger.debug("Stopping discovery service")
             await self._discovery.cleanup()
-            await self._persistence.cleanup()
+            
+            logger.info("Stopping transport service")
             await self._transport.stop()
+            
+            logger.debug("Cleaning up persistence")
+            await self._persistence.cleanup()
 
             logger.info("MAS stopped successfully")
 

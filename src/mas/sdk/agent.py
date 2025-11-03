@@ -45,6 +45,7 @@ class Agent(ABC):
         self._metric_lock = asyncio.Lock()
         self._state_model = state_model
         self._state_manager = StateManager(state_model)
+        self._subscribed_event = asyncio.Event()
 
     @classmethod
     async def create_agent(
@@ -101,7 +102,7 @@ class Agent(ABC):
     async def send_message(self, message: Message) -> None:
         """Send a message to another agent."""
         await self.runtime.send_message(
-            content=message.model_dump(),
+            content=message.payload,
             target_id=message.target_id,
             message_type=message.message_type,
         )
@@ -118,6 +119,12 @@ class Agent(ABC):
                     name=f"{self.id}_message_stream",
                 )
             )
+            # Ensure the message stream has subscribed before proceeding
+            try:
+                await asyncio.wait_for(self._subscribed_event.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                # Proceed even if subscription confirmation is delayed
+                pass
             await self.runtime.register()
             await self.on_start()
         except Exception as e:
@@ -159,7 +166,15 @@ class Agent(ABC):
                 self.id,
                 self.id,
             ) as stream:
+                # Signal that subscription is active
+                self._subscribed_event.set()
                 async for message in stream:  # type: ignore
+                    # Check if shutdown was signaled
+                    if not self._running:
+                        logger.info(f"{self.id} shutting down gracefully")
+                        await self.runtime.deregister()
+                        break
+                    
                     try:
                         if message.target_id != self.id:
                             continue
@@ -170,9 +185,21 @@ class Agent(ABC):
                                 await self._core_message_handler(message)
                             else:
                                 await self.on_message(message)
+                        
+                        # Check again after message processing
+                        if not self._running:
+                            logger.info(f"{self.id} shutting down gracefully")
+                            await self.runtime.deregister()
+                            break
+                    except asyncio.CancelledError:
+                        logger.debug(f"Message processing cancelled for {self.id}")
+                        raise
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
 
+        except asyncio.CancelledError:
+            logger.debug(f"Message stream cancelled for {self.id}")
+            raise
         except Exception as e:
             if self._running:
                 logger.error(f"Error processing message: {e}")
@@ -186,13 +213,15 @@ class Agent(ABC):
                     logger.info(f"{self.id} is registered")
                 except KeyError:
                     logger.error("Failed to register agent")
-                    await self.stop()
+                    # Signal shutdown instead of calling stop() directly
+                    self._running = False
             case MessageType.STATUS_UPDATE_RESPONSE:
                 try:
                     status = message.payload["status"]
                     if status == "shutdown":
                         logger.debug(f"{self.id} received shutdown message from core")
-                        await self.stop()
+                        # Signal shutdown instead of calling stop() directly to avoid deadlock
+                        self._running = False
                 except KeyError:
                     logger.error("Failed to process status update response")
             case MessageType.HEALTH_CHECK:

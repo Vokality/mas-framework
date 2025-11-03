@@ -37,10 +37,13 @@ class AgentRuntime:
 
     async def register(self) -> None:
         """
-        Register agent with core service.
+        Register agent with transport and core service.
+        Component registration is separate from discovery registration.
         """
-
-        await self.transport.register_component(self.core_id)
+        # Register with transport for lifecycle management
+        await self.transport.register_component(self.agent_id)
+        
+        # Send discovery registration message to core
         await self.send_message(
             content={
                 "status": AgentStatus.ACTIVE,
@@ -53,15 +56,22 @@ class AgentRuntime:
 
     async def deregister(self) -> None:
         """
-        Deregister agent from core service.
+        Deregister agent from transport and core service.
+        Component deregistration is a direct call, not message-based.
         """
-
-        await self.send_message(
-            target_id=self.core_id,
-            content={"status": AgentStatus.INACTIVE},
-            message_type=MessageType.DEREGISTRATION_REQUEST,
-        )
-        await self.transport.deregister_component(self.core_id)
+        # Deregister from transport first (direct call, always works)
+        await self.transport.deregister_component(self.agent_id)
+        
+        # Try to notify core, but don't fail if transport is shutting down
+        try:
+            await self.send_message(
+                target_id=self.core_id,
+                content={"status": AgentStatus.INACTIVE},
+                message_type=MessageType.DEREGISTRATION_REQUEST,
+            )
+        except RuntimeError:
+            # Transport may be shutting down, notification is best-effort
+            pass
 
     async def discover_agents(self, capabilities: List[str] | None = None) -> None:
         """

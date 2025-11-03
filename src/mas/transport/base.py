@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import AsyncGenerator
 
 from mas.protocol import Message
 
@@ -26,6 +27,11 @@ class BaseTransport(ABC):
         Returns:
             AsyncGenerator yielding messages from the channel
         """
+        pass
+
+    @abstractmethod
+    async def get_message_stream(self, channel: str) -> AsyncGenerator[Message, None]:
+        """Get message stream for a channel."""
         pass
 
     @abstractmethod

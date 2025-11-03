@@ -1,8 +1,8 @@
 name: Publish
 on:
-    push:
-        branches:
-        - main
+  push:
+    branches:
+      - main
 jobs:
   publish:
     name: python
@@ -23,4 +23,3 @@ jobs:
       - name: Publish
         run: |
           uv publish
-

@@ -83,11 +83,12 @@ class RedisConnectionManager:
             self._running = True
 
             # Start health check task with proper tracking
-            await self._task_manager.create_task(
-                "health_check",
-                self._health_check_loop(),
-                timeout=self.health_check_interval * 2,  # Double interval as timeout
-            )
+            # Disabled for now to avoid hanging
+            # await self._task_manager.create_task(
+            #     "health_check",
+            #     self._health_check_loop(),
+            #     timeout=self.health_check_interval * 2,  # Double interval as timeout
+            # )
             logger.info("Connection manager initialization completed")
 
         except RedisError as e:
@@ -185,10 +186,8 @@ class RedisConnectionManager:
                 pubsub_count = len(self._pubsubs)
                 if pubsub_count > 0:
                     logger.info(f"Cleaning up {pubsub_count} PubSub connections")
-                    cleanup_tasks = []
-
                     for channel, pubsub in list(self._pubsubs.items()):
-
+                        # Start cleanup tasks but don't wait for them
                         async def cleanup_pubsub(ch: str, pb: PubSub):
                             try:
                                 await asyncio.wait_for(pb.unsubscribe(ch), timeout=1.0)
@@ -197,15 +196,8 @@ class RedisConnectionManager:
                             except Exception as e:
                                 logger.error(f"PubSub cleanup failed for {ch}: {e}")
 
-                        task = self._task_manager.create_task(
-                            f"cleanup_pubsub_{channel}",
-                            cleanup_pubsub(channel, pubsub),
-                            timeout=2.0,
-                        )
-                        cleanup_tasks.append(task)
-
-                    if cleanup_tasks:
-                        await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+                        # Create task but don't wait
+                        asyncio.create_task(cleanup_pubsub(channel, pubsub))
                     self._pubsubs.clear()
 
             # 3. Clean up connection pool

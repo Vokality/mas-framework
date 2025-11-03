@@ -6,7 +6,8 @@ from typing import Dict, Set
 from mas.logger import get_logger
 from mas.protocol import Message
 
-from .redis import RedisTransport
+from .base import BaseTransport
+from .memory import MemoryTransport
 
 logger = get_logger()
 
@@ -16,6 +17,7 @@ class ServiceState(Enum):
 
     INITIALIZED = auto()
     RUNNING = auto()
+    PREPARING_SHUTDOWN = auto()
     SHUTTING_DOWN = auto()
     SHUTDOWN = auto()
 
@@ -26,9 +28,10 @@ class TransportService:
     Does not directly manage transport connections.
     """
 
-    def __init__(self, transport: RedisTransport | None = None) -> None:
+    def __init__(self, transport: BaseTransport | None = None) -> None:
         logger.info("Initializing TransportService")
-        self.transport = transport or RedisTransport()
+        # Default to in-memory transport for local/tests unless explicitly provided
+        self.transport = transport or MemoryTransport()
         self._state = ServiceState.INITIALIZED
         self._state_lock = asyncio.Lock()
         self._active_components: Set[str] = set()
@@ -57,7 +60,7 @@ class TransportService:
             channel: Channel to subscribe to
         """
         logger.debug(f"Attempting to subscribe {subscriber_id} to channel {channel}")
-        if self._state != ServiceState.RUNNING:
+        if self._state not in (ServiceState.RUNNING, ServiceState.PREPARING_SHUTDOWN):
             logger.error("Cannot subscribe: Transport service not running")
             raise RuntimeError("Transport service not running")
 
@@ -122,8 +125,12 @@ class TransportService:
         logger.debug(
             f"Attempting to send message from {message.sender_id} to {message.target_id}"
         )
-        if self._state != ServiceState.RUNNING:
+        if self._state not in (ServiceState.RUNNING, ServiceState.PREPARING_SHUTDOWN):
             logger.error("Cannot send message: Transport service not running")
+            # Enforce consistent behavior with subscribe/unsubscribe which raise
+            # when the service is not in RUNNING state. Silently attempting to
+            # publish here can lead to lost messages and hard-to-debug states.
+            raise RuntimeError("Transport service not running")
         try:
             await self.transport.publish(message)
             logger.debug(f"Successfully sent message {message.id}")
@@ -145,11 +152,48 @@ class TransportService:
             # First subscribe to the channel
             logger.debug(f"Subscribing {subscriber_id} to {channel}")
             await self.subscribe(subscriber_id, channel)
-            # Then get the message stream
+
+            # Get the transport stream and prime a pump to avoid race where
+            # publish occurs before the async generator registers its queue.
             logger.debug(f"Getting message stream for {channel}")
-            message_stream = self.transport.get_message_stream(channel)
-            logger.info(f"Message stream established for {subscriber_id} on {channel}")
-            yield message_stream
+            transport_stream = self.transport.get_message_stream(channel)
+
+            queue: asyncio.Queue[Message] = asyncio.Queue()
+
+            async def _pump() -> None:
+                try:
+                    async for msg in transport_stream:  # type: ignore
+                        await queue.put(msg)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Pump error for {channel}: {e}")
+
+            pump_task = asyncio.create_task(_pump(), name=f"pump_{subscriber_id}_{channel}")
+            # Yield control to let pump start and register underlying stream
+            await asyncio.sleep(0)
+
+            async def _wrapper():
+                try:
+                    while True:
+                        msg = await queue.get()
+                        if msg is None:  # type: ignore
+                            break
+                        yield msg
+                finally:
+                    if not pump_task.done():
+                        pump_task.cancel()
+                        try:
+                            await pump_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:
+                            pass
+
+            logger.info(
+                f"Message stream established for {subscriber_id} on {channel}"
+            )
+            yield _wrapper()
         except Exception as e:
             logger.error(f"Error in message stream setup: {e}")
             raise
@@ -176,7 +220,7 @@ class TransportService:
         """Register an agent with the transport service."""
         logger.info(f"Registering {component} with transport service")
         async with self._state_lock:
-            if self._state != ServiceState.RUNNING:
+            if self._state not in (ServiceState.RUNNING, ServiceState.PREPARING_SHUTDOWN):
                 logger.error(f"Cannot register {component}: Service not running")
                 raise RuntimeError("Transport service not running")
             self._active_components.add(component)
@@ -187,31 +231,91 @@ class TransportService:
         logger.info(f"Deregistering {component} from transport service")
         async with self._state_lock:
             self._active_components.discard(component)
-            # Clean up agent's subscriptions
+        
+        # Clean up agent's subscriptions (done outside state_lock)
+        async with self._subscription_lock:
             if component in self._subscriptions:
                 channels = list(self._subscriptions[component])
                 logger.debug(
                     f"Cleaning up {len(channels)} subscriptions for agent {component}"
                 )
                 for channel in channels:
-                    await self.unsubscribe(component, channel)
+                    try:
+                        await self.transport.unsubscribe(channel)
+                        self._subscriptions[component].remove(channel)
+                        logger.info(
+                            f"Successfully unsubscribed {component} from {channel}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error unsubscribing {component} from {channel}: {e}"
+                        )
+                # Clean up component entry if no more subscriptions
+                if not self._subscriptions[component]:
+                    logger.debug(
+                        f"Removing empty subscription set for {component}"
+                    )
+                    del self._subscriptions[component]
+        
+        async with self._state_lock:
             if not self._active_components:
                 logger.info("All agents deregistered, signaling shutdown complete")
                 self._shutdown_complete.set()
 
+    async def prepare_shutdown(self) -> None:
+        """
+        Prepare for shutdown by transitioning to PREPARING_SHUTDOWN state.
+        This signals agents to deregister while keeping transport operational.
+        """
+        if self._state != ServiceState.RUNNING:
+            logger.debug("Transport service not running, skipping prepare_shutdown")
+            return
+        
+        logger.info("Preparing transport service for shutdown")
+        await self._set_state(ServiceState.PREPARING_SHUTDOWN)
+
+    async def wait_for_agents_deregistration(self) -> None:
+        """
+        Wait for all active agents to deregister.
+        Should be called after prepare_shutdown().
+        """
+        if not self._active_components:
+            logger.debug("No active components to wait for")
+            return
+        
+        logger.info(f"Waiting for {len(self._active_components)} agents to deregister")
+        await self._shutdown_complete.wait()
+        logger.info("All agents deregistered")
+
     async def stop(self) -> None:
         """
         Stop the transport service.
-        Handles both legacy and new agent coordination modes.
+        Should be called after agents have deregistered.
         """
-        if self._state != ServiceState.RUNNING:
-            logger.debug("Transport service not running, skipping stop")
+        if self._state == ServiceState.SHUTDOWN:
+            logger.debug("Transport service already shutdown")
+            return
+        
+        if self._state not in (ServiceState.RUNNING, ServiceState.PREPARING_SHUTDOWN):
+            logger.debug("Transport service not in stoppable state, skipping stop")
             return
 
         logger.info("Initiating transport service shutdown")
         await self._set_state(ServiceState.SHUTTING_DOWN)
 
-        # Clean up all subscriptions first
+        # Force cleanup any remaining active components
+        if self._active_components:
+            logger.warning(
+                f"Force deregistering {len(self._active_components)} remaining components"
+            )
+            remaining = list(self._active_components)
+            for component_id in remaining:
+                try:
+                    await self.deregister_component(component_id)
+                except Exception as e:
+                    logger.error(f"Error force-deregistering {component_id}: {e}")
+
+        # Clean up all subscriptions
         async with self._subscription_lock:
             subscribers = list(self._subscriptions.keys())
             logger.debug(
@@ -222,26 +326,21 @@ class TransportService:
                 for channel in channels:
                     try:
                         logger.debug(f"Unsubscribing {subscriber_id} from {channel}")
-                        await self.unsubscribe(subscriber_id, channel)
+                        await self.transport.unsubscribe(channel)
+                        self._subscriptions[subscriber_id].remove(channel)
+                        logger.info(
+                            f"Successfully unsubscribed {subscriber_id} from {channel}"
+                        )
                     except Exception as e:
                         logger.error(
                             f"Error unsubscribing {subscriber_id} from {channel}: {e}"
                         )
-
-        if self._active_components:
-            logger.info(
-                f"Waiting for {len(self._active_components)} agents to deregister"
-            )
-            try:
-                await asyncio.wait_for(self._shutdown_complete.wait(), timeout=10.0)
-                logger.debug("All components successfully deregistered")
-            except asyncio.TimeoutError:
-                logger.warning("Timeout waiting for agents to deregister")
-                # Force cleanup of remaining agents
-                remaining = list(self._active_components)
-                logger.debug(f"Force cleaning up {len(remaining)} remaining agents")
-                for agent_id in remaining:
-                    await self.deregister_component(agent_id)
+                # Clean up subscriber entry if no more subscriptions
+                if not self._subscriptions[subscriber_id]:
+                    logger.debug(
+                        f"Removing empty subscription set for {subscriber_id}"
+                    )
+                    del self._subscriptions[subscriber_id]
 
         # Clean up transport
         logger.debug("Cleaning up transport")

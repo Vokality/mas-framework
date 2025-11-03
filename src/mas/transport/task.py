@@ -39,18 +39,24 @@ class TaskManager:
                 logger.info(f"Task {name} already exists and running")
                 return self._tasks[name]
 
-            if timeout:
+            # Allow passing either a coroutine object or a coroutine function
+            if asyncio.iscoroutine(coro):
+                base_coro = coro
+            else:
+                # Assume callable returning a coroutine
+                base_coro = coro()
 
+            if timeout:
                 async def wrapped():
                     try:
-                        return await asyncio.wait_for(coro(), timeout=timeout)
+                        return await asyncio.wait_for(base_coro, timeout=timeout)
                     except asyncio.TimeoutError:
                         logger.error(f"Task {name} timed out")
                         raise
 
                 task_coro = wrapped()
             else:
-                task_coro = coro
+                task_coro = base_coro
 
             task = self._loop.create_task(task_coro, name=name)
             self._tasks[name] = task
