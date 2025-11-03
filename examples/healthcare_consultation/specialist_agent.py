@@ -1,8 +1,9 @@
 """Specialist doctor agent that provides expert medical advice (gateway mode)."""
 
 import logging
-from typing import Optional
+from typing import Optional, override
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from mas import Agent, AgentMessage
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class SpecialistAgent(Agent):
         self.specialization = specialization
         self.consultations_completed = 0
 
+    @override
     async def on_start(self) -> None:
         """Initialize the specialist agent."""
         logger.info(f"Specialist agent {self.id} started (GATEWAY MODE)")
@@ -62,6 +64,7 @@ class SpecialistAgent(Agent):
         logger.info("HIPAA-compliant: All messages audited and DLP-scanned")
         logger.info("Ready for specialist consultations...")
 
+    @override
     async def on_message(self, message: AgentMessage) -> None:
         """
         Handle consultation requests from general practitioners.
@@ -76,57 +79,52 @@ class SpecialistAgent(Agent):
         Args:
             message: Message from a GP doctor (via gateway)
         """
-        msg_type = message.payload.get("type")
-
-        if msg_type == "specialist_consultation_request":
-            patient_question = message.payload.get("patient_question")
-            concern = message.payload.get("concern", "general health")
-            gp_diagnosis = message.payload.get("gp_diagnosis", "")
-            patient_id = message.payload.get("patient_id")
-            consultation_id = message.payload.get("consultation_id")
-
-            if not patient_question or not isinstance(patient_question, str):
-                logger.error("Received consultation without valid patient question")
-                return
-
-            if not consultation_id or not isinstance(consultation_id, str):
-                logger.error("Received consultation without valid consultation_id")
-                return
-
-            logger.info(f"\n{'=' * 60}")
-            logger.info(f"SPECIALIST CONSULTATION REQUEST from {message.sender_id}")
-            logger.info(f"Patient: {patient_id}")
-            logger.info(f"Concern: {concern}")
-            logger.info(f"Patient Question: {patient_question}")
-            logger.info(f"GP Diagnosis: {gp_diagnosis}")
-            logger.info(f"{'=' * 60}")
-            logger.info("✓ Gateway validated: auth, authz, rate limit, DLP passed")
-
-            # Generate specialist advice using OpenAI
-            specialist_advice = await self._generate_specialist_advice(
-                patient_question, concern, gp_diagnosis
+        # Only handle requests that expect a reply
+        if not message.expects_reply:
+            logger.warning(
+                f"Received message without reply expectation from {message.sender_id}"
             )
+            return
 
-            logger.info(f"\n{'=' * 60}")
-            logger.info("SPECIALIST'S EXPERT ADVICE:")
-            logger.info(f"{specialist_advice}")
-            logger.info(f"{'=' * 60}\n")
+        # Extract consultation details
+        patient_question = message.payload.get("patient_question")
+        concern = message.payload.get("concern", "general health")
+        gp_diagnosis = message.payload.get("gp_diagnosis", "")
+        patient_id = message.payload.get("patient_id")
 
-            # Send specialist advice back to GP through gateway
-            await self.send(
-                message.sender_id,
-                {
-                    "type": "specialist_consultation_response",
-                    "patient_question": patient_question,
-                    "patient_id": patient_id,
-                    "consultation_id": consultation_id,
-                    "specialist_advice": specialist_advice,
-                    "specialization": self.specialization,
-                },
-            )
+        if not patient_question or not isinstance(patient_question, str):
+            logger.error("Received consultation without valid patient question")
+            return
 
-            self.consultations_completed += 1
-            logger.info(f"Consultation #{self.consultations_completed} completed")
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"SPECIALIST CONSULTATION REQUEST from {message.sender_id}")
+        logger.info(f"Patient: {patient_id}")
+        logger.info(f"Concern: {concern}")
+        logger.info(f"Patient Question: {patient_question}")
+        logger.info(f"GP Diagnosis: {gp_diagnosis}")
+        logger.info(f"{'=' * 60}")
+        logger.info("✓ Gateway validated: auth, authz, rate limit, DLP passed")
+
+        # Generate specialist advice using OpenAI
+        specialist_advice = await self._generate_specialist_advice(
+            patient_question, concern, gp_diagnosis
+        )
+
+        logger.info(f"\n{'=' * 60}")
+        logger.info("SPECIALIST'S EXPERT ADVICE:")
+        logger.info(f"{specialist_advice}")
+        logger.info(f"{'=' * 60}\n")
+
+        # Reply to GP (correlation handled automatically by framework)
+        await message.reply(
+            {
+                "specialist_advice": specialist_advice,
+                "specialization": self.specialization,
+            }
+        )
+
+        self.consultations_completed += 1
+        logger.info(f"Consultation #{self.consultations_completed} completed")
 
     async def _generate_specialist_advice(
         self, patient_question: str, concern: str, gp_diagnosis: str
@@ -159,7 +157,7 @@ As a specialist, provide expert guidance that:
 Keep your response professional, evidence-based, and concise (2-4 paragraphs).
 Frame your response as advice to the GP, who will relay it to the patient."""
 
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Patient asks: {patient_question}"},
         ]

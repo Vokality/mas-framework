@@ -68,4 +68,5 @@ dev = [
     "ruff>=0.8.1",
     "pytest-timeout>=2.3.1",
     "pyright>=1.1.390",
+    "openai>=2.6.1",
 ]

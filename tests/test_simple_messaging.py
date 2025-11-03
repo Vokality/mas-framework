@@ -1,6 +1,7 @@
 """Test simplified peer-to-peer messaging."""
 
 import asyncio
+from typing import override
 import pytest
 from redis.asyncio import Redis
 from mas import Agent, MASService, AgentMessage
@@ -35,6 +36,7 @@ class ReceiverAgent(Agent):
         self.messages: list[AgentMessage] = []
         self.message_event = asyncio.Event()
 
+    @override
     async def on_message(self, message: AgentMessage) -> None:
         """Store received messages."""
         self.messages.append(message)

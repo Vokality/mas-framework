@@ -4,7 +4,7 @@ import logging
 import secrets
 import time
 from typing import Optional
-from redis.asyncio import Redis
+from mas.redis_types import AsyncRedisProtocol
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class AuthenticationModule:
         revoked_tokens:{agent_id} → set of revoked tokens (TTL: 24h)
     """
 
-    def __init__(self, redis: Redis, token_lifetime: int = 86400):
+    def __init__(self, redis: AsyncRedisProtocol, token_lifetime: int = 86400):
         """
         Initialize authentication module.
 
@@ -41,7 +41,7 @@ class AuthenticationModule:
             redis: Redis connection
             token_lifetime: Token lifetime in seconds (default 24 hours)
         """
-        self.redis = redis
+        self.redis: AsyncRedisProtocol = redis
         self.token_lifetime = token_lifetime
 
     async def authenticate(self, agent_id: str, token: str) -> AuthResult:

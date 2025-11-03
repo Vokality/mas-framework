@@ -6,8 +6,8 @@ import io
 import json
 import logging
 import time
-from typing import Optional
-from redis.asyncio import Redis
+from typing import Optional, cast
+from mas.redis_types import AsyncRedisProtocol
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class AuditModule:
         audit:last_hash → Last hash for chain integrity
     """
 
-    def __init__(self, redis: Redis):
+    def __init__(self, redis: AsyncRedisProtocol):
         """
         Initialize audit module.
 
@@ -111,15 +111,19 @@ class AuditModule:
         entry_dict = {k: v for k, v in entry_dict.items() if v is not None}
 
         # Write to main audit stream
-        main_stream_id = await self.redis.xadd("audit:messages", entry_dict)
+        # Redis expects encodable field values; coerce all to strings for consistency
+        fields_main: dict[str, str] = {k: str(v) for k, v in entry_dict.items()}
+        main_stream_id = await self.redis.xadd("audit:messages", fields_main)
 
         # Index by sender
         sender_stream = f"audit:by_sender:{sender_id}"
-        await self.redis.xadd(sender_stream, entry_dict)
+        fields_sender: dict[str, str] = {k: str(v) for k, v in entry_dict.items()}
+        await self.redis.xadd(sender_stream, fields_sender)
 
         # Index by target
         target_stream = f"audit:by_target:{target_id}"
-        await self.redis.xadd(target_stream, entry_dict)
+        fields_target: dict[str, str] = {k: str(v) for k, v in entry_dict.items()}
+        await self.redis.xadd(target_stream, fields_target)
 
         # Update hash chain
         await self.redis.set("audit:last_hash", entry_hash)
@@ -146,13 +150,14 @@ class AuditModule:
         Returns:
             Stream entry ID
         """
-        entry = {
+        entry_raw = {
             "timestamp": time.time(),
             "event_type": event_type,
             "details": json.dumps(details),
         }
+        entry_fields: dict[str, str] = {k: str(v) for k, v in entry_raw.items()}
 
-        stream_id = await self.redis.xadd("audit:security_events", entry)
+        stream_id = await self.redis.xadd("audit:security_events", entry_fields)
 
         logger.info(
             "Security event logged",
@@ -257,18 +262,20 @@ class AuditModule:
         # Read from stream
         try:
             entries = await self.redis.xrange(stream, start_id, end_id, count)
-            result = []
-            for stream_id, data in entries:
+            result: list[dict] = []
+            for stream_id, raw in entries:
+                # Work with a mutable, more general-typed copy
+                data: dict[str, object] = dict(raw)
                 # Parse violations JSON if present
                 if "violations" in data:
                     try:
-                        data["violations"] = json.loads(data["violations"])
+                        data["violations"] = json.loads(data["violations"])  # type: ignore[arg-type]
                     except (json.JSONDecodeError, TypeError):
                         data["violations"] = []
                 # Parse details JSON if present (for security events)
                 if "details" in data:
                     try:
-                        data["details"] = json.loads(data["details"])
+                        data["details"] = json.loads(data["details"])  # type: ignore[arg-type]
                     except (json.JSONDecodeError, TypeError):
                         pass
                 # Add stream ID to entry

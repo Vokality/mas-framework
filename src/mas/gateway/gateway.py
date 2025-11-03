@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Optional, cast
 
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -19,6 +19,7 @@ from .message_signing import MessageSigningModule
 from .metrics import MetricsCollector
 from .priority_queue import MessagePriority, PriorityQueueModule
 from .rate_limit import RateLimitModule
+from ..redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -104,13 +105,13 @@ class GatewayService:
         )
 
         # Initialize core modules (always enabled)
-        self._auth = AuthenticationModule(self._redis)
+        self._auth = AuthenticationModule(cast(AsyncRedisProtocol, self._redis))
         self._authz = AuthorizationModule(
-            self._redis, enable_rbac=self.settings.features.rbac
+            cast(AsyncRedisProtocol, self._redis), enable_rbac=self.settings.features.rbac
         )
-        self._audit = AuditModule(self._redis)
+        self._audit = AuditModule(cast(AsyncRedisProtocol, self._redis))
         self._rate_limit = RateLimitModule(
-            self._redis,
+            cast(AsyncRedisProtocol, self._redis),
             default_per_minute=self.settings.rate_limit.per_minute,
             default_per_hour=self.settings.rate_limit.per_hour,
         )
@@ -593,20 +594,17 @@ class GatewayService:
         Returns:
             MessagePriority enum
         """
-        if isinstance(message.payload, dict):
-            priority_str = message.payload.get("priority", "normal").lower()
+        priority_str = str(message.payload.get("priority", "normal")).lower()
 
-            priority_map = {
-                "critical": MessagePriority.CRITICAL,
-                "high": MessagePriority.HIGH,
-                "normal": MessagePriority.NORMAL,
-                "low": MessagePriority.LOW,
-                "bulk": MessagePriority.BULK,
-            }
+        priority_map = {
+            "critical": MessagePriority.CRITICAL,
+            "high": MessagePriority.HIGH,
+            "normal": MessagePriority.NORMAL,
+            "low": MessagePriority.LOW,
+            "bulk": MessagePriority.BULK,
+        }
 
-            return priority_map.get(priority_str, MessagePriority.NORMAL)
-
-        return MessagePriority.NORMAL
+        return priority_map.get(priority_str, MessagePriority.NORMAL)
 
     # Module accessors for management operations
 
@@ -682,6 +680,6 @@ class GatewayService:
         audit_stats = await self._audit.get_stats()  # type: ignore[union-attr]
 
         return {
-            "status": "running" if self._running else "stopped",
             "audit": audit_stats,
+            "status": "running" if self._running else "stopped",
         }

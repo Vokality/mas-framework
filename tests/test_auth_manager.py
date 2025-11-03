@@ -58,6 +58,7 @@ async def test_allow_bidirectional(redis):
 
         # Check both directions are allowed
         authz = gateway._authz
+        assert authz is not None
         perms1 = await authz.get_permissions("agent1")
         perms2 = await authz.get_permissions("agent2")
 
@@ -79,6 +80,7 @@ async def test_allow_network_full_mesh(redis):
 
         # Check all agents can message each other
         authz = gateway._authz
+        assert authz is not None
         perms1 = await authz.get_permissions("agent1")
         perms2 = await authz.get_permissions("agent2")
         perms3 = await authz.get_permissions("agent3")
@@ -102,6 +104,7 @@ async def test_allow_network_chain(redis):
 
         # Check chain: agent1 → agent2 → agent3
         authz = gateway._authz
+        assert authz is not None
         perms1 = await authz.get_permissions("agent1")
         perms2 = await authz.get_permissions("agent2")
         perms3 = await authz.get_permissions("agent3")
@@ -129,6 +132,7 @@ async def test_allow_broadcast(redis):
 
         # Check coordinator can message all workers
         authz = gateway._authz
+        assert authz is not None
         perms = await authz.get_permissions("coordinator")
 
         assert set(perms["allowed"]) == {"worker1", "worker2", "worker3"}
@@ -152,6 +156,7 @@ async def test_allow_wildcard(redis):
 
         # Check admin has wildcard
         authz = gateway._authz
+        assert authz is not None
         perms = await authz.get_permissions("admin")
 
         assert "*" in perms["allowed"]
@@ -176,6 +181,7 @@ async def test_chainable_api(redis):
 
         # Check all permissions were applied
         authz = gateway._authz
+        assert authz is not None
         perms1 = await authz.get_permissions("agent1")
         perms2 = await authz.get_permissions("agent2")
         perms3 = await authz.get_permissions("agent3")
@@ -203,6 +209,7 @@ async def test_block_target(redis):
 
         # Check agent1 has wildcard but blocks agent2
         authz = gateway._authz
+        assert authz is not None
         perms = await authz.get_permissions("agent1")
 
         assert "*" in perms["allowed"]
@@ -229,6 +236,7 @@ async def test_create_role_and_assign(redis):
 
         # Check roles exist
         authz = gateway._authz
+        assert authz is not None
         doctor_perms = await authz.get_role_permissions("doctor")
         admin_perms = await authz.get_role_permissions("admin")
 
@@ -289,6 +297,7 @@ async def test_realistic_healthcare_scenario(redis):
 
         # Verify it works
         authz = gateway._authz
+        assert authz is not None
         assert await authz.check_acl("patient_jones", "doctor_smith")
         assert await authz.check_acl("doctor_smith", "patient_jones")
     finally:
@@ -314,6 +323,7 @@ async def test_realistic_team_scenario(redis):
 
         # Verify full mesh works
         authz = gateway._authz
+        assert authz is not None
         assert await authz.check_acl("coordinator", "worker1")
         assert await authz.check_acl("worker1", "coordinator")
         assert await authz.check_acl("worker2", "worker3")

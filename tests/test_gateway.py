@@ -1,6 +1,7 @@
 """Tests for Gateway Service components."""
 
 import asyncio
+from typing import override
 import pytest
 import time
 from redis.asyncio import Redis
@@ -455,6 +456,7 @@ class TestAgentWithGateway:
             received_messages = []
 
             class TestReceiver(Agent):
+                @override
                 async def on_message(self, message):
                     received_messages.append(message)
 

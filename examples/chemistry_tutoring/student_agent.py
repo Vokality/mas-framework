@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, override
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from mas import Agent, AgentMessage
 
 logger = logging.getLogger(__name__)
@@ -41,11 +42,12 @@ class StudentAgent(Agent):
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = model
         self.professor_id: Optional[str] = None
-        self.conversation_history: list[dict] = []
+        self.conversation_history: list[ChatCompletionMessageParam] = []
         self.questions_asked = 0
         self.max_questions = 3
         self.current_topic = "chemical bonding"
 
+    @override
     async def on_start(self) -> None:
         """Initialize the student agent."""
         logger.info(f"Student agent {self.id} started, looking for professor...")
@@ -64,6 +66,7 @@ class StudentAgent(Agent):
         # Start the tutoring session by asking first question
         await self._ask_question()
 
+    @override
     async def on_message(self, message: AgentMessage) -> None:
         """
         Handle responses from the professor.
@@ -105,7 +108,7 @@ class StudentAgent(Agent):
 in chemistry class. Generate a thoughtful question about this topic that shows you're 
 trying to understand the concepts. Keep it concise (1-2 sentences)."""
 
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
             *self.conversation_history,
             {"role": "user", "content": "What should I ask next about this topic?"},

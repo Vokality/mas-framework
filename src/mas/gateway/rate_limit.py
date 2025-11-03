@@ -3,7 +3,7 @@
 import logging
 import time
 from typing import Optional
-from redis.asyncio import Redis
+from mas.redis_types import AsyncRedisProtocol
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class RateLimitModule:
     """
 
     def __init__(
-        self, redis: Redis, default_per_minute: int = 100, default_per_hour: int = 1000
+        self, redis: AsyncRedisProtocol, default_per_minute: int = 100, default_per_hour: int = 1000
     ):
         """
         Initialize rate limiting module.
@@ -45,7 +45,7 @@ class RateLimitModule:
             default_per_minute: Default messages per minute
             default_per_hour: Default messages per hour
         """
-        self.redis = redis
+        self.redis: AsyncRedisProtocol = redis
         self.default_per_minute = default_per_minute
         self.default_per_hour = default_per_hour
 
@@ -194,10 +194,10 @@ class RateLimitModule:
         limits_key = f"ratelimit:{agent_id}:limits"
 
         if per_minute is not None:
-            await self.redis.hset(limits_key, "per_minute", str(per_minute))
+            await self.redis.hset(limits_key, mapping={"per_minute": str(per_minute)})
 
         if per_hour is not None:
-            await self.redis.hset(limits_key, "per_hour", str(per_hour))
+            await self.redis.hset(limits_key, mapping={"per_hour": str(per_hour)})
 
         logger.info(
             "Rate limits updated",

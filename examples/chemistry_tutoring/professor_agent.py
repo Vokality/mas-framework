@@ -1,8 +1,9 @@
 """Professor agent that answers chemistry questions."""
 
 import logging
-from typing import Optional
+from typing import Optional, override
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from mas import Agent, AgentMessage
 
 logger = logging.getLogger(__name__)
@@ -40,10 +41,12 @@ class ProfessorAgent(Agent):
         self.model = model
         self.questions_answered = 0
 
+    @override
     async def on_start(self) -> None:
         """Initialize the professor agent."""
         logger.info(f"Professor agent {self.id} started, ready to answer questions...")
 
+    @override
     async def on_message(self, message: AgentMessage) -> None:
         """
         Handle questions from students.
@@ -106,7 +109,7 @@ Provide a clear, educational explanation that:
 
 Keep your response concise but thorough (2-4 paragraphs)."""
 
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": question},
         ]

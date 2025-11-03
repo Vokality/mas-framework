@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, override
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from mas import Agent, AgentMessage
 
 logger = logging.getLogger(__name__)
@@ -45,11 +46,12 @@ class PatientAgent(Agent):
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = model
         self.doctor_id: Optional[str] = None
-        self.conversation_history: list[dict] = []
+        self.conversation_history: list[ChatCompletionMessageParam] = []
         self.questions_asked = 0
         self.max_questions = 3
         self.current_concern = "general wellness and preventive care"
 
+    @override
     async def on_start(self) -> None:
         """Initialize the patient agent."""
         logger.info(f"Patient agent {self.id} started (GATEWAY MODE)")
@@ -69,6 +71,7 @@ class PatientAgent(Agent):
         # Start consultation by asking first question
         await self._ask_question()
 
+    @override
     async def on_message(self, message: AgentMessage) -> None:
         """
         Handle responses from the doctor.
@@ -111,7 +114,7 @@ Generate a thoughtful, realistic question that a patient might ask their doctor.
 Keep it concise (1-2 sentences) and avoid including specific personal information like 
 names, dates, or medical record numbers."""
 
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
             *self.conversation_history,
             {"role": "user", "content": "What should I ask the doctor next?"},
