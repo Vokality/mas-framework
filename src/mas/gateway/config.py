@@ -96,12 +96,28 @@ class RedisSettings(BaseSettings):
 
 
 class FeaturesSettings(BaseSettings):
-    """Feature flags configuration."""
+    """
+    Feature flags configuration.
+
+    Production-ready defaults (all security features enabled):
+    - DLP: True (data loss prevention)
+    - Priority Queue: True (message prioritization)
+    - RBAC: True (role-based access control)
+    - Message Signing: True (integrity verification)
+    - Circuit Breaker: True (reliability)
+
+    For development/testing, you may want to disable features:
+    - Set GATEWAY_FEATURES__RBAC=false for simple ACL-only mode
+    - Set GATEWAY_FEATURES__MESSAGE_SIGNING=false to skip signing
+    - Set GATEWAY_FEATURES__DLP=false for faster testing
+    """
 
     dlp: bool = Field(default=True, description="Enable DLP scanning")
-    priority_queue: bool = Field(default=False, description="Enable priority queues")
-    rbac: bool = Field(default=False, description="Enable RBAC authorization")
-    message_signing: bool = Field(default=False, description="Enable message signing")
+    priority_queue: bool = Field(default=True, description="Enable priority queues")
+    rbac: bool = Field(default=True, description="Enable RBAC authorization (Phase 2)")
+    message_signing: bool = Field(
+        default=True, description="Enable message signing (Phase 2)"
+    )
     circuit_breaker: bool = Field(default=True, description="Enable circuit breakers")
 
     model_config = SettingsConfigDict(env_prefix="GATEWAY_FEATURES_")

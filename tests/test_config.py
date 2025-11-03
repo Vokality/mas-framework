@@ -64,13 +64,14 @@ class TestFeaturesSettings:
     """Test feature flags configuration."""
 
     def test_default_features(self):
-        """Test default feature flags."""
+        """Test default feature flags (production-ready defaults)."""
         settings = FeaturesSettings()
 
+        # All features enabled by default for production security
         assert settings.dlp is True
-        assert settings.priority_queue is False
-        assert settings.rbac is False
-        assert settings.message_signing is False
+        assert settings.priority_queue is True
+        assert settings.rbac is True
+        assert settings.message_signing is True
         assert settings.circuit_breaker is True
 
     def test_enable_all_features(self):
@@ -178,13 +179,16 @@ class TestGatewaySettings:
     """Test main gateway configuration."""
 
     def test_default_gateway_settings(self):
-        """Test default gateway settings."""
+        """Test default gateway settings (production-ready)."""
         settings = GatewaySettings()
 
         assert settings.redis.url == "redis://localhost:6379"
         assert settings.rate_limit.per_minute == 100
         assert settings.features.dlp is True
-        assert settings.features.priority_queue is False
+        assert settings.features.priority_queue is True
+        assert settings.features.rbac is True
+        assert settings.features.message_signing is True
+        assert settings.features.circuit_breaker is True
 
     def test_custom_gateway_settings(self):
         """Test custom gateway settings."""
