@@ -1,9 +1,11 @@
 """Main entry point for healthcare consultation example (gateway mode)."""
 
 import asyncio
+import json
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -30,6 +32,185 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def format_timestamp(timestamp: float) -> str:
+    """Format Unix timestamp to readable datetime."""
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+
+
+async def display_audit_logs(gateway: GatewayService) -> None:
+    """Display audit log details at the end of the run."""
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("AUDIT LOG REPORT")
+    logger.info("=" * 60)
+    logger.info("")
+
+    # Get audit module - access via private attribute if method has issues
+    try:
+        if not gateway._running:  # type: ignore[attr-defined]
+            logger.warning("Gateway not running, cannot access audit logs")
+            return
+        audit = gateway._audit  # type: ignore[attr-defined]
+        if audit is None:
+            logger.warning("Audit module not initialized")
+            return
+    except Exception as e:
+        logger.error(f"Failed to get audit module: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return
+
+    # Get statistics
+    stats = await audit.get_stats()
+    logger.info("Audit Statistics:")
+    logger.info(f"  Total Messages: {stats.get('total_messages', 0)}")
+    logger.info(f"  Security Events: {stats.get('security_events', 0)}")
+    logger.info("")
+
+    # Query all audit entries
+    entries = await audit.query_all(count=1000)
+    
+    if not entries:
+        logger.info("No audit entries found.")
+        logger.info("")
+        return
+
+    logger.info(f"Found {len(entries)} audit entries")
+    logger.info("")
+
+    # Group by decision
+    decisions: dict[str, int] = {}
+    violations: list[str] = []
+    agent_activity: dict[str, int] = {}
+
+    for entry in entries:
+        # Count decisions
+        decision = entry.get("decision", "UNKNOWN")
+        decisions[decision] = decisions.get(decision, 0) + 1
+
+        # Collect violations
+        entry_violations = entry.get("violations", [])
+        if isinstance(entry_violations, list):
+            violations.extend(entry_violations)
+        elif isinstance(entry_violations, str):
+            # Try to parse JSON string
+            try:
+                parsed = json.loads(entry_violations)
+                if isinstance(parsed, list):
+                    violations.extend(parsed)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Track agent activity
+        sender = entry.get("sender_id", "unknown")
+        target = entry.get("target_id", "unknown")
+        agent_activity[sender] = agent_activity.get(sender, 0) + 1
+        agent_activity[target] = agent_activity.get(target, 0) + 1
+
+    # Display summary
+    logger.info("Summary by Decision:")
+    for decision, count in sorted(decisions.items()):
+        logger.info(f"  {decision}: {count}")
+    logger.info("")
+
+    # Display violations
+    if violations:
+        violation_counts: dict[str, int] = {}
+        for violation in violations:
+            violation_counts[violation] = violation_counts.get(violation, 0) + 1
+        
+        logger.info("Policy Violations Detected:")
+        for violation, count in sorted(violation_counts.items()):
+            logger.info(f"  {violation}: {count}")
+        logger.info("")
+    else:
+        logger.info("No policy violations detected.")
+        logger.info("")
+
+    # Display agent activity
+    logger.info("Agent Activity (messages sent/received):")
+    for agent, count in sorted(agent_activity.items()):
+        logger.info(f"  {agent}: {count}")
+    logger.info("")
+
+    # Display detailed entries
+    logger.info("Detailed Audit Entries:")
+    logger.info("-" * 60)
+    
+    for i, entry in enumerate(entries[:20], 1):  # Show first 20 entries
+        message_id = entry.get("message_id", "unknown")
+        sender = entry.get("sender_id", "unknown")
+        target = entry.get("target_id", "unknown")
+        decision = entry.get("decision", "UNKNOWN")
+        timestamp = entry.get("timestamp", 0)
+        latency = entry.get("latency_ms", 0)
+        entry_violations = entry.get("violations", [])
+        
+        # Format violations
+        if isinstance(entry_violations, str):
+            try:
+                entry_violations = json.loads(entry_violations)
+            except (json.JSONDecodeError, TypeError):
+                entry_violations = []
+        
+        violation_str = ", ".join(entry_violations) if entry_violations else "None"
+        
+        logger.info(f"Entry {i}:")
+        logger.info(f"  Message ID: {message_id}")
+        logger.info(f"  From: {sender} → To: {target}")
+        logger.info(f"  Decision: {decision}")
+        # Format timestamp - handle both float and string
+        try:
+            ts = float(timestamp) if timestamp else 0
+            ts_str = format_timestamp(ts) if ts > 0 else "N/A"
+        except (ValueError, TypeError):
+            ts_str = str(timestamp) if timestamp else "N/A"
+        logger.info(f"  Timestamp: {ts_str}")
+        # Format latency - handle both float and string
+        try:
+            lat = float(latency) if latency else 0
+            logger.info(f"  Latency: {lat:.2f}ms")
+        except (ValueError, TypeError):
+            logger.info(f"  Latency: {latency}ms")
+        logger.info(f"  Violations: {violation_str}")
+        logger.info("")
+
+    if len(entries) > 20:
+        logger.info(f"... and {len(entries) - 20} more entries (use audit.query_all() to see all)")
+        logger.info("")
+
+    # Display security events
+    security_events = await audit.query_security_events(count=50)
+    if security_events:
+        logger.info("Security Events:")
+        logger.info("-" * 60)
+        for event in security_events[:10]:  # Show first 10 events
+            event_type = event.get("event_type", "UNKNOWN")
+            timestamp = event.get("timestamp", 0)
+            details = event.get("details", {})
+            
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except (json.JSONDecodeError, TypeError):
+                    details = {}
+            
+            # Format timestamp - handle both float and string
+            try:
+                ts = float(timestamp) if timestamp else 0
+                ts_str = format_timestamp(ts) if ts > 0 else "N/A"
+            except (ValueError, TypeError):
+                ts_str = str(timestamp) if timestamp else "N/A"
+            logger.info(f"  [{ts_str}] {event_type}")
+            if isinstance(details, dict):
+                for key, value in details.items():
+                    logger.info(f"    {key}: {value}")
+        logger.info("")
+
+    logger.info("=" * 60)
+    logger.info("")
 
 
 async def main() -> None:
@@ -143,6 +324,12 @@ async def main() -> None:
     except KeyboardInterrupt:
         logger.info("\nShutting down...")
     finally:
+        # Display audit logs before stopping gateway
+        try:
+            await display_audit_logs(gateway)
+        except Exception as e:
+            logger.warning(f"Failed to display audit logs: {e}")
+
         # Cleanup
         logger.info("")
         logger.info("Stopping agents and services...")

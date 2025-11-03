@@ -195,15 +195,29 @@ class DoctorAgent(Agent):
                     f"Specialist consultation timed out for patient {patient_id}"
                 )
                 # Fall back to initial diagnosis
-                await self.send(
-                    patient_id,
-                    {
-                        "type": "consultation_response",
-                        "question": question,
-                        "advice": initial_diagnosis
-                        + "\n\n(Note: Specialist consultation unavailable)",
-                    },
-                )
+                try:
+                    # Verify agent is still running and registered before sending
+                    if not self._running or not self._token:
+                        logger.error(
+                            "Cannot send fallback message: agent not running or not registered"
+                        )
+                        return
+                    
+                    await self.send(
+                        patient_id,
+                        {
+                            "type": "consultation_response",
+                            "question": question,
+                            "advice": initial_diagnosis
+                            + "\n\n(Note: Specialist consultation unavailable)",
+                        },
+                    )
+                except RuntimeError as e:
+                    logger.error(
+                        f"Failed to send fallback message to patient {patient_id}: {e}"
+                    )
+                    # Agent may have been deregistered - log but don't crash
+                    return
         else:
             # No specialist available, send initial diagnosis directly to patient
             await self.send(
