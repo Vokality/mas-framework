@@ -1,6 +1,7 @@
 """Authorization Module for Gateway Service."""
 
 import logging
+import re
 from typing import Optional
 from redis.asyncio import Redis
 
@@ -11,25 +12,41 @@ class AuthorizationModule:
     """
     Authorization module for enforcing access control.
 
-    Implements Phase 1 ACL (Access Control List) as per GATEWAY.md:
+    Implements Phase 1 ACL and Phase 2 RBAC as per GATEWAY.md:
+
+    Phase 1 - ACL (Access Control List):
     - Simple allow-list per agent
     - Wildcard support ("*" allows all)
     - Block-list takes precedence over allow-list
     - Default deny (explicit allow required)
 
+    Phase 2 - RBAC (Role-Based Access Control):
+    - Role definitions with permission sets
+    - Agent role assignments
+    - Permission patterns (e.g., "send:*", "read:agent.*")
+    - Hierarchical permission checking
+
     Redis Data Model:
+        # ACL (Phase 1)
         agent:{agent_id}:allowed_targets → Set of allowed target IDs
         agent:{agent_id}:blocked_targets → Set of blocked target IDs
+
+        # RBAC (Phase 2)
+        role:{role_name} → Hash with metadata
+        role:{role_name}:permissions → Set of permission patterns
+        agent:{agent_id}:roles → Set of role names
     """
 
-    def __init__(self, redis: Redis):
+    def __init__(self, redis: Redis, enable_rbac: bool = False):
         """
         Initialize authorization module.
 
         Args:
             redis: Redis connection
+            enable_rbac: Enable RBAC authorization (default: False, ACL only)
         """
         self.redis = redis
+        self.enable_rbac = enable_rbac
 
     async def authorize(
         self, sender_id: str, target_id: str, action: str = "send"
@@ -40,13 +57,24 @@ class AuthorizationModule:
         Args:
             sender_id: Sending agent ID
             target_id: Target agent ID
-            action: Action type (currently only "send" supported)
+            action: Action type (e.g., "send", "read", "manage")
 
         Returns:
             True if authorized, False otherwise
         """
-        # Check ACL
-        allowed = await self.check_acl(sender_id, target_id)
+        # Check ACL first (backward compatibility)
+        acl_allowed = await self.check_acl(sender_id, target_id)
+
+        # If RBAC is enabled, also check RBAC
+        if self.enable_rbac:
+            # Construct permission string based on action and target
+            permission = f"{action}:{target_id}"
+            rbac_allowed = await self.check_rbac(sender_id, permission)
+
+            # Allow if either ACL or RBAC grants permission
+            allowed = acl_allowed or rbac_allowed
+        else:
+            allowed = acl_allowed
 
         if allowed:
             logger.debug(
@@ -219,3 +247,245 @@ class AuthorizationModule:
             "allowed": sorted(allowed) if allowed else [],
             "blocked": sorted(blocked) if blocked else [],
         }
+
+    # ========== RBAC Methods (Phase 2) ==========
+
+    async def check_rbac(self, agent_id: str, permission: str) -> bool:
+        """
+        Check if agent has permission via RBAC roles.
+
+        Args:
+            agent_id: Agent ID
+            permission: Permission string (e.g., "send:agent-123", "read:*")
+
+        Returns:
+            True if agent has permission through any of their roles
+        """
+        # Get agent's roles
+        roles_key = f"agent:{agent_id}:roles"
+        roles = await self.redis.smembers(roles_key)
+
+        if not roles:
+            return False
+
+        # Check each role's permissions
+        for role in roles:
+            role_perms_key = f"role:{role}:permissions"
+            role_permissions = await self.redis.smembers(role_perms_key)
+
+            for role_perm in role_permissions:
+                if self._matches_permission(permission, role_perm):
+                    logger.debug(
+                        "RBAC permission matched",
+                        extra={
+                            "agent_id": agent_id,
+                            "role": role,
+                            "required": permission,
+                            "granted": role_perm,
+                        },
+                    )
+                    return True
+
+        return False
+
+    def _matches_permission(self, required: str, granted: str) -> bool:
+        """
+        Check if required permission matches granted permission pattern.
+
+        Supports wildcard patterns:
+        - "send:*" matches any send permission
+        - "send:agent.*" matches send to any agent starting with "agent."
+        - "*" matches everything
+
+        Args:
+            required: Required permission (e.g., "send:agent-123")
+            granted: Granted permission pattern (e.g., "send:*")
+
+        Returns:
+            True if required permission matches granted pattern
+        """
+        if granted == "*":
+            return True
+
+        if granted == required:
+            return True
+
+        # Convert glob-style pattern to regex
+        # Escape special regex chars except *
+        pattern = re.escape(granted).replace(r"\*", ".*")
+        pattern = f"^{pattern}$"
+
+        try:
+            return bool(re.match(pattern, required))
+        except re.error:
+            logger.warning(
+                "Invalid permission pattern",
+                extra={"pattern": granted},
+            )
+            return False
+
+    async def create_role(
+        self,
+        role_name: str,
+        description: str = "",
+        permissions: Optional[list[str]] = None,
+    ) -> None:
+        """
+        Create a new role with permissions.
+
+        Args:
+            role_name: Name of the role (e.g., "admin", "operator")
+            description: Role description
+            permissions: List of permission patterns
+        """
+        role_key = f"role:{role_name}"
+
+        # Store role metadata
+        await self.redis.hset(
+            role_key,
+            mapping={
+                "name": role_name,
+                "description": description or "",
+            },
+        )
+
+        # Store permissions
+        if permissions:
+            perms_key = f"role:{role_name}:permissions"
+            await self.redis.sadd(perms_key, *permissions)
+
+        logger.info(
+            "Created role",
+            extra={"role": role_name, "permissions": len(permissions or [])},
+        )
+
+    async def delete_role(self, role_name: str) -> None:
+        """
+        Delete a role.
+
+        Args:
+            role_name: Name of the role to delete
+        """
+        role_key = f"role:{role_name}"
+        perms_key = f"role:{role_name}:permissions"
+
+        await self.redis.delete(role_key, perms_key)
+
+        logger.info("Deleted role", extra={"role": role_name})
+
+    async def add_role_permission(self, role_name: str, permission: str) -> None:
+        """
+        Add a permission to a role.
+
+        Args:
+            role_name: Role name
+            permission: Permission pattern to add
+        """
+        perms_key = f"role:{role_name}:permissions"
+        await self.redis.sadd(perms_key, permission)
+
+        logger.info(
+            "Added role permission",
+            extra={"role": role_name, "permission": permission},
+        )
+
+    async def remove_role_permission(self, role_name: str, permission: str) -> None:
+        """
+        Remove a permission from a role.
+
+        Args:
+            role_name: Role name
+            permission: Permission pattern to remove
+        """
+        perms_key = f"role:{role_name}:permissions"
+        await self.redis.srem(perms_key, permission)
+
+        logger.info(
+            "Removed role permission",
+            extra={"role": role_name, "permission": permission},
+        )
+
+    async def get_role_permissions(self, role_name: str) -> list[str]:
+        """
+        Get all permissions for a role.
+
+        Args:
+            role_name: Role name
+
+        Returns:
+            List of permission patterns
+        """
+        perms_key = f"role:{role_name}:permissions"
+        permissions = await self.redis.smembers(perms_key)
+        return sorted(permissions) if permissions else []
+
+    async def assign_role(self, agent_id: str, role_name: str) -> None:
+        """
+        Assign a role to an agent.
+
+        Args:
+            agent_id: Agent ID
+            role_name: Role name to assign
+        """
+        roles_key = f"agent:{agent_id}:roles"
+        await self.redis.sadd(roles_key, role_name)
+
+        logger.info(
+            "Assigned role to agent",
+            extra={"agent_id": agent_id, "role": role_name},
+        )
+
+    async def unassign_role(self, agent_id: str, role_name: str) -> None:
+        """
+        Remove a role from an agent.
+
+        Args:
+            agent_id: Agent ID
+            role_name: Role name to remove
+        """
+        roles_key = f"agent:{agent_id}:roles"
+        await self.redis.srem(roles_key, role_name)
+
+        logger.info(
+            "Unassigned role from agent",
+            extra={"agent_id": agent_id, "role": role_name},
+        )
+
+    async def get_agent_roles(self, agent_id: str) -> list[str]:
+        """
+        Get all roles assigned to an agent.
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            List of role names
+        """
+        roles_key = f"agent:{agent_id}:roles"
+        roles = await self.redis.smembers(roles_key)
+        return sorted(roles) if roles else []
+
+    async def list_roles(self) -> list[dict[str, str]]:
+        """
+        List all defined roles.
+
+        Returns:
+            List of role dictionaries with name and description
+        """
+        # Find all role keys
+        role_keys = []
+        cursor = 0
+        while True:
+            cursor, keys = await self.redis.scan(cursor, match="role:*", count=100)
+            # Filter out permission keys
+            role_keys.extend([k for k in keys if not k.endswith(":permissions")])
+            if cursor == 0:
+                break
+
+        roles = []
+        for role_key in role_keys:
+            role_data = await self.redis.hgetall(role_key)
+            if role_data:
+                roles.append(role_data)
+
+        return roles
