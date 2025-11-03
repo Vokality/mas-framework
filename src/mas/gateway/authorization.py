@@ -48,7 +48,9 @@ class AuthorizationManager:
         self._gateway = gateway
         self._authz = gateway._authz
         if not self._authz:
-            raise RuntimeError("Gateway must be started before using AuthorizationManager")
+            raise RuntimeError(
+                "Gateway must be started before using AuthorizationManager"
+            )
         self._pending_operations: list = []
 
     async def allow_bidirectional(self, agent_a: str, agent_b: str) -> None:
@@ -66,11 +68,11 @@ class AuthorizationManager:
         """
         await self._authz.add_permission(agent_a, agent_b)
         await self._authz.add_permission(agent_b, agent_a)
-        logger.info(
-            f"Bidirectional communication enabled: {agent_a} ↔ {agent_b}"
-        )
+        logger.info(f"Bidirectional communication enabled: {agent_a} ↔ {agent_b}")
 
-    async def allow_network(self, agents: list[str], bidirectional: bool = True) -> None:
+    async def allow_network(
+        self, agents: list[str], bidirectional: bool = True
+    ) -> None:
         """
         Allow communication between all agents in a network (full mesh).
 
@@ -171,7 +173,10 @@ class AuthorizationManager:
         return self
 
     def create_role(
-        self, role_name: str, description: str = "", permissions: list[str] | None = None
+        self,
+        role_name: str,
+        description: str = "",
+        permissions: list[str] | None = None,
     ) -> "AuthorizationManager":
         """
         Queue role creation (chainable, applied with .apply()).

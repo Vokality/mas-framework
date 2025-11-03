@@ -3,8 +3,22 @@
 import pytest
 from redis.asyncio import Redis
 from mas.gateway import GatewayService, AuthorizationManager
+from mas.gateway.config import GatewaySettings, FeaturesSettings
 
 pytestmark = pytest.mark.asyncio
+
+
+def _test_settings():
+    """Create test gateway settings with simplified config."""
+    return GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
 
 
 @pytest.fixture
@@ -23,7 +37,7 @@ async def test_authorization_manager_import():
 
 async def test_auth_manager_from_gateway(redis):
     """Test getting AuthorizationManager from gateway."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -35,7 +49,7 @@ async def test_auth_manager_from_gateway(redis):
 
 async def test_allow_bidirectional(redis):
     """Test bidirectional permission."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -56,7 +70,7 @@ async def test_allow_bidirectional(redis):
 @pytest.mark.asyncio
 async def test_allow_network_full_mesh(redis):
     """Test full mesh network."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -79,7 +93,7 @@ async def test_allow_network_full_mesh(redis):
 @pytest.mark.asyncio
 async def test_allow_network_chain(redis):
     """Test chain network (unidirectional)."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -106,7 +120,7 @@ async def test_allow_network_chain(redis):
 @pytest.mark.asyncio
 async def test_allow_broadcast(redis):
     """Test broadcast pattern (one-to-many)."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -129,7 +143,7 @@ async def test_allow_broadcast(redis):
 @pytest.mark.asyncio
 async def test_allow_wildcard(redis):
     """Test wildcard permission."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -148,7 +162,7 @@ async def test_allow_wildcard(redis):
 @pytest.mark.asyncio
 async def test_chainable_api(redis):
     """Test chainable fluent API."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -176,7 +190,7 @@ async def test_chainable_api(redis):
 @pytest.mark.asyncio
 async def test_block_target(redis):
     """Test blocking specific target."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -200,7 +214,7 @@ async def test_block_target(redis):
 @pytest.mark.asyncio
 async def test_create_role_and_assign(redis):
     """Test role creation and assignment."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -235,7 +249,7 @@ async def test_create_role_and_assign(redis):
 @pytest.mark.asyncio
 async def test_get_summary(redis):
     """Test authorization summary."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -261,7 +275,7 @@ async def test_get_summary(redis):
 @pytest.mark.asyncio
 async def test_realistic_healthcare_scenario(redis):
     """Test realistic healthcare authorization scenario."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:
@@ -284,7 +298,7 @@ async def test_realistic_healthcare_scenario(redis):
 @pytest.mark.asyncio
 async def test_realistic_team_scenario(redis):
     """Test realistic team collaboration scenario."""
-    gateway = GatewayService(redis_url="redis://localhost:6379")
+    gateway = GatewayService(settings=_test_settings())
     await gateway.start()
 
     try:

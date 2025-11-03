@@ -13,7 +13,9 @@ from .audit import AuditModule
 from .rate_limit import RateLimitModule
 from .dlp import DLPModule, ActionPolicy
 from .priority_queue import PriorityQueueModule, MessagePriority
+from .message_signing import MessageSigningModule
 from .metrics import MetricsCollector
+from .config import GatewaySettings
 
 logger = logging.getLogger(__name__)
 
@@ -51,25 +53,31 @@ class GatewayService:
         result = await gateway.handle_message(message)
     """
 
-    def __init__(
-        self,
-        redis_url: str = "redis://localhost:6379",
-        rate_limit_per_minute: int = 100,
-        rate_limit_per_hour: int = 1000,
-        enable_dlp: bool = True,
-        enable_priority_queue: bool = False,
-    ):
+    def __init__(self, settings: Optional[GatewaySettings] = None):
         """
         Initialize gateway service.
 
         Args:
-            redis_url: Redis connection URL
-            rate_limit_per_minute: Default rate limit per minute
-            rate_limit_per_hour: Default rate limit per hour
-            enable_dlp: Enable DLP scanning (default: True)
-            enable_priority_queue: Enable priority queue (default: False, MVP uses direct routing)
+            settings: GatewaySettings configuration object.
+                     If None, uses production-ready defaults (all security features enabled).
+
+        Example:
+            # Use production defaults
+            gateway = GatewayService()
+
+            # Custom configuration
+            gateway = GatewayService(
+                settings=GatewaySettings(
+                    redis=RedisSettings(url="redis://prod:6379"),
+                    features=FeaturesSettings(message_signing=False),
+                )
+            )
+
+            # From config file
+            settings = GatewaySettings.from_yaml("gateway.yaml")
+            gateway = GatewayService(settings=settings)
         """
-        self.redis_url = redis_url
+        self.settings = settings or GatewaySettings()
         self._redis: Optional[Redis] = None
         self._running = False
 
@@ -80,47 +88,62 @@ class GatewayService:
         self._rate_limit: Optional[RateLimitModule] = None
         self._dlp: Optional[DLPModule] = None
         self._priority_queue: Optional[PriorityQueueModule] = None
-
-        # Configuration
-        self.rate_limit_per_minute = rate_limit_per_minute
-        self.rate_limit_per_hour = rate_limit_per_hour
-        self.enable_dlp = enable_dlp
-        self.enable_priority_queue = enable_priority_queue
+        self._message_signing: Optional[MessageSigningModule] = None
 
     async def start(self) -> None:
         """Start the gateway service."""
-        self._redis = Redis.from_url(self.redis_url, decode_responses=True)
+        # Initialize Redis connection
+        self._redis = Redis.from_url(
+            self.settings.redis.url,
+            decode_responses=self.settings.redis.decode_responses,
+            socket_timeout=self.settings.redis.socket_timeout,
+        )
 
-        # Initialize modules
+        # Initialize core modules (always enabled)
         self._auth = AuthenticationModule(self._redis)
-        self._authz = AuthorizationModule(self._redis)
+        self._authz = AuthorizationModule(
+            self._redis, enable_rbac=self.settings.features.rbac
+        )
         self._audit = AuditModule(self._redis)
         self._rate_limit = RateLimitModule(
             self._redis,
-            default_per_minute=self.rate_limit_per_minute,
-            default_per_hour=self.rate_limit_per_hour,
+            default_per_minute=self.settings.rate_limit.per_minute,
+            default_per_hour=self.settings.rate_limit.per_hour,
         )
 
-        if self.enable_dlp:
+        # Initialize optional modules based on feature flags
+        if self.settings.features.dlp:
             self._dlp = DLPModule()
 
-        if self.enable_priority_queue:
+        if self.settings.features.priority_queue:
             self._priority_queue = PriorityQueueModule(self._redis)
+
+        if self.settings.features.message_signing:
+            self._message_signing = MessageSigningModule(
+                self._redis,
+                max_timestamp_drift=self.settings.message_signing.max_timestamp_drift,
+                nonce_ttl=self.settings.message_signing.nonce_ttl,
+            )
 
         # Initialize metrics
         MetricsCollector.set_gateway_info(
             version="0.1.14",
-            dlp_enabled=self.enable_dlp,
-            priority_queue_enabled=self.enable_priority_queue,
+            dlp_enabled=self.settings.features.dlp,
+            priority_queue_enabled=self.settings.features.priority_queue,
         )
 
         self._running = True
         logger.info(
             "Gateway Service started",
             extra={
-                "redis_url": self.redis_url,
-                "dlp_enabled": self.enable_dlp,
-                "priority_queue_enabled": self.enable_priority_queue,
+                "redis_url": self.settings.redis.url,
+                "features": {
+                    "dlp": self.settings.features.dlp,
+                    "priority_queue": self.settings.features.priority_queue,
+                    "rbac": self.settings.features.rbac,
+                    "message_signing": self.settings.features.message_signing,
+                    "circuit_breaker": self.settings.features.circuit_breaker,
+                },
             },
         )
 
@@ -133,20 +156,32 @@ class GatewayService:
 
         logger.info("Gateway Service stopped")
 
-    async def handle_message(self, message: AgentMessage, token: str) -> GatewayResult:
+    async def handle_message(
+        self,
+        message: AgentMessage,
+        token: str,
+        signature: Optional[str] = None,
+        timestamp: Optional[float] = None,
+        nonce: Optional[str] = None,
+    ) -> GatewayResult:
         """
         Handle message through gateway validation pipeline.
 
         Pipeline stages:
         1. Authentication - Validate sender token
-        2. Authorization - Check sender can message target
-        3. Rate Limiting - Check sender within limits
-        4. Audit Logging - Log message and decision (async)
-        5. Routing - Publish to target's stream
+        2. Message Signing - Verify signature (if enabled)
+        3. Authorization - Check sender can message target (ACL + RBAC)
+        4. Rate Limiting - Check sender within limits
+        5. DLP Scanning - Scan for sensitive data (if enabled)
+        6. Audit Logging - Log message and decision (async)
+        7. Routing - Publish to target's stream
 
         Args:
             message: Agent message to process
             token: Sender's authentication token
+            signature: Message HMAC signature (required if message_signing enabled)
+            timestamp: Message timestamp (required if message_signing enabled)
+            nonce: Message nonce (required if message_signing enabled)
 
         Returns:
             GatewayResult with processing outcome
@@ -198,7 +233,92 @@ class GatewayService:
                 latency_ms=latency_ms,
             )
 
-        # Stage 2: Authorization
+        # Stage 2: Message Signing Verification (if enabled)
+        if self.settings.features.message_signing and self._message_signing:
+            # Verify required signature parameters are present
+            if not signature or timestamp is None or not nonce:
+                latency_ms = (time.time() - start_time) * 1000
+
+                # Record metrics
+                MetricsCollector.record_auth_failure("missing_signature_parameters")
+                MetricsCollector.record_message("SIGNATURE_INVALID", latency_ms / 1000)
+
+                # Log security event
+                await self._audit.log_security_event(
+                    "SIGNATURE_INVALID",
+                    {
+                        "sender_id": message.sender_id,
+                        "target_id": message.target_id,
+                        "reason": "missing_signature_parameters",
+                    },
+                )
+
+                # Log to audit
+                await self._audit.log_message(
+                    message.message_id,
+                    message.sender_id,
+                    message.target_id,
+                    "SIGNATURE_INVALID",
+                    latency_ms,
+                    message.payload,
+                    violations=["missing_signature_parameters"],
+                )
+
+                return GatewayResult(
+                    success=False,
+                    decision="SIGNATURE_INVALID",
+                    message="Message signing enabled but signature parameters missing",
+                    latency_ms=latency_ms,
+                )
+
+            # Verify signature
+            sig_result = await self._message_signing.verify_signature(
+                agent_id=message.sender_id,
+                message_id=message.message_id,
+                payload=message.payload if isinstance(message.payload, dict) else {},
+                signature=signature,
+                timestamp=timestamp,
+                nonce=nonce,
+            )
+
+            if not sig_result.valid:
+                latency_ms = (time.time() - start_time) * 1000
+
+                # Record metrics
+                MetricsCollector.record_auth_failure(
+                    sig_result.reason or "invalid_signature"
+                )
+                MetricsCollector.record_message("SIGNATURE_INVALID", latency_ms / 1000)
+
+                # Log security event
+                await self._audit.log_security_event(
+                    "SIGNATURE_INVALID",
+                    {
+                        "sender_id": message.sender_id,
+                        "target_id": message.target_id,
+                        "reason": sig_result.reason,
+                    },
+                )
+
+                # Log to audit
+                await self._audit.log_message(
+                    message.message_id,
+                    message.sender_id,
+                    message.target_id,
+                    "SIGNATURE_INVALID",
+                    latency_ms,
+                    message.payload,
+                    violations=["signature_verification_failed"],
+                )
+
+                return GatewayResult(
+                    success=False,
+                    decision="SIGNATURE_INVALID",
+                    message=sig_result.reason or "Invalid message signature",
+                    latency_ms=latency_ms,
+                )
+
+        # Stage 3: Authorization (ACL + RBAC)
         authorized = await self._authz.authorize(
             message.sender_id, message.target_id, action="send"
         )
@@ -233,7 +353,7 @@ class GatewayService:
                 latency_ms=latency_ms,
             )
 
-        # Stage 3: Rate Limiting
+        # Stage 4: Rate Limiting
         rate_result = await self._rate_limit.check_rate_limit(
             message.sender_id, message.message_id
         )
@@ -262,8 +382,8 @@ class GatewayService:
                 latency_ms=latency_ms,
             )
 
-        # Stage 4: DLP Scanning (if enabled)
-        if self.enable_dlp and self._dlp:
+        # Stage 5: DLP Scanning (if enabled)
+        if self.settings.features.dlp and self._dlp:
             scan_result = await self._dlp.scan(message.payload)
 
             if not scan_result.clean:
@@ -403,7 +523,7 @@ class GatewayService:
         Args:
             message: Message to route
         """
-        if self.enable_priority_queue and self._priority_queue:
+        if self.settings.features.priority_queue and self._priority_queue:
             # Determine priority from message metadata
             priority = self._determine_message_priority(message)
 
@@ -507,6 +627,11 @@ class GatewayService:
     def priority_queue(self) -> PriorityQueueModule | None:
         """Get priority queue module (if enabled)."""
         return self._priority_queue
+
+    @property
+    def message_signing(self) -> MessageSigningModule | None:
+        """Get message signing module (if enabled)."""
+        return self._message_signing
 
     def auth_manager(self) -> "AuthorizationManager":
         """

@@ -4,12 +4,15 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 from redis.asyncio import Redis
 from pydantic import BaseModel, Field
 
 from .registry import AgentRegistry
 from .state import StateManager
+
+if TYPE_CHECKING:
+    from .gateway import GatewayService
 
 logger = logging.getLogger(__name__)
 
@@ -173,14 +176,22 @@ class Agent:
             await self._pubsub.unsubscribe()
             await self._pubsub.aclose()
 
-        # Cleanup gateway if used
-        if self._gateway:
-            await self._gateway.stop()
+        # Note: Don't stop gateway - it's shared across agents
+        # Gateway lifecycle is managed externally
 
         if self._redis:
             await self._redis.aclose()
 
         logger.info("Agent stopped", extra={"agent_id": self.id})
+
+    def set_gateway(self, gateway: "GatewayService") -> None:
+        """
+        Set gateway instance for message routing.
+
+        Args:
+            gateway: GatewayService instance to use for message routing
+        """
+        self._gateway = gateway
 
     async def send(self, target_id: str, payload: dict) -> None:
         """
@@ -204,12 +215,9 @@ class Agent:
         if self.use_gateway:
             # Route through gateway
             if not self._gateway:
-                # Lazy-load gateway client
-                from .gateway import GatewayService
-
-                self._gateway = GatewayService(redis_url=self.gateway_url)
-                if not self._gateway._running:
-                    await self._gateway.start()
+                raise RuntimeError(
+                    "Gateway not configured. Use set_gateway() to configure gateway instance."
+                )
 
             if not self._token:
                 raise RuntimeError("No token available for gateway authentication")

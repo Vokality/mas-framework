@@ -25,7 +25,7 @@ from professor_agent import ProfessorAgent
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
 logger = logging.getLogger(__name__)
@@ -39,42 +39,44 @@ async def main() -> None:
         logger.error("OPENAI_API_KEY not found!")
         logger.error("Please either:")
         logger.error("  1. Add OPENAI_API_KEY to .env file in project root")
-        logger.error("  2. Set environment variable: export OPENAI_API_KEY='your-key-here'")
+        logger.error(
+            "  2. Set environment variable: export OPENAI_API_KEY='your-key-here'"
+        )
         return
-    
+
     logger.info("✓ Loaded OpenAI API key from .env file")
-    
+
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    
+
     logger.info("Starting Chemistry Tutoring Demo")
-    logger.info("="*60)
-    
+    logger.info("=" * 60)
+
     # Start MAS service
     service = MASService(redis_url=redis_url)
     await service.start()
-    
+
     # Create agents
     professor = ProfessorAgent(
         agent_id="professor_chen",
         redis_url=redis_url,
         openai_api_key=api_key,
     )
-    
+
     student = StudentAgent(
         agent_id="student_alex",
         redis_url=redis_url,
         openai_api_key=api_key,
     )
-    
+
     try:
         # Start agents (professor first so student can discover them)
         await professor.start()
         await student.start()
-        
+
         # Let the conversation run (student will ask 3 questions)
         # Wait for conversation to complete (roughly 30 seconds for 3 Q&As)
         await asyncio.sleep(60)
-        
+
     except KeyboardInterrupt:
         logger.info("\nShutting down...")
     finally:
@@ -82,7 +84,7 @@ async def main() -> None:
         await student.stop()
         await professor.stop()
         await service.stop()
-        
+
     logger.info("Demo complete!")
 
 

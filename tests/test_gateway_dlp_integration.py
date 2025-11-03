@@ -6,6 +6,7 @@ from redis.asyncio import Redis
 
 from mas.agent import AgentMessage
 from mas.gateway import GatewayService
+from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
@@ -24,12 +25,17 @@ async def redis():
 @pytest.fixture
 async def gateway_with_dlp(redis):
     """Gateway service with DLP enabled."""
-    gateway = GatewayService(
-        redis_url="redis://localhost:6379",
-        rate_limit_per_minute=100,
-        rate_limit_per_hour=1000,
-        enable_dlp=True,
+    settings = GatewaySettings(
+        rate_limit=RateLimitSettings(per_minute=100, per_hour=1000),
+        features=FeaturesSettings(
+            dlp=True,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        ),
     )
+    gateway = GatewayService(settings=settings)
     await gateway.start()
     yield gateway
     await gateway.stop()
@@ -38,12 +44,17 @@ async def gateway_with_dlp(redis):
 @pytest.fixture
 async def gateway_without_dlp(redis):
     """Gateway service with DLP disabled."""
-    gateway = GatewayService(
-        redis_url="redis://localhost:6379",
-        rate_limit_per_minute=100,
-        rate_limit_per_hour=1000,
-        enable_dlp=False,
+    settings = GatewaySettings(
+        rate_limit=RateLimitSettings(per_minute=100, per_hour=1000),
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        ),
     )
+    gateway = GatewayService(settings=settings)
     await gateway.start()
     yield gateway
     await gateway.stop()

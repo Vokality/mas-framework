@@ -13,6 +13,7 @@ from mas.gateway import (
     AuditModule,
     RateLimitModule,
 )
+from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
@@ -54,12 +55,18 @@ async def rate_limit_module(redis):
 
 @pytest.fixture
 async def gateway(redis):
-    """Gateway service fixture."""
-    gateway = GatewayService(
-        redis_url="redis://localhost:6379",
-        rate_limit_per_minute=10,
-        rate_limit_per_hour=100,
+    """Gateway service fixture with message signing disabled for backward compatibility."""
+    settings = GatewaySettings(
+        rate_limit=RateLimitSettings(per_minute=10, per_hour=100),
+        features=FeaturesSettings(
+            dlp=True,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,  # Disable for backward compatibility
+            circuit_breaker=True,
+        ),
     )
+    gateway = GatewayService(settings=settings)
     await gateway.start()
     yield gateway
     await gateway.stop()
@@ -415,8 +422,17 @@ class TestAgentWithGateway:
 
     async def test_agent_sends_through_gateway(self, redis):
         """Test agent can send messages through gateway."""
-        # Start gateway
-        gateway = GatewayService(redis_url="redis://localhost:6379")
+        # Start gateway with test-friendly settings
+        settings = GatewaySettings(
+            features=FeaturesSettings(
+                dlp=True,
+                priority_queue=False,
+                rbac=False,
+                message_signing=False,  # Disabled for simpler testing
+                circuit_breaker=True,
+            ),
+        )
+        gateway = GatewayService(settings=settings)
         await gateway.start()
 
         try:
@@ -426,6 +442,9 @@ class TestAgentWithGateway:
 
             await sender.start()
             await receiver.start()
+
+            # Configure sender to use gateway
+            sender.set_gateway(gateway)
 
             # Grant permissions
             await gateway.authz.set_permissions(
