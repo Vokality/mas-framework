@@ -20,6 +20,7 @@ from .priority_queue import (
     PriorityQueueConfig,
 )
 from .metrics import MetricsCollector, get_metrics, get_content_type
+from .message_signing import MessageSigningModule, SignatureResult
 from .gateway import GatewayService, GatewayResult
 
 __all__ = [
@@ -48,6 +49,8 @@ __all__ = [
     "MetricsCollector",
     "get_metrics",
     "get_content_type",
+    "MessageSigningModule",
+    "SignatureResult",
     "GatewayService",
     "GatewayResult",
 ]
