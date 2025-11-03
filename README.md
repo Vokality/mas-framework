@@ -1,6 +1,6 @@
-# MAS Framework - Simple Multi-Agent System
+# MAS Framework - Multi-Agent System
 
-Ultra-lightweight Python framework for building multi-agent systems with Redis.
+A Python framework for building multi-agent systems with Redis.
 
 ## Architecture
 
@@ -13,11 +13,10 @@ MAS Service (Registry & Discovery)
 ```
 
 **Key Design Principles:**
-- **Peer-to-peer messaging** - Agents communicate directly via Redis channels
-- **MAS Service** - Lightweight registry and discovery only (not a message router)
-- **Auto-persisted state** - Agent state automatically saved to Redis
-- **Minimal bootstrapping** - 3 lines of code to run an agent
-- **High throughput** - 10,000+ messages/second (no central bottleneck)
+- **Peer-to-peer messaging** - Agents communicate directly via Redis pub/sub channels
+- **MAS Service** - Provides agent registration and discovery (does not route messages)
+- **Auto-persisted state** - Agent state saved to Redis hash structures
+- **Direct communication** - No central message router or bottleneck
 
 ## Quick Start
 
@@ -30,7 +29,7 @@ redis-server
 The service handles agent registration and discovery:
 ```bash
 # In one terminal
-python -m mas.service
+uv run python -m mas.service
 ```
 
 Or programmatically:
@@ -78,11 +77,11 @@ Agents communicate directly without going through a central router:
 await agent.send("target_agent", {"data": "hello"})
 ```
 
-**Benefits:**
-- High throughput (10,000+ msg/sec)
-- Low latency (<5ms median)
-- No single point of failure
-- Linear scalability
+**Characteristics:**
+- Direct agent-to-agent communication via Redis pub/sub
+- No central message routing overhead
+- Message delivery depends on Redis pub/sub semantics
+- Agents can run on different machines connected to same Redis instance
 
 ### Auto-Persisted State
 
@@ -255,26 +254,25 @@ See [examples/chemistry_tutoring/README.md](examples/chemistry_tutoring/README.m
 ## Testing
 
 ```bash
-# Run tests (requires Redis running)
-pytest
+# Run tests (requires Redis running on localhost:6379)
+uv run pytest
 
 # Run specific test
-pytest tests/test_simple_messaging.py::test_peer_to_peer_messaging
+uv run pytest tests/test_simple_messaging.py::test_peer_to_peer_messaging
 
 # Run with coverage
-pytest --cov=src/mas
+uv run pytest --cov=src/mas
 ```
 
-## Performance
+## Performance Characteristics
 
-Typical performance on a single Redis instance:
+The framework uses Redis pub/sub for messaging. Performance depends on:
+- Redis instance configuration and network latency
+- Message payload size
+- Number of concurrent agents
+- Agent processing logic
 
-| Metric | Value |
-|--------|-------|
-| Throughput | 10,000+ msg/sec |
-| Latency (P50) | <5ms |
-| Latency (P95) | <10ms |
-| Latency (P99) | <50ms |
+Performance benchmarks are planned for future releases.
 
 ## Documentation
 
@@ -284,10 +282,10 @@ Typical performance on a single Redis instance:
 ### Quick Architecture Overview
 
 **Components:**
-- **MAS Service** - Lightweight registry and health monitor (optional)
-- **Agent** - Self-contained agent with peer-to-peer messaging
+- **MAS Service** - Agent registry and health monitor (optional)
+- **Agent** - Base class for implementing agents with peer-to-peer messaging
 - **Registry** - Agent discovery by capabilities
-- **State Manager** - Auto-persisted state to Redis
+- **State Manager** - State persistence to Redis
 
 **Message Flow (Peer-to-Peer):**
 ```
@@ -313,55 +311,56 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 - Discovery by capabilities
 - Heartbeat monitoring
 
-### Planned
-- [ ] Authentication tokens
-- [ ] Message delivery guarantees (at-least-once)
+### In Development
+- [ ] Authentication and authorization (see `src/mas/gateway/`)
+- [ ] Message delivery guarantees with Redis Streams
 - [ ] Circuit breakers for failing agents
 - [ ] Rate limiting
-- [ ] Load testing at 10k msg/sec
-- [ ] Observability (Prometheus metrics)
+- [ ] Performance benchmarks
+- [ ] Prometheus metrics integration
 
-### Future 🔮
-- [ ] Redis Streams (vs pub/sub)
+### Under Consideration
 - [ ] Multi-region support
-- [ ] Message replay
+- [ ] Message replay functionality
 - [ ] Dead letter queues
-- [ ] Web dashboard
+- [ ] Management dashboard
 
 ## FAQ
 
 **Q: Why Redis?**
-A: Simple, fast, and widely deployed. Pub/sub for messaging, hashes for state, TTLs for heartbeats.
+A: Redis provides pub/sub for messaging, hash structures for state, and TTL for heartbeats. It's a single dependency with well-understood operational characteristics.
 
 **Q: What if Redis goes down?**
-A: Agents will lose connection. For production, use Redis Cluster or Sentinel for HA.
+A: Agents will lose connection and cannot communicate. Consider Redis Cluster or Sentinel for high availability in production.
 
 **Q: Can agents run on different machines?**
-A: Yes! Just point them to the same Redis instance.
+A: Yes. All agents connect to the same Redis instance via the redis:// URL.
 
 **Q: How many agents can I run?**
-A: Tested with 100+. Redis pub/sub can handle 10,000+ channels.
+A: The framework has been tested with small numbers of agents. Limits depend on Redis capacity and agent workload.
 
 **Q: Message delivery guarantees?**
-A: Currently at-most-once (pub/sub). Redis Streams coming soon for at-least-once.
+A: Currently uses Redis pub/sub (at-most-once delivery). Support for Redis Streams (at-least-once) is under development.
 
-## Contributing
+## Development
+
+This project uses `uv` as the package manager.
 
 ```bash
-# Clone repo
-git clone https://github.com/yourusername/mas-framework.git
-
 # Install dependencies
-pip install -e ".[dev]"
+uv sync
 
-# Run tests
-pytest
+# Run tests (requires Redis on localhost:6379)
+uv run pytest
 
 # Run type checker
-pyright
+uv run pyright
 
 # Format code
-ruff format .
+uv run ruff format .
+
+# Lint code
+uv run ruff check .
 ```
 
 ## License
