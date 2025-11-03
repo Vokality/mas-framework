@@ -1,5 +1,5 @@
 """Gateway Service - Central message validation and routing."""
-import asyncio
+
 import logging
 import time
 from typing import Optional
@@ -11,12 +11,14 @@ from .authentication import AuthenticationModule
 from .authorization import AuthorizationModule
 from .audit import AuditModule
 from .rate_limit import RateLimitModule
+from .dlp import DLPModule, ActionPolicy
 
 logger = logging.getLogger(__name__)
 
 
 class GatewayResult(BaseModel):
     """Gateway processing result."""
+
     success: bool
     decision: str  # ALLOWED, AUTH_FAILED, AUTHZ_DENIED, RATE_LIMITED, etc.
     message: Optional[str] = None
@@ -52,6 +54,7 @@ class GatewayService:
         redis_url: str = "redis://localhost:6379",
         rate_limit_per_minute: int = 100,
         rate_limit_per_hour: int = 1000,
+        enable_dlp: bool = True,
     ):
         """
         Initialize gateway service.
@@ -60,6 +63,7 @@ class GatewayService:
             redis_url: Redis connection URL
             rate_limit_per_minute: Default rate limit per minute
             rate_limit_per_hour: Default rate limit per hour
+            enable_dlp: Enable DLP scanning (default: True)
         """
         self.redis_url = redis_url
         self._redis: Optional[Redis] = None
@@ -70,10 +74,12 @@ class GatewayService:
         self._authz: Optional[AuthorizationModule] = None
         self._audit: Optional[AuditModule] = None
         self._rate_limit: Optional[RateLimitModule] = None
+        self._dlp: Optional[DLPModule] = None
 
         # Configuration
         self.rate_limit_per_minute = rate_limit_per_minute
         self.rate_limit_per_hour = rate_limit_per_hour
+        self.enable_dlp = enable_dlp
 
     async def start(self) -> None:
         """Start the gateway service."""
@@ -86,11 +92,17 @@ class GatewayService:
         self._rate_limit = RateLimitModule(
             self._redis,
             default_per_minute=self.rate_limit_per_minute,
-            default_per_hour=self.rate_limit_per_hour
+            default_per_hour=self.rate_limit_per_hour,
         )
 
+        if self.enable_dlp:
+            self._dlp = DLPModule()
+
         self._running = True
-        logger.info("Gateway Service started", extra={"redis_url": self.redis_url})
+        logger.info(
+            "Gateway Service started",
+            extra={"redis_url": self.redis_url, "dlp_enabled": self.enable_dlp},
+        )
 
     async def stop(self) -> None:
         """Stop the gateway service."""
@@ -123,7 +135,7 @@ class GatewayService:
             return GatewayResult(
                 success=False,
                 decision="SERVICE_UNAVAILABLE",
-                message="Gateway service not running"
+                message="Gateway service not running",
             )
 
         start_time = time.time()
@@ -140,8 +152,8 @@ class GatewayService:
                 {
                     "sender_id": message.sender_id,
                     "target_id": message.target_id,
-                    "reason": auth_result.reason
-                }
+                    "reason": auth_result.reason,
+                },
             )
 
             # Log to audit
@@ -152,21 +164,19 @@ class GatewayService:
                 "AUTH_FAILED",
                 latency_ms,
                 message.payload,
-                violations=["authentication_failure"]
+                violations=["authentication_failure"],
             )
 
             return GatewayResult(
                 success=False,
                 decision="AUTH_FAILED",
                 message=auth_result.reason,
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
             )
 
         # Stage 2: Authorization
         authorized = await self._authz.authorize(
-            message.sender_id,
-            message.target_id,
-            action="send"
+            message.sender_id, message.target_id, action="send"
         )
         if not authorized:
             latency_ms = (time.time() - start_time) * 1000
@@ -174,10 +184,7 @@ class GatewayService:
             # Log security event
             await self._audit.log_security_event(
                 "AUTHZ_DENIED",
-                {
-                    "sender_id": message.sender_id,
-                    "target_id": message.target_id
-                }
+                {"sender_id": message.sender_id, "target_id": message.target_id},
             )
 
             # Log to audit
@@ -188,20 +195,19 @@ class GatewayService:
                 "AUTHZ_DENIED",
                 latency_ms,
                 message.payload,
-                violations=["authorization_denied"]
+                violations=["authorization_denied"],
             )
 
             return GatewayResult(
                 success=False,
                 decision="AUTHZ_DENIED",
                 message="Not authorized to message target",
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
             )
 
         # Stage 3: Rate Limiting
         rate_result = await self._rate_limit.check_rate_limit(
-            message.sender_id,
-            message.message_id
+            message.sender_id, message.message_id
         )
         if not rate_result.allowed:
             latency_ms = (time.time() - start_time) * 1000
@@ -214,15 +220,72 @@ class GatewayService:
                 "RATE_LIMITED",
                 latency_ms,
                 message.payload,
-                violations=["rate_limit_exceeded"]
+                violations=["rate_limit_exceeded"],
             )
 
             return GatewayResult(
                 success=False,
                 decision="RATE_LIMITED",
                 message=f"Rate limit exceeded. Reset at {rate_result.reset_time}",
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
             )
+
+        # Stage 4: DLP Scanning (if enabled)
+        if self.enable_dlp and self._dlp:
+            scan_result = await self._dlp.scan(message.payload)
+
+            if not scan_result.clean:
+                violations.extend(
+                    [v.violation_type.value for v in scan_result.violations]
+                )
+
+                if scan_result.action == ActionPolicy.BLOCK:
+                    latency_ms = (time.time() - start_time) * 1000
+
+                    # Log security event
+                    await self._audit.log_security_event(
+                        "DLP_VIOLATION",
+                        {
+                            "sender_id": message.sender_id,
+                            "target_id": message.target_id,
+                            "violations": [
+                                v.violation_type.value for v in scan_result.violations
+                            ],
+                            "severity": [v.severity for v in scan_result.violations],
+                        },
+                    )
+
+                    # Log to audit
+                    await self._audit.log_message(
+                        message.message_id,
+                        message.sender_id,
+                        message.target_id,
+                        "DLP_BLOCKED",
+                        latency_ms,
+                        message.payload,
+                        violations=violations,
+                    )
+
+                    return GatewayResult(
+                        success=False,
+                        decision="DLP_BLOCKED",
+                        message=f"Message blocked due to DLP violations: {', '.join(violations)}",
+                        latency_ms=latency_ms,
+                    )
+
+                elif (
+                    scan_result.action == ActionPolicy.REDACT
+                    and scan_result.redacted_payload
+                ):
+                    # Replace payload with redacted version
+                    message.payload = scan_result.redacted_payload
+                    logger.info(
+                        "Message redacted by DLP",
+                        extra={
+                            "message_id": message.message_id,
+                            "violations": violations,
+                        },
+                    )
 
         # All checks passed - route message
         try:
@@ -237,7 +300,7 @@ class GatewayService:
                 "ALLOWED",
                 latency_ms,
                 message.payload,
-                violations=violations
+                violations=violations,
             )
 
             logger.info(
@@ -246,15 +309,15 @@ class GatewayService:
                     "message_id": message.message_id,
                     "sender": message.sender_id,
                     "target": message.target_id,
-                    "latency_ms": latency_ms
-                }
+                    "latency_ms": latency_ms,
+                },
             )
 
             return GatewayResult(
                 success=True,
                 decision="ALLOWED",
                 message="Message delivered",
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
             )
 
         except Exception as e:
@@ -266,8 +329,8 @@ class GatewayService:
                 extra={
                     "message_id": message.message_id,
                     "sender": message.sender_id,
-                    "target": message.target_id
-                }
+                    "target": message.target_id,
+                },
             )
 
             # Log failure
@@ -278,14 +341,14 @@ class GatewayService:
                 "ROUTING_FAILED",
                 latency_ms,
                 message.payload,
-                violations=["routing_error"]
+                violations=["routing_error"],
             )
 
             return GatewayResult(
                 success=False,
                 decision="ROUTING_FAILED",
                 message=str(e),
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
             )
 
     async def _route_message(self, message: AgentMessage) -> None:
@@ -301,17 +364,11 @@ class GatewayService:
         # In future phases, we'll switch to Redis Streams
         target_channel = f"agent.{message.target_id}"
 
-        await self._redis.publish(
-            target_channel,
-            message.model_dump_json()
-        )
+        await self._redis.publish(target_channel, message.model_dump_json())
 
         logger.debug(
             "Message published",
-            extra={
-                "message_id": message.message_id,
-                "target_channel": target_channel
-            }
+            extra={"message_id": message.message_id, "target_channel": target_channel},
         )
 
     # Module accessors for management operations
@@ -343,6 +400,11 @@ class GatewayService:
         if not self._rate_limit:
             raise RuntimeError("Gateway not started")
         return self._rate_limit
+
+    @property
+    def dlp(self) -> DLPModule | None:
+        """Get DLP module (if enabled)."""
+        return self._dlp
 
     async def get_stats(self) -> dict:
         """
