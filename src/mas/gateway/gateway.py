@@ -13,6 +13,7 @@ from .audit import AuditModule
 from .rate_limit import RateLimitModule
 from .dlp import DLPModule, ActionPolicy
 from .priority_queue import PriorityQueueModule, MessagePriority
+from .metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,13 @@ class GatewayService:
         if self.enable_priority_queue:
             self._priority_queue = PriorityQueueModule(self._redis)
 
+        # Initialize metrics
+        MetricsCollector.set_gateway_info(
+            version="0.1.14",
+            dlp_enabled=self.enable_dlp,
+            priority_queue_enabled=self.enable_priority_queue,
+        )
+
         self._running = True
         logger.info(
             "Gateway Service started",
@@ -158,6 +166,10 @@ class GatewayService:
         if not auth_result.authenticated:
             latency_ms = (time.time() - start_time) * 1000
 
+            # Record metrics
+            MetricsCollector.record_auth_failure(auth_result.reason or "unknown")
+            MetricsCollector.record_message("AUTH_FAILED", latency_ms / 1000)
+
             # Log security event
             await self._audit.log_security_event(
                 "AUTH_FAILURE",
@@ -193,6 +205,10 @@ class GatewayService:
         if not authorized:
             latency_ms = (time.time() - start_time) * 1000
 
+            # Record metrics
+            MetricsCollector.record_authz_denied(message.sender_id, message.target_id)
+            MetricsCollector.record_message("AUTHZ_DENIED", latency_ms / 1000)
+
             # Log security event
             await self._audit.log_security_event(
                 "AUTHZ_DENIED",
@@ -224,6 +240,10 @@ class GatewayService:
         if not rate_result.allowed:
             latency_ms = (time.time() - start_time) * 1000
 
+            # Record metrics
+            MetricsCollector.record_rate_limited(message.sender_id)
+            MetricsCollector.record_message("RATE_LIMITED", latency_ms / 1000)
+
             # Log to audit
             await self._audit.log_message(
                 message.message_id,
@@ -253,6 +273,13 @@ class GatewayService:
 
                 if scan_result.action == ActionPolicy.BLOCK:
                     latency_ms = (time.time() - start_time) * 1000
+
+                    # Record metrics
+                    for violation in scan_result.violations:
+                        MetricsCollector.record_dlp_violation(
+                            violation.violation_type.value, "BLOCK"
+                        )
+                    MetricsCollector.record_message("DLP_BLOCKED", latency_ms / 1000)
 
                     # Log security event
                     await self._audit.log_security_event(
@@ -303,6 +330,9 @@ class GatewayService:
         try:
             await self._route_message(message)
             latency_ms = (time.time() - start_time) * 1000
+
+            # Record metrics
+            MetricsCollector.record_message("ALLOWED", latency_ms / 1000)
 
             # Log successful delivery
             await self._audit.log_message(

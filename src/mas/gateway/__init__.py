@@ -19,6 +19,7 @@ from .priority_queue import (
     DequeueResult,
     PriorityQueueConfig,
 )
+from .metrics import MetricsCollector, get_metrics, get_content_type
 from .gateway import GatewayService, GatewayResult
 
 __all__ = [
@@ -44,6 +45,9 @@ __all__ = [
     "EnqueueResult",
     "DequeueResult",
     "PriorityQueueConfig",
+    "MetricsCollector",
+    "get_metrics",
+    "get_content_type",
     "GatewayService",
     "GatewayResult",
 ]

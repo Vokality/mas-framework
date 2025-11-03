@@ -10,6 +10,7 @@ keywords = ["multi-agent", "AI", "agent", "framework"]
 description = "A Multi-Agent System Framework"
 requires-python = ">=3.14"
 dependencies = [
+    "prometheus-client>=0.23.1",
     "psutil>=6.1.1",
     "pydantic>=2.12.3",
     "redis[hiredis]>=5.2.1",
