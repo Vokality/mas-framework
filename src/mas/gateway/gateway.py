@@ -508,6 +508,21 @@ class GatewayService:
         """Get priority queue module (if enabled)."""
         return self._priority_queue
 
+    def auth_manager(self) -> "AuthorizationManager":
+        """
+        Get high-level authorization manager for easy configuration.
+
+        Returns:
+            AuthorizationManager instance
+
+        Example:
+            auth = gateway.auth_manager()
+            await auth.allow_bidirectional("agent1", "agent2")
+        """
+        from .auth_manager import AuthorizationManager
+
+        return AuthorizationManager(self)
+
     async def get_stats(self) -> dict:
         """
         Get gateway statistics.

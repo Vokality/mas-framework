@@ -32,6 +32,7 @@ from .config import (
     load_settings,
 )
 from .gateway import GatewayService, GatewayResult
+from .auth_manager import AuthorizationManager
 
 __all__ = [
     "AuthenticationModule",
@@ -71,4 +72,5 @@ __all__ = [
     "load_settings",
     "GatewayService",
     "GatewayResult",
+    "AuthorizationManager",
 ]
