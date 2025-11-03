@@ -1,5 +1,8 @@
 """Audit Module for Gateway Service."""
+
+import csv
 import hashlib
+import io
 import json
 import logging
 import time
@@ -12,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class AuditEntry(BaseModel):
     """Audit log entry."""
+
     message_id: str
     timestamp: float = Field(default_factory=time.time)
     sender_id: str
@@ -59,7 +63,7 @@ class AuditModule:
         decision: str,
         latency_ms: float,
         payload: dict,
-        violations: Optional[list[str]] = None
+        violations: Optional[list[str]] = None,
     ) -> str:
         """
         Log message to audit stream.
@@ -93,7 +97,7 @@ class AuditModule:
             latency_ms=latency_ms,
             payload_hash=payload_hash,
             violations=violations or [],
-            previous_hash=previous_hash
+            previous_hash=previous_hash,
         )
 
         # Compute entry hash for chain
@@ -125,17 +129,13 @@ class AuditModule:
             extra={
                 "message_id": message_id,
                 "decision": decision,
-                "stream_id": main_stream_id
-            }
+                "stream_id": main_stream_id,
+            },
         )
 
         return main_stream_id
 
-    async def log_security_event(
-        self,
-        event_type: str,
-        details: dict
-    ) -> str:
+    async def log_security_event(self, event_type: str, details: dict) -> str:
         """
         Log security event to audit stream.
 
@@ -149,14 +149,14 @@ class AuditModule:
         entry = {
             "timestamp": time.time(),
             "event_type": event_type,
-            "details": json.dumps(details)
+            "details": json.dumps(details),
         }
 
         stream_id = await self.redis.xadd("audit:security_events", entry)
 
         logger.info(
             "Security event logged",
-            extra={"event_type": event_type, "stream_id": stream_id}
+            extra={"event_type": event_type, "stream_id": stream_id},
         )
 
         return stream_id
@@ -166,7 +166,7 @@ class AuditModule:
         sender_id: str,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
-        count: int = 100
+        count: int = 100,
     ) -> list[dict]:
         """
         Query audit log by sender.
@@ -188,7 +188,7 @@ class AuditModule:
         target_id: str,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
-        count: int = 100
+        count: int = 100,
     ) -> list[dict]:
         """
         Query audit log by target.
@@ -209,7 +209,7 @@ class AuditModule:
         self,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
-        count: int = 100
+        count: int = 100,
     ) -> list[dict]:
         """
         Query security events.
@@ -223,10 +223,7 @@ class AuditModule:
             List of security events
         """
         return await self._query_stream(
-            "audit:security_events",
-            start_time,
-            end_time,
-            count
+            "audit:security_events", start_time, end_time, count
         )
 
     async def _query_stream(
@@ -234,7 +231,7 @@ class AuditModule:
         stream: str,
         start_time: Optional[float],
         end_time: Optional[float],
-        count: int
+        count: int,
     ) -> list[dict]:
         """
         Query Redis Stream with time range.
@@ -314,6 +311,180 @@ class AuditModule:
         """
         timestamp_ms = int(timestamp * 1000)
         return f"{timestamp_ms}-0"
+
+    async def query_by_decision(
+        self,
+        decision: str,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        count: int = 100,
+    ) -> list[dict]:
+        """
+        Query audit log by decision type.
+
+        Args:
+            decision: Decision type (ALLOWED, DENIED, RATE_LIMITED, DLP_BLOCKED, etc.)
+            start_time: Start timestamp (None = beginning)
+            end_time: End timestamp (None = now)
+            count: Maximum number of entries to return
+
+        Returns:
+            List of audit entries matching decision
+        """
+        # Query main stream and filter by decision
+        all_entries = await self._query_stream(
+            "audit:messages",
+            start_time,
+            end_time,
+            count * 2,  # Get more to filter
+        )
+
+        # Filter by decision
+        filtered = [entry for entry in all_entries if entry.get("decision") == decision]
+        return filtered[:count]
+
+    async def query_by_violation(
+        self,
+        violation_type: str,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        count: int = 100,
+    ) -> list[dict]:
+        """
+        Query audit log by violation type.
+
+        Args:
+            violation_type: Violation type (e.g., "PII", "PHI", "PCI", etc.)
+            start_time: Start timestamp (None = beginning)
+            end_time: End timestamp (None = now)
+            count: Maximum number of entries to return
+
+        Returns:
+            List of audit entries with specified violation
+        """
+        # Query main stream and filter by violation
+        all_entries = await self._query_stream(
+            "audit:messages", start_time, end_time, count * 2
+        )
+
+        # Filter by violation type
+        filtered = []
+        for entry in all_entries:
+            violations = entry.get("violations", [])
+            if violation_type in violations:
+                filtered.append(entry)
+                if len(filtered) >= count:
+                    break
+
+        return filtered
+
+    async def query_all(
+        self,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        count: int = 100,
+    ) -> list[dict]:
+        """
+        Query all audit log entries.
+
+        Args:
+            start_time: Start timestamp (None = beginning)
+            end_time: End timestamp (None = now)
+            count: Maximum number of entries to return
+
+        Returns:
+            List of all audit entries
+        """
+        return await self._query_stream("audit:messages", start_time, end_time, count)
+
+    async def export_to_csv(
+        self,
+        entries: list[dict],
+    ) -> str:
+        """
+        Export audit entries to CSV format.
+
+        Args:
+            entries: List of audit entries to export
+
+        Returns:
+            CSV string
+        """
+        if not entries:
+            return ""
+
+        output = io.StringIO()
+
+        # Define CSV columns
+        fieldnames = [
+            "stream_id",
+            "message_id",
+            "timestamp",
+            "sender_id",
+            "target_id",
+            "decision",
+            "latency_ms",
+            "payload_hash",
+            "violations",
+        ]
+
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+
+        for entry in entries:
+            # Convert violations list to string
+            entry_copy = entry.copy()
+            if isinstance(entry_copy.get("violations"), list):
+                entry_copy["violations"] = ";".join(entry_copy["violations"])
+            writer.writerow(entry_copy)
+
+        return output.getvalue()
+
+    async def export_to_json(
+        self,
+        entries: list[dict],
+        pretty: bool = True,
+    ) -> str:
+        """
+        Export audit entries to JSON format.
+
+        Args:
+            entries: List of audit entries to export
+            pretty: Pretty print JSON (default: True)
+
+        Returns:
+            JSON string
+        """
+        if pretty:
+            return json.dumps(entries, indent=2, sort_keys=True)
+        return json.dumps(entries)
+
+    async def export_compliance_report(
+        self,
+        start_time: float,
+        end_time: float,
+        format_type: str = "csv",
+    ) -> str:
+        """
+        Export compliance report for specified time range.
+
+        Args:
+            start_time: Start timestamp
+            end_time: End timestamp
+            format_type: Export format ("csv" or "json")
+
+        Returns:
+            Formatted report string
+        """
+        # Query all entries in range
+        entries = await self.query_all(start_time, end_time, count=10000)
+
+        if format_type == "csv":
+            return await self.export_to_csv(entries)
+        elif format_type == "json":
+            return await self.export_to_json(entries)
+        else:
+            raise ValueError(f"Unsupported format: {format_type}")
 
     async def get_stats(self) -> dict:
         """
