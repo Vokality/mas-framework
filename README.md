@@ -227,6 +227,31 @@ for agent in agents:
 await service.stop()
 ```
 
+## Examples
+
+### Chemistry Tutoring Demo
+
+A complete example showing two OpenAI-powered agents exchanging information:
+
+- **Student Agent**: Asks chemistry homework questions
+- **Professor Agent**: Provides educational explanations
+
+```bash
+cd examples/chemistry_tutoring
+
+# Add your OpenAI API key to .env file in project root
+echo "OPENAI_API_KEY=your-key-here" >> ../../.env
+
+# Run the demo (installs dependencies automatically)
+./run.sh
+
+# Or manually with uv
+uv pip install openai python-dotenv
+uv run python main.py
+```
+
+See [examples/chemistry_tutoring/README.md](examples/chemistry_tutoring/README.md) for full documentation.
+
 ## Testing
 
 ```bash
