@@ -4,9 +4,12 @@ import hashlib
 import json
 import logging
 import re
+import time
 from enum import Enum
 from typing import Any
 from pydantic import BaseModel
+
+from .metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -202,12 +205,19 @@ class DLPModule:
         Returns:
             ScanResult with violations and action policy
         """
+        # Track scan duration
+        scan_start = time.time()
+
         # Convert payload to text for scanning
         payload_text = json.dumps(payload, default=str)
         payload_hash = hashlib.sha256(payload_text.encode()).hexdigest()
 
         # Detect violations
         violations = await self._detect_violations(payload_text)
+
+        # Record scan duration metric
+        scan_duration = time.time() - scan_start
+        MetricsCollector.record_dlp_scan_duration(scan_duration)
 
         if not violations:
             return ScanResult(

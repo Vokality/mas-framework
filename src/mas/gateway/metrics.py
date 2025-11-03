@@ -9,7 +9,6 @@ Metrics are exposed in Prometheus format for scraping.
 """
 
 import logging
-from typing import Optional
 from prometheus_client import (
     Counter,
     Histogram,
@@ -31,7 +30,9 @@ logger = logging.getLogger(__name__)
 gateway_messages_total = Counter(
     "gateway_messages_total",
     "Total number of messages processed by gateway",
-    ["decision"],  # Labels: ALLOWED, AUTH_FAILED, AUTHZ_DENIED, RATE_LIMITED, DLP_BLOCKED
+    [
+        "decision"
+    ],  # Labels: ALLOWED, AUTH_FAILED, AUTHZ_DENIED, RATE_LIMITED, DLP_BLOCKED
 )
 
 # Authentication metrics
@@ -59,7 +60,10 @@ gateway_rate_limited_total = Counter(
 gateway_dlp_violations_total = Counter(
     "gateway_dlp_violations_total",
     "Total number of DLP violations detected",
-    ["violation_type", "action"],  # Labels: PII_SSN, PCI_CREDIT_CARD, etc. / BLOCK, REDACT, ALERT
+    [
+        "violation_type",
+        "action",
+    ],  # Labels: PII_SSN, PCI_CREDIT_CARD, etc. / BLOCK, REDACT, ALERT
 )
 
 # Security event metrics
@@ -85,7 +89,22 @@ gateway_message_latency_seconds = Histogram(
     "gateway_message_latency_seconds",
     "Message processing latency in seconds",
     ["decision"],  # Labels: ALLOWED, DENIED, etc.
-    buckets=(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0),
+    buckets=(
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.075,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+        1.0,
+        2.5,
+        5.0,
+        7.5,
+        10.0,
+    ),
 )
 
 # DLP scan duration
@@ -207,9 +226,7 @@ class MetricsCollector:
         gateway_rate_limited_total.labels(agent_id=agent_id).inc()
 
     @staticmethod
-    def record_dlp_violation(
-        violation_type: str, action: str = "BLOCK"
-    ) -> None:
+    def record_dlp_violation(violation_type: str, action: str = "BLOCK") -> None:
         """
         Record DLP violation.
 
@@ -305,7 +322,9 @@ class MetricsCollector:
         gateway_active_requests.dec()
 
     @staticmethod
-    def set_gateway_info(version: str, dlp_enabled: bool, priority_queue_enabled: bool) -> None:
+    def set_gateway_info(
+        version: str, dlp_enabled: bool, priority_queue_enabled: bool
+    ) -> None:
         """
         Set gateway information.
 
@@ -314,11 +333,13 @@ class MetricsCollector:
             dlp_enabled: Whether DLP is enabled
             priority_queue_enabled: Whether priority queue is enabled
         """
-        gateway_info.info({
-            "version": version,
-            "dlp_enabled": str(dlp_enabled),
-            "priority_queue_enabled": str(priority_queue_enabled),
-        })
+        gateway_info.info(
+            {
+                "version": version,
+                "dlp_enabled": str(dlp_enabled),
+                "priority_queue_enabled": str(priority_queue_enabled),
+            }
+        )
 
 
 def get_metrics() -> bytes:

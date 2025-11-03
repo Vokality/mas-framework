@@ -1,4 +1,5 @@
 """Authentication Module for Gateway Service."""
+
 import logging
 import secrets
 import time
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 class AuthResult(BaseModel):
     """Authentication result."""
+
     authenticated: bool
     agent_id: Optional[str] = None
     reason: Optional[str] = None
@@ -54,30 +56,29 @@ class AuthenticationModule:
             AuthResult with authentication status
         """
         if not agent_id or not token:
-            return AuthResult(
-                authenticated=False,
-                reason="Missing agent_id or token"
-            )
+            return AuthResult(authenticated=False, reason="Missing agent_id or token")
 
         # Check if agent exists
         agent_key = f"agent:{agent_id}"
         exists = await self.redis.exists(agent_key)
         if not exists:
-            logger.warning("Authentication failed: agent not found", extra={"agent_id": agent_id})
+            logger.warning(
+                "Authentication failed: agent not found", extra={"agent_id": agent_id}
+            )
             return AuthResult(
-                authenticated=False,
-                agent_id=agent_id,
-                reason="Agent not registered"
+                authenticated=False, agent_id=agent_id, reason="Agent not registered"
             )
 
         # Validate token
         valid = await self.validate_token(agent_id, token)
         if not valid:
-            logger.warning("Authentication failed: invalid token", extra={"agent_id": agent_id})
+            logger.warning(
+                "Authentication failed: invalid token", extra={"agent_id": agent_id}
+            )
             return AuthResult(
                 authenticated=False,
                 agent_id=agent_id,
-                reason="Invalid or expired token"
+                reason="Invalid or expired token",
             )
 
         # Check agent status
@@ -85,12 +86,10 @@ class AuthenticationModule:
         if status != "ACTIVE":
             logger.warning(
                 "Authentication failed: agent not active",
-                extra={"agent_id": agent_id, "status": status}
+                extra={"agent_id": agent_id, "status": status},
             )
             return AuthResult(
-                authenticated=False,
-                agent_id=agent_id,
-                reason=f"Agent status: {status}"
+                authenticated=False, agent_id=agent_id, reason=f"Agent status: {status}"
             )
 
         logger.debug("Authentication successful", extra={"agent_id": agent_id})
@@ -134,7 +133,9 @@ class AuthenticationModule:
                     logger.warning("Token expired", extra={"agent_id": agent_id})
                     return False
             except ValueError:
-                logger.error("Invalid token_expires value", extra={"agent_id": agent_id})
+                logger.error(
+                    "Invalid token_expires value", extra={"agent_id": agent_id}
+                )
                 return False
 
         return True
@@ -169,7 +170,7 @@ class AuthenticationModule:
                 "token": new_token,
                 "token_expires": str(new_expires),
                 "token_version": str(version),
-            }
+            },
         )
 
         # Add old token to revocation list
@@ -179,10 +180,7 @@ class AuthenticationModule:
             # Set TTL to token lifetime (24 hours)
             await self.redis.expire(revoked_key, self.token_lifetime)
 
-        logger.info(
-            "Token rotated",
-            extra={"agent_id": agent_id, "version": version}
-        )
+        logger.info("Token rotated", extra={"agent_id": agent_id, "version": version})
 
         return new_token
 

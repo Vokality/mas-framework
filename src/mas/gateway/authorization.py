@@ -1,4 +1,5 @@
 """Authorization Module for Gateway Service."""
+
 import logging
 from typing import Optional
 from redis.asyncio import Redis
@@ -31,10 +32,7 @@ class AuthorizationModule:
         self.redis = redis
 
     async def authorize(
-        self,
-        sender_id: str,
-        target_id: str,
-        action: str = "send"
+        self, sender_id: str, target_id: str, action: str = "send"
     ) -> bool:
         """
         Authorize message from sender to target.
@@ -53,12 +51,12 @@ class AuthorizationModule:
         if allowed:
             logger.debug(
                 "Authorization granted",
-                extra={"sender": sender_id, "target": target_id, "action": action}
+                extra={"sender": sender_id, "target": target_id, "action": action},
             )
         else:
             logger.warning(
                 "Authorization denied",
-                extra={"sender": sender_id, "target": target_id, "action": action}
+                extra={"sender": sender_id, "target": target_id, "action": action},
             )
 
         return allowed
@@ -84,8 +82,7 @@ class AuthorizationModule:
         status = await self.redis.hget(target_key, "status")
         if status != "ACTIVE":
             logger.warning(
-                "Target agent not active",
-                extra={"target": target_id, "status": status}
+                "Target agent not active", extra={"target": target_id, "status": status}
             )
             return False
 
@@ -93,7 +90,9 @@ class AuthorizationModule:
         blocked_key = f"agent:{sender_id}:blocked_targets"
         is_blocked = await self.redis.sismember(blocked_key, target_id)
         if is_blocked:
-            logger.debug("Target is blocked", extra={"sender": sender_id, "target": target_id})
+            logger.debug(
+                "Target is blocked", extra={"sender": sender_id, "target": target_id}
+            )
             return False
 
         # Check allowed list
@@ -112,7 +111,7 @@ class AuthorizationModule:
         self,
         agent_id: str,
         allowed_targets: Optional[list[str]] = None,
-        blocked_targets: Optional[list[str]] = None
+        blocked_targets: Optional[list[str]] = None,
     ) -> None:
         """
         Set ACL permissions for an agent.
@@ -131,7 +130,7 @@ class AuthorizationModule:
                 await self.redis.sadd(allowed_key, *allowed_targets)
             logger.info(
                 "Updated allowed targets",
-                extra={"agent_id": agent_id, "count": len(allowed_targets)}
+                extra={"agent_id": agent_id, "count": len(allowed_targets)},
             )
 
         if blocked_targets is not None:
@@ -143,7 +142,7 @@ class AuthorizationModule:
                 await self.redis.sadd(blocked_key, *blocked_targets)
             logger.info(
                 "Updated blocked targets",
-                extra={"agent_id": agent_id, "count": len(blocked_targets)}
+                extra={"agent_id": agent_id, "count": len(blocked_targets)},
             )
 
     async def add_permission(self, agent_id: str, target_id: str) -> None:
@@ -157,8 +156,7 @@ class AuthorizationModule:
         allowed_key = f"agent:{agent_id}:allowed_targets"
         await self.redis.sadd(allowed_key, target_id)
         logger.info(
-            "Added permission",
-            extra={"agent_id": agent_id, "target": target_id}
+            "Added permission", extra={"agent_id": agent_id, "target": target_id}
         )
 
     async def remove_permission(self, agent_id: str, target_id: str) -> None:
@@ -172,8 +170,7 @@ class AuthorizationModule:
         allowed_key = f"agent:{agent_id}:allowed_targets"
         await self.redis.srem(allowed_key, target_id)
         logger.info(
-            "Removed permission",
-            extra={"agent_id": agent_id, "target": target_id}
+            "Removed permission", extra={"agent_id": agent_id, "target": target_id}
         )
 
     async def block_target(self, agent_id: str, target_id: str) -> None:
@@ -186,10 +183,7 @@ class AuthorizationModule:
         """
         blocked_key = f"agent:{agent_id}:blocked_targets"
         await self.redis.sadd(blocked_key, target_id)
-        logger.info(
-            "Blocked target",
-            extra={"agent_id": agent_id, "target": target_id}
-        )
+        logger.info("Blocked target", extra={"agent_id": agent_id, "target": target_id})
 
     async def unblock_target(self, agent_id: str, target_id: str) -> None:
         """
@@ -202,8 +196,7 @@ class AuthorizationModule:
         blocked_key = f"agent:{agent_id}:blocked_targets"
         await self.redis.srem(blocked_key, target_id)
         logger.info(
-            "Unblocked target",
-            extra={"agent_id": agent_id, "target": target_id}
+            "Unblocked target", extra={"agent_id": agent_id, "target": target_id}
         )
 
     async def get_permissions(self, agent_id: str) -> dict[str, list[str]]:

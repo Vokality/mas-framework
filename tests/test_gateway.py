@@ -1,4 +1,5 @@
 """Tests for Gateway Service components."""
+
 import asyncio
 import pytest
 import time
@@ -57,7 +58,7 @@ async def gateway(redis):
     gateway = GatewayService(
         redis_url="redis://localhost:6379",
         rate_limit_per_minute=10,
-        rate_limit_per_hour=100
+        rate_limit_per_hour=100,
     )
     await gateway.start()
     yield gateway
@@ -77,8 +78,8 @@ class TestAuthenticationModule:
             mapping={
                 "token": token,
                 "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600)
-            }
+                "token_expires": str(time.time() + 3600),
+            },
         )
 
         result = await auth_module.authenticate(agent_id, token)
@@ -89,11 +90,7 @@ class TestAuthenticationModule:
         """Test authentication with invalid token."""
         agent_id = "test_agent"
         await redis.hset(
-            f"agent:{agent_id}",
-            mapping={
-                "token": "correct_token",
-                "status": "ACTIVE"
-            }
+            f"agent:{agent_id}", mapping={"token": "correct_token", "status": "ACTIVE"}
         )
 
         result = await auth_module.authenticate(agent_id, "wrong_token")
@@ -111,8 +108,7 @@ class TestAuthenticationModule:
         agent_id = "test_agent"
         old_token = "old_token"
         await redis.hset(
-            f"agent:{agent_id}",
-            mapping={"token": old_token, "token_version": "1"}
+            f"agent:{agent_id}", mapping={"token": old_token, "token_version": "1"}
         )
 
         new_token = await auth_module.rotate_token(agent_id)
@@ -178,9 +174,7 @@ class TestAuthorizationModule:
 
         # Grant wildcard but also block specific target
         await authz_module.set_permissions(
-            sender,
-            allowed_targets=["*"],
-            blocked_targets=[target]
+            sender, allowed_targets=["*"], blocked_targets=[target]
         )
 
         result = await authz_module.authorize(sender, target)
@@ -199,7 +193,7 @@ class TestAuditModule:
             decision="ALLOWED",
             latency_ms=15.5,
             payload={"test": "data"},
-            violations=[]
+            violations=[],
         )
 
         assert stream_id is not None
@@ -222,8 +216,7 @@ class TestAuditModule:
     async def test_log_security_event(self, audit_module):
         """Test security event logging."""
         stream_id = await audit_module.log_security_event(
-            "AUTH_FAILURE",
-            {"agent_id": "agent_a", "reason": "Invalid token"}
+            "AUTH_FAILURE", {"agent_id": "agent_a", "reason": "Invalid token"}
         )
 
         assert stream_id is not None
@@ -291,8 +284,8 @@ class TestGatewayService:
             mapping={
                 "token": token,
                 "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600)
-            }
+                "token_expires": str(time.time() + 3600),
+            },
         )
 
         # Setup target
@@ -303,9 +296,7 @@ class TestGatewayService:
 
         # Send message
         message = AgentMessage(
-            sender_id=sender,
-            target_id=target,
-            payload={"test": "data"}
+            sender_id=sender, target_id=target, payload={"test": "data"}
         )
 
         result = await gateway.handle_message(message, token)
@@ -325,17 +316,15 @@ class TestGatewayService:
             mapping={
                 "token": token,
                 "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600)
-            }
+                "token_expires": str(time.time() + 3600),
+            },
         )
 
         # Setup target but NO permission granted
         await redis.hset(f"agent:{target}", "status", "ACTIVE")
 
         message = AgentMessage(
-            sender_id=sender,
-            target_id=target,
-            payload={"test": "data"}
+            sender_id=sender, target_id=target, payload={"test": "data"}
         )
 
         result = await gateway.handle_message(message, token)
@@ -350,9 +339,7 @@ class TestGatewayService:
         await redis.hset(f"agent:{sender}", "status", "ACTIVE")
 
         message = AgentMessage(
-            sender_id=sender,
-            target_id=target,
-            payload={"test": "data"}
+            sender_id=sender, target_id=target, payload={"test": "data"}
         )
 
         result = await gateway.handle_message(message, "wrong_token")
@@ -371,8 +358,8 @@ class TestGatewayService:
             mapping={
                 "token": token,
                 "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600)
-            }
+                "token_expires": str(time.time() + 3600),
+            },
         )
         await redis.hset(f"agent:{target}", "status", "ACTIVE")
         await gateway.authz.set_permissions(sender, allowed_targets=[target])
@@ -380,18 +367,14 @@ class TestGatewayService:
         # Send messages up to limit (10)
         for i in range(10):
             message = AgentMessage(
-                sender_id=sender,
-                target_id=target,
-                payload={"msg": i}
+                sender_id=sender, target_id=target, payload={"msg": i}
             )
             result = await gateway.handle_message(message, token)
             assert result.success is True
 
         # Next message should be rate limited
         message = AgentMessage(
-            sender_id=sender,
-            target_id=target,
-            payload={"msg": "over_limit"}
+            sender_id=sender, target_id=target, payload={"msg": "over_limit"}
         )
         result = await gateway.handle_message(message, token)
         assert result.success is False
@@ -409,17 +392,15 @@ class TestGatewayService:
             mapping={
                 "token": token,
                 "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600)
-            }
+                "token_expires": str(time.time() + 3600),
+            },
         )
         await redis.hset(f"agent:{target}", "status", "ACTIVE")
         await gateway.authz.set_permissions(sender, allowed_targets=[target])
 
         # Send message
         message = AgentMessage(
-            sender_id=sender,
-            target_id=target,
-            payload={"test": "audit"}
+            sender_id=sender, target_id=target, payload={"test": "audit"}
         )
         await gateway.handle_message(message, token)
 
@@ -448,8 +429,7 @@ class TestAgentWithGateway:
 
             # Grant permissions
             await gateway.authz.set_permissions(
-                sender.id,
-                allowed_targets=[receiver.id]
+                sender.id, allowed_targets=[receiver.id]
             )
 
             # Send message
@@ -464,8 +444,7 @@ class TestAgentWithGateway:
 
             # Grant permission for sender
             await gateway.authz.set_permissions(
-                sender.id,
-                allowed_targets=[receiver_agent.id]
+                sender.id, allowed_targets=[receiver_agent.id]
             )
 
             # Send through gateway
@@ -482,4 +461,3 @@ class TestAgentWithGateway:
         finally:
             await gateway.stop()
             await redis.flushdb()
-

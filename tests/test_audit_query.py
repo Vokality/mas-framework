@@ -475,5 +475,3 @@ class TestAuditIntegration:
 
         json_export = await audit_module.export_to_json(all_results)
         assert len(json_export) > 0
-
-

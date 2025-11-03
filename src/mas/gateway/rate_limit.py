@@ -1,4 +1,5 @@
 """Rate Limiting Module for Gateway Service."""
+
 import logging
 import time
 from typing import Optional
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 class RateLimitResult(BaseModel):
     """Rate limit check result."""
+
     allowed: bool
     limit: int
     remaining: int
@@ -33,10 +35,7 @@ class RateLimitModule:
     """
 
     def __init__(
-        self,
-        redis: Redis,
-        default_per_minute: int = 100,
-        default_per_hour: int = 1000
+        self, redis: Redis, default_per_minute: int = 100, default_per_hour: int = 1000
     ):
         """
         Initialize rate limiting module.
@@ -50,11 +49,7 @@ class RateLimitModule:
         self.default_per_minute = default_per_minute
         self.default_per_hour = default_per_hour
 
-    async def check_rate_limit(
-        self,
-        agent_id: str,
-        message_id: str
-    ) -> RateLimitResult:
+    async def check_rate_limit(self, agent_id: str, message_id: str) -> RateLimitResult:
         """
         Check if agent is within rate limits.
 
@@ -81,7 +76,7 @@ class RateLimitModule:
             window="minute",
             window_seconds=60,
             limit=limits["per_minute"],
-            now=now
+            now=now,
         )
 
         if not minute_result.allowed:
@@ -90,8 +85,8 @@ class RateLimitModule:
                 extra={
                     "agent_id": agent_id,
                     "limit": minute_result.limit,
-                    "remaining": minute_result.remaining
-                }
+                    "remaining": minute_result.remaining,
+                },
             )
             return minute_result
 
@@ -102,7 +97,7 @@ class RateLimitModule:
             window="hour",
             window_seconds=3600,
             limit=limits["per_hour"],
-            now=now
+            now=now,
         )
 
         if not hour_result.allowed:
@@ -111,8 +106,8 @@ class RateLimitModule:
                 extra={
                     "agent_id": agent_id,
                     "limit": hour_result.limit,
-                    "remaining": hour_result.remaining
-                }
+                    "remaining": hour_result.remaining,
+                },
             )
             return hour_result
 
@@ -121,8 +116,8 @@ class RateLimitModule:
             extra={
                 "agent_id": agent_id,
                 "minute_remaining": minute_result.remaining,
-                "hour_remaining": hour_result.remaining
-            }
+                "hour_remaining": hour_result.remaining,
+            },
         )
 
         # Return the more restrictive result
@@ -135,7 +130,7 @@ class RateLimitModule:
         window: str,
         window_seconds: int,
         limit: int,
-        now: float
+        now: float,
     ) -> RateLimitResult:
         """
         Check rate limit for a specific time window.
@@ -164,10 +159,7 @@ class RateLimitModule:
         if count >= limit:
             reset_time = now + window_seconds
             return RateLimitResult(
-                allowed=False,
-                limit=limit,
-                remaining=0,
-                reset_time=reset_time
+                allowed=False, limit=limit, remaining=0, reset_time=reset_time
             )
 
         # Add current message to window
@@ -182,14 +174,14 @@ class RateLimitModule:
             allowed=True,
             limit=limit,
             remaining=remaining,
-            reset_time=now + window_seconds
+            reset_time=now + window_seconds,
         )
 
     async def set_limits(
         self,
         agent_id: str,
         per_minute: Optional[int] = None,
-        per_hour: Optional[int] = None
+        per_hour: Optional[int] = None,
     ) -> None:
         """
         Set custom rate limits for an agent.
@@ -212,8 +204,8 @@ class RateLimitModule:
             extra={
                 "agent_id": agent_id,
                 "per_minute": per_minute,
-                "per_hour": per_hour
-            }
+                "per_hour": per_hour,
+            },
         )
 
     async def get_limits(self, agent_id: str) -> dict[str, int]:
@@ -231,17 +223,10 @@ class RateLimitModule:
         per_minute_str = await self.redis.hget(limits_key, "per_minute")
         per_hour_str = await self.redis.hget(limits_key, "per_hour")
 
-        per_minute = (
-            int(per_minute_str) if per_minute_str else self.default_per_minute
-        )
-        per_hour = (
-            int(per_hour_str) if per_hour_str else self.default_per_hour
-        )
+        per_minute = int(per_minute_str) if per_minute_str else self.default_per_minute
+        per_hour = int(per_hour_str) if per_hour_str else self.default_per_hour
 
-        return {
-            "per_minute": per_minute,
-            "per_hour": per_hour
-        }
+        return {"per_minute": per_minute, "per_hour": per_hour}
 
     async def reset_limits(self, agent_id: str) -> None:
         """
@@ -287,7 +272,4 @@ class RateLimitModule:
         await self.redis.zremrangebyscore(hour_key, "-inf", hour_start)
         hour_count = await self.redis.zcard(hour_key)
 
-        return {
-            "per_minute": minute_count,
-            "per_hour": hour_count
-        }
+        return {"per_minute": minute_count, "per_hour": hour_count}
