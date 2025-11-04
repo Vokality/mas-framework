@@ -35,7 +35,10 @@ class RateLimitModule:
     """
 
     def __init__(
-        self, redis: AsyncRedisProtocol, default_per_minute: int = 100, default_per_hour: int = 1000
+        self,
+        redis: AsyncRedisProtocol,
+        default_per_minute: int = 100,
+        default_per_hour: int = 1000,
     ):
         """
         Initialize rate limiting module.

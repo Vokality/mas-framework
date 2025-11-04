@@ -39,7 +39,7 @@ exclude = ["tests"]
 multi_line_output = 3
 
 [tool.pyright]
-pythonVersion = "3.12"
+pythonVersion = "3.14"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
 reportMissingImports = "error"
@@ -65,8 +65,9 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "isort>=5.12.0",
     "pytest-cov>=4.1.0",
-    "ruff>=0.8.1",
+    "ruff>=0.14.3",
     "pytest-timeout>=2.3.1",
-    "pyright>=1.1.390",
+    "pyright>=1.1.407",
     "openai>=2.6.1",
+    "pydantic-ai>=1.10.0",
 ]

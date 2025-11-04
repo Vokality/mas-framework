@@ -107,7 +107,8 @@ class GatewayService:
         # Initialize core modules (always enabled)
         self._auth = AuthenticationModule(cast(AsyncRedisProtocol, self._redis))
         self._authz = AuthorizationModule(
-            cast(AsyncRedisProtocol, self._redis), enable_rbac=self.settings.features.rbac
+            cast(AsyncRedisProtocol, self._redis),
+            enable_rbac=self.settings.features.rbac,
         )
         self._audit = AuditModule(cast(AsyncRedisProtocol, self._redis))
         self._rate_limit = RateLimitModule(

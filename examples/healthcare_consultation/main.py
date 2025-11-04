@@ -59,6 +59,7 @@ async def display_audit_logs(gateway: GatewayService) -> None:
     except Exception as e:
         logger.error(f"Failed to get audit module: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         return
 
@@ -71,7 +72,7 @@ async def display_audit_logs(gateway: GatewayService) -> None:
 
     # Query all audit entries
     entries = await audit.query_all(count=1000)
-    
+
     if not entries:
         logger.info("No audit entries found.")
         logger.info("")
@@ -120,7 +121,7 @@ async def display_audit_logs(gateway: GatewayService) -> None:
         violation_counts: dict[str, int] = {}
         for violation in violations:
             violation_counts[violation] = violation_counts.get(violation, 0) + 1
-        
+
         logger.info("Policy Violations Detected:")
         for violation, count in sorted(violation_counts.items()):
             logger.info(f"  {violation}: {count}")
@@ -138,7 +139,7 @@ async def display_audit_logs(gateway: GatewayService) -> None:
     # Display detailed entries
     logger.info("Detailed Audit Entries:")
     logger.info("-" * 60)
-    
+
     for i, entry in enumerate(entries[:20], 1):  # Show first 20 entries
         message_id = entry.get("message_id", "unknown")
         sender = entry.get("sender_id", "unknown")
@@ -147,16 +148,16 @@ async def display_audit_logs(gateway: GatewayService) -> None:
         timestamp = entry.get("timestamp", 0)
         latency = entry.get("latency_ms", 0)
         entry_violations = entry.get("violations", [])
-        
+
         # Format violations
         if isinstance(entry_violations, str):
             try:
                 entry_violations = json.loads(entry_violations)
             except (json.JSONDecodeError, TypeError):
                 entry_violations = []
-        
+
         violation_str = ", ".join(entry_violations) if entry_violations else "None"
-        
+
         logger.info(f"Entry {i}:")
         logger.info(f"  Message ID: {message_id}")
         logger.info(f"  From: {sender} → To: {target}")
@@ -178,7 +179,9 @@ async def display_audit_logs(gateway: GatewayService) -> None:
         logger.info("")
 
     if len(entries) > 20:
-        logger.info(f"... and {len(entries) - 20} more entries (use audit.query_all() to see all)")
+        logger.info(
+            f"... and {len(entries) - 20} more entries (use audit.query_all() to see all)"
+        )
         logger.info("")
 
     # Display security events
@@ -190,13 +193,13 @@ async def display_audit_logs(gateway: GatewayService) -> None:
             event_type = event.get("event_type", "UNKNOWN")
             timestamp = event.get("timestamp", 0)
             details = event.get("details", {})
-            
+
             if isinstance(details, str):
                 try:
                     details = json.loads(details)
                 except (json.JSONDecodeError, TypeError):
                     details = {}
-            
+
             # Format timestamp - handle both float and string
             try:
                 ts = float(timestamp) if timestamp else 0

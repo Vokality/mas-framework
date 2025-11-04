@@ -202,7 +202,7 @@ class DoctorAgent(Agent):
                             "Cannot send fallback message: agent not running or not registered"
                         )
                         return
-                    
+
                     await self.send(
                         patient_id,
                         {
