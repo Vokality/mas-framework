@@ -41,6 +41,14 @@ multi_line_output = 3
 pythonVersion = "3.14"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
+exclude = ["app/z/**"]
+extraPaths = []
+venvPath = "."
+venv = ".venv"
+ignore = [
+  "**/.venv/**",
+  "**/site-packages/**",
+]
 reportMissingImports = "error"
 reportMissingTypeStubs = false
 enableReachabilityAnalysis = true

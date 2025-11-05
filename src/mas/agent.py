@@ -325,7 +325,10 @@ class Agent:
             )
 
     async def request(
-        self, target_id: str, payload: dict, timeout: float = 30.0
+        self,
+        target_id: str,
+        payload: dict,
+        timeout: float | None = None,
     ) -> AgentMessage:
         """
         Send a request and wait for response (request-response pattern).
@@ -340,7 +343,8 @@ class Agent:
         Args:
             target_id: Target agent identifier
             payload: Request payload dictionary
-            timeout: Maximum time to wait for response in seconds (default: 30.0)
+            timeout: Optional maximum seconds to wait for response. When None,
+                waits indefinitely.
 
         Returns:
             Response message from the target agent
@@ -397,7 +401,10 @@ class Agent:
 
         try:
             # Wait for response (non-blocking - other messages can be processed)
-            response = await asyncio.wait_for(future, timeout=timeout)
+            if timeout is None:
+                response = await future
+            else:
+                response = await asyncio.wait_for(future, timeout=timeout)
             logger.debug(
                 "Response received",
                 extra={

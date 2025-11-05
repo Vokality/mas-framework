@@ -9,7 +9,7 @@ __pycache__/
 .ruff_cache/
 .DS_Store
 .env
-app/
+app
 .pytest_cache/
 .claude/
 .beads/
