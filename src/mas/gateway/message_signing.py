@@ -5,10 +5,11 @@ import hmac
 import logging
 import secrets
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
-from redis.asyncio import Redis
+
+from mas.redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class MessageSigningModule:
 
     def __init__(
         self,
-        redis: Redis,
+        redis: AsyncRedisProtocol,
         max_timestamp_drift: int = 300,  # 5 minutes
         nonce_ttl: int = 300,  # 5 minutes
     ):
@@ -56,7 +57,7 @@ class MessageSigningModule:
             max_timestamp_drift: Max allowed time drift in seconds (default: 300)
             nonce_ttl: TTL for nonce tracking in seconds (default: 300)
         """
-        self.redis = redis
+        self.redis: AsyncRedisProtocol = redis
         self.max_timestamp_drift = max_timestamp_drift
         self.nonce_ttl = nonce_ttl
 
@@ -116,10 +117,10 @@ class MessageSigningModule:
         self,
         agent_id: str,
         message_id: str,
-        payload: dict,
+        payload: dict[str, Any],
         timestamp: Optional[float] = None,
         nonce: Optional[str] = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Sign a message with HMAC.
 
@@ -180,7 +181,7 @@ class MessageSigningModule:
         self,
         agent_id: str,
         message_id: str,
-        payload: dict,
+        payload: dict[str, Any],
         signature: str,
         timestamp: float,
         nonce: str,
@@ -257,7 +258,7 @@ class MessageSigningModule:
 
         return SignatureResult(valid=True)
 
-    def _canonicalize(self, data: dict) -> str:
+    def _canonicalize(self, data: dict[str, Any]) -> str:
         """
         Create canonical string representation of data for signing.
 

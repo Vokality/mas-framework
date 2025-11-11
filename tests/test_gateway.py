@@ -293,7 +293,10 @@ class TestGatewayService:
 
         # Send message
         message = AgentMessage(
-            sender_id=sender, target_id=target, message_type="test.message", data={"test": "data"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "data"},
         )
 
         result = await gateway.handle_message(message, token)
@@ -321,7 +324,10 @@ class TestGatewayService:
         await redis.hset(f"agent:{target}", "status", "ACTIVE")
 
         message = AgentMessage(
-            sender_id=sender, target_id=target, message_type="test.message", data={"test": "data"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "data"},
         )
 
         result = await gateway.handle_message(message, token)
@@ -336,7 +342,10 @@ class TestGatewayService:
         await redis.hset(f"agent:{sender}", "status", "ACTIVE")
 
         message = AgentMessage(
-            sender_id=sender, target_id=target, message_type="test.message", data={"test": "data"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "data"},
         )
 
         result = await gateway.handle_message(message, "wrong_token")
@@ -364,14 +373,20 @@ class TestGatewayService:
         # Send messages up to limit (10)
         for i in range(10):
             message = AgentMessage(
-                sender_id=sender, target_id=target, message_type="test.message", data={"msg": i}
+                sender_id=sender,
+                target_id=target,
+                message_type="test.message",
+                data={"msg": i},
             )
             result = await gateway.handle_message(message, token)
             assert result.success is True
 
         # Next message should be rate limited
         message = AgentMessage(
-            sender_id=sender, target_id=target, message_type="test.message", data={"msg": "over_limit"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"msg": "over_limit"},
         )
         result = await gateway.handle_message(message, token)
         assert result.success is False
@@ -397,7 +412,10 @@ class TestGatewayService:
 
         # Send message
         message = AgentMessage(
-            sender_id=sender, target_id=target, message_type="test.message", data={"test": "audit"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "audit"},
         )
         await gateway.handle_message(message, token)
 

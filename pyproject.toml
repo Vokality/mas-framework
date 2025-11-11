@@ -31,24 +31,20 @@ classifiers = [
 [tool.ruff]
 line-length = 88
 
-[tool.isort]
-profile = "ruff"
-include = ["src"]
-exclude = ["tests"]
-multi_line_output = 3
+[tool.ty.rules]
 
-[tool.pyright]
+[tool.ty.environment]
+root = ["./src/"]
+
+[tool.basedpyright]
 pythonVersion = "3.14"
 pythonPlatform = "All"
-typeCheckingMode = "standard"
+typeCheckingMode = "strict"
 exclude = ["app/z/**"]
 extraPaths = []
 venvPath = "."
 venv = ".venv"
-ignore = [
-  "**/.venv/**",
-  "**/site-packages/**",
-]
+ignore = ["**tests/**", "**/.venv/**", "**/site-packages/**"]
 reportMissingImports = "error"
 reportMissingTypeStubs = false
 enableReachabilityAnalysis = true
@@ -70,11 +66,11 @@ packages = ["src/mas"]
 dev = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
-    "isort>=5.12.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.14.3",
     "pytest-timeout>=2.3.1",
-    "pyright>=1.1.407",
     "openai>=2.6.1",
     "pydantic-ai>=1.10.0",
+    "basedpyright>=1.33.0",
+    "types-redis>=4.6.0.20241004",
 ]

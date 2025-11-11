@@ -1,10 +1,12 @@
 """Specialist doctor agent that provides expert medical advice (gateway mode)."""
 
 import logging
-from typing import Optional, override
+from typing import Optional, override, cast
+
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
+
 from mas import Agent, AgentMessage
 
 logger = logging.getLogger(__name__)
@@ -12,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class SpecialistConsultationRequest(BaseModel):
     """Specialist consultation request payload."""
+
     patient_question: str
     concern: str = "general health"
     gp_diagnosis: str = ""
@@ -20,16 +23,18 @@ class SpecialistConsultationRequest(BaseModel):
 
 class SpecialistConsultationResponse(BaseModel):
     """Specialist consultation response payload."""
+
     specialist_advice: str
     specialization: str = "specialist"
 
 
 class SpecialistState(BaseModel):
     """State model for SpecialistAgent."""
+
     consultations_completed: int = 0
 
 
-class SpecialistAgent(Agent):
+class SpecialistAgent(Agent[SpecialistState]):
     """
     Specialist doctor agent that provides expert medical advice in specific areas.
 
@@ -134,8 +139,7 @@ class SpecialistAgent(Agent):
             specialization=self.specialization,
         )
         await message.reply(
-            "specialist_consultation_response",
-            response_payload.model_dump()
+            "specialist_consultation_response", response_payload.model_dump()
         )
 
         consultations_completed = self.state.consultations_completed + 1
@@ -174,8 +178,14 @@ Keep your response professional, evidence-based, and concise (2-4 paragraphs).
 Frame your response as advice to the GP, who will relay it to the patient."""
 
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Patient asks: {patient_question}"},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": system_prompt},
+            ),
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "user", "content": f"Patient asks: {patient_question}"},
+            ),
         ]
 
         try:

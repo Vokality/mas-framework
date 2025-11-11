@@ -5,6 +5,7 @@ Provides a simple HTTP server for Prometheus to scrape metrics from the gateway.
 
 import logging
 from starlette.applications import Starlette
+from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
@@ -13,7 +14,7 @@ from .metrics import get_metrics, get_content_type
 logger = logging.getLogger(__name__)
 
 
-async def metrics_endpoint(request):
+async def metrics_endpoint(request: Request) -> Response:
     """
     Prometheus metrics endpoint.
 
@@ -27,7 +28,7 @@ async def metrics_endpoint(request):
     )
 
 
-async def health_endpoint(request):
+async def health_endpoint(request: Request) -> Response:
     """
     Health check endpoint.
 
@@ -50,7 +51,7 @@ app = Starlette(
 )
 
 
-def create_metrics_app():
+def create_metrics_app() -> Starlette:
     """
     Create metrics HTTP application.
 

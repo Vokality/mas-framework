@@ -2,17 +2,20 @@
 
 import asyncio
 import logging
-from typing import Optional, override
-from pydantic import BaseModel
+from typing import Optional, override, cast
+
+from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from mas import Agent, AgentMessage
+
+from mas import Agent, AgentMessage, AgentRecord
 
 logger = logging.getLogger(__name__)
 
 
 class AnswerMessage(BaseModel):
     """Answer message from professor."""
+
     type: str = "answer"
     answer: str
     question: str | None = None
@@ -20,14 +23,15 @@ class AnswerMessage(BaseModel):
 
 class StudentState(BaseModel):
     """State model for StudentAgent."""
+
     professor_id: Optional[str] = None
-    conversation_history: list[dict] = []
+    conversation_history: list[ChatCompletionMessageParam] = Field(default_factory=list)
     questions_asked: int = 0
     max_questions: int = 3
     current_topic: str = "chemical bonding"
 
 
-class StudentAgent(Agent):
+class StudentAgent(Agent[StudentState]):
     """
     Student agent that asks chemistry homework questions.
 
@@ -67,7 +71,9 @@ class StudentAgent(Agent):
 
         # Discover professor agent
         await asyncio.sleep(0.5)  # Give professor time to register
-        professors = await self.discover(capabilities=["chemistry_professor"])
+        professors: list[AgentRecord] = await self.discover(
+            capabilities=["chemistry_professor"]
+        )
 
         if not professors:
             logger.error("No professor found! Cannot start tutoring session.")
@@ -80,7 +86,9 @@ class StudentAgent(Agent):
         await self._ask_question()
 
     @Agent.on("answer", model=AnswerMessage)
-    async def handle_answer(self, message: AgentMessage, payload: AnswerMessage) -> None:
+    async def handle_answer(
+        self, message: AgentMessage, payload: AnswerMessage
+    ) -> None:
         """
         Handle answer responses from the professor.
 
@@ -96,7 +104,13 @@ class StudentAgent(Agent):
         # Store in conversation history
         history = list(self.state.conversation_history)
         history.append(
-            {"role": "assistant", "content": f"Professor answered: {payload.answer}"}
+            cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": "assistant",
+                    "content": f"Professor answered: {payload.answer}",
+                },
+            )
         )
         await self.update_state({"conversation_history": history})
 
@@ -123,9 +137,15 @@ in chemistry class. Generate a thoughtful question about this topic that shows y
 trying to understand the concepts. Keep it concise (1-2 sentences)."""
 
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": system_prompt},
+            ),
             *self.state.conversation_history,
-            {"role": "user", "content": "What should I ask next about this topic?"},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "user", "content": "What should I ask next about this topic?"},
+            ),
         ]
 
         try:
@@ -149,7 +169,12 @@ trying to understand the concepts. Keep it concise (1-2 sentences)."""
 
             # Store in conversation history
             history = list(self.state.conversation_history)
-            history.append({"role": "user", "content": question})
+            history.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": "user", "content": question},
+                )
+            )
             await self.update_state({"conversation_history": history})
 
             # Send question to professor

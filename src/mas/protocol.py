@@ -46,7 +46,7 @@ class EnvelopeMessage(BaseModel):
     message_id: str = Field(default_factory=lambda: str(time.time_ns()))
 
     # Allow attaching agent reference for reply() convenience
-    _agent: Optional["Agent"] = PrivateAttr(default=None)
+    _agent: Optional["Agent[Any]"] = PrivateAttr(default=None)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -70,12 +70,10 @@ class EnvelopeMessage(BaseModel):
         """Check if this message is a reply to a previous request."""
         return self.meta.is_reply
 
-    def attach_agent(self, agent: "Agent") -> None:
+    def attach_agent(self, agent: "Agent[Any]") -> None:
         self._agent = agent
 
-    async def reply(
-        self, message_type: MessageType, payload: dict[str, Any]
-    ) -> None:
+    async def reply(self, message_type: MessageType, payload: dict[str, Any]) -> None:
         """
         Reply to this message using correlation metadata.
 
@@ -98,6 +96,4 @@ class EnvelopeMessage(BaseModel):
                 "Only messages sent via request() can be replied to."
             )
 
-        await self._agent._send_reply_envelope(self, message_type, payload)
-
-
+        await self._agent.send_reply_envelope(self, message_type, payload)

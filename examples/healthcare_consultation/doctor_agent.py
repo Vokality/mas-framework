@@ -2,17 +2,20 @@
 
 import asyncio
 import logging
-from typing import Optional, override
+from typing import Optional, override, cast
+
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from mas import Agent, AgentMessage
+
+from mas import Agent, AgentMessage, AgentRecord
 
 logger = logging.getLogger(__name__)
 
 
 class ConsultationRequest(BaseModel):
     """Consultation request from patient."""
+
     type: str = "consultation_request"
     question: str
     concern: str = "general health"
@@ -20,12 +23,14 @@ class ConsultationRequest(BaseModel):
 
 class ConsultationEnd(BaseModel):
     """Consultation end message from patient."""
+
     type: str = "consultation_end"
     message: str
 
 
 class SpecialistConsultationRequest(BaseModel):
     """Specialist consultation request payload."""
+
     patient_question: str
     concern: str = "general health"
     gp_diagnosis: str = ""
@@ -34,17 +39,19 @@ class SpecialistConsultationRequest(BaseModel):
 
 class SpecialistConsultationResponse(BaseModel):
     """Specialist consultation response payload."""
+
     specialist_advice: str
     specialization: str = "specialist"
 
 
 class DoctorState(BaseModel):
     """State model for DoctorAgent."""
+
     consultations_completed: int = 0
     specialist_id: Optional[str] = None
 
 
-class DoctorAgent(Agent):
+class DoctorAgent(Agent[DoctorState]):
     """
     Doctor agent that provides healthcare advice and guidance.
 
@@ -93,7 +100,9 @@ class DoctorAgent(Agent):
 
         # Discover specialist agent
         await asyncio.sleep(0.5)
-        specialists = await self.discover(capabilities=["healthcare_specialist"])
+        specialists: list[AgentRecord] = await self.discover(
+            capabilities=["healthcare_specialist"]
+        )
 
         if specialists:
             await self.update_state({"specialist_id": specialists[0]["id"]})
@@ -302,8 +311,14 @@ Keep your response professional but accessible (2-3 paragraphs).
 Note: This is your initial assessment, which may be refined by a specialist."""
 
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": system_prompt},
+            ),
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "user", "content": question},
+            ),
         ]
 
         try:
@@ -364,8 +379,14 @@ Create a unified response that gives the patient the benefit of both perspective
 Keep it professional but accessible (3-4 paragraphs)."""
 
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Patient's question: {question}"},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": system_prompt},
+            ),
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "user", "content": f"Patient's question: {question}"},
+            ),
         ]
 
         try:

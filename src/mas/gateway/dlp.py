@@ -6,7 +6,7 @@ import logging
 import re
 import time
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 from pydantic import BaseModel
 
 from .metrics import MetricsCollector
@@ -262,7 +262,7 @@ class DLPModule:
         Returns:
             List of violations found
         """
-        violations = []
+        violations: list[Violation] = []
 
         for violation_type, pattern in self.PATTERNS.items():
             for match in pattern.finditer(text):
@@ -367,7 +367,7 @@ class DLPModule:
         redacted = json.loads(json.dumps(payload, default=str))
 
         # Build replacement mapping
-        replacements = {}
+        replacements: dict[str, str] = {}
         for violation in violations:
             if self.policies.get(violation.violation_type) == ActionPolicy.REDACT:
                 replacements[violation.matched_text] = self._get_redaction_mask(
@@ -375,7 +375,7 @@ class DLPModule:
                 )
 
         # Apply replacements recursively
-        redacted_result = self._redact_recursive(redacted, replacements)
+        redacted_result: Any = self._redact_recursive(redacted, replacements)
 
         logger.debug(
             "Applied redaction",
@@ -387,8 +387,9 @@ class DLPModule:
 
         # Ensure we return a dict
         if isinstance(redacted_result, dict):
-            return redacted_result
-        return {}  # Fallback to empty dict if not a dict
+            return cast(dict[str, Any], redacted_result)
+        empty: dict[str, Any] = {}
+        return empty  # Fallback to empty dict if not a dict
 
     def _redact_recursive(self, obj: Any, replacements: dict[str, str]) -> Any:
         """
@@ -402,9 +403,14 @@ class DLPModule:
             Redacted object
         """
         if isinstance(obj, dict):
-            return {k: self._redact_recursive(v, replacements) for k, v in obj.items()}
+            obj_dict = cast(dict[str, Any], obj)
+            return {
+                key: self._redact_recursive(value, replacements)
+                for key, value in obj_dict.items()
+            }
         elif isinstance(obj, list):
-            return [self._redact_recursive(item, replacements) for item in obj]
+            obj_list = cast(list[Any], obj)
+            return [self._redact_recursive(item, replacements) for item in obj_list]
         elif isinstance(obj, str):
             # Apply all replacements to string
             for original, redacted in replacements.items():

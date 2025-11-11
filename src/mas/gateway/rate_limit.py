@@ -240,7 +240,7 @@ class RateLimitModule:
         """
         # Delete all rate limit windows for agent
         pattern = f"ratelimit:{agent_id}:*"
-        keys = []
+        keys: list[str] = []
         async for key in self.redis.scan_iter(match=pattern):
             # Don't delete the limits config, only counters
             if not key.endswith(":limits"):

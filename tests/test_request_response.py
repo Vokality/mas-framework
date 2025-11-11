@@ -9,6 +9,7 @@ from mas import Agent, AgentMessage
 
 class ResponderState(BaseModel):
     """State model for ResponderAgent."""
+
     requests_handled: int = 0
 
 
@@ -39,7 +40,7 @@ class ResponderAgent(Agent):
                 {
                     "result": f"Processed: {message.data.get('data')}",
                     "request_count": requests_handled,
-                }
+                },
             )
 
             # Update state with incremented counter
@@ -91,7 +92,9 @@ async def test_concurrent_requests(mas_service):
 
     # Make multiple concurrent requests
     tasks = [
-        requester.request(responder.id, "test.request", {"data": f"request_{i}"}, timeout=5.0)
+        requester.request(
+            responder.id, "test.request", {"data": f"request_{i}"}, timeout=5.0
+        )
         for i in range(5)
     ]
 
@@ -202,17 +205,16 @@ async def test_request_response_preserves_data(mas_service):
         "nested": {"key": "value"},
     }
 
-    response = await requester.request(responder.id, "test.request", payload, timeout=5.0)
+    response = await requester.request(
+        responder.id, "test.request", payload, timeout=5.0
+    )
 
     # Verify internal fields are not exposed
     assert (
         "_correlation_id" not in response.data
         or response.data.get("_correlation_id") is not None
     )
-    assert (
-        "_is_reply" not in response.data
-        or response.data.get("_is_reply") is True
-    )
+    assert "_is_reply" not in response.data or response.data.get("_is_reply") is True
 
     # Verify response data
     assert response.data.get("result") is not None

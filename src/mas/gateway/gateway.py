@@ -2,12 +2,13 @@
 
 import logging
 import time
-from typing import Optional, cast
+from typing import Any, Optional
 
 from pydantic import BaseModel
-from redis.asyncio import Redis
 
 from ..agent import AgentMessage
+from ..redis_client import create_redis_client
+from ..redis_types import AsyncRedisProtocol
 from .audit import AuditModule
 from .auth_manager import AuthorizationManager
 from .authentication import AuthenticationModule
@@ -19,7 +20,6 @@ from .message_signing import MessageSigningModule
 from .metrics import MetricsCollector
 from .priority_queue import MessagePriority, PriorityQueueModule
 from .rate_limit import RateLimitModule
-from ..redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ class GatewayService:
             gateway = GatewayService(settings=settings)
         """
         self.settings = settings or GatewaySettings()
-        self._redis: Optional[Redis] = None
+        self._redis: Optional[AsyncRedisProtocol] = None
         self._running = False
 
         # Modules (initialized in start())
@@ -98,21 +98,22 @@ class GatewayService:
     async def start(self) -> None:
         """Start the gateway service."""
         # Initialize Redis connection
-        self._redis = Redis.from_url(
-            self.settings.redis.url,
+        redis_conn = create_redis_client(
+            url=self.settings.redis.url,
             decode_responses=self.settings.redis.decode_responses,
             socket_timeout=self.settings.redis.socket_timeout,
         )
+        self._redis = redis_conn
 
         # Initialize core modules (always enabled)
-        self._auth = AuthenticationModule(cast(AsyncRedisProtocol, self._redis))
+        self._auth = AuthenticationModule(redis_conn)
         self._authz = AuthorizationModule(
-            cast(AsyncRedisProtocol, self._redis),
+            redis_conn,
             enable_rbac=self.settings.features.rbac,
         )
-        self._audit = AuditModule(cast(AsyncRedisProtocol, self._redis))
+        self._audit = AuditModule(redis_conn)
         self._rate_limit = RateLimitModule(
-            cast(AsyncRedisProtocol, self._redis),
+            redis_conn,
             default_per_minute=self.settings.rate_limit.per_minute,
             default_per_hour=self.settings.rate_limit.per_hour,
         )
@@ -122,11 +123,11 @@ class GatewayService:
             self._dlp = DLPModule()
 
         if self.settings.features.priority_queue:
-            self._priority_queue = PriorityQueueModule(self._redis)
+            self._priority_queue = PriorityQueueModule(redis_conn)
 
         if self.settings.features.message_signing:
             self._message_signing = MessageSigningModule(
-                self._redis,
+                redis_conn,
                 max_timestamp_drift=self.settings.message_signing.max_timestamp_drift,
                 nonce_ttl=self.settings.message_signing.nonce_ttl,
             )
@@ -138,7 +139,7 @@ class GatewayService:
                 timeout_seconds=self.settings.circuit_breaker.timeout_seconds,
                 window_seconds=self.settings.circuit_breaker.window_seconds,
             )
-            self._circuit_breaker = CircuitBreakerModule(self._redis, config=cb_config)
+            self._circuit_breaker = CircuitBreakerModule(redis_conn, config=cb_config)
 
         # Initialize metrics
         MetricsCollector.set_gateway_info(
@@ -209,7 +210,7 @@ class GatewayService:
             )
 
         start_time = time.time()
-        violations = []
+        violations: list[str] = []
 
         # Ensure modules are initialized
         assert self._auth is not None, "Gateway not started"
@@ -545,6 +546,8 @@ class GatewayService:
         Args:
             message: Message to route
         """
+        assert self._redis is not None, "Gateway not started"
+
         if self.settings.features.priority_queue and self._priority_queue:
             # Determine priority from message metadata
             priority = self._determine_message_priority(message)
@@ -568,7 +571,7 @@ class GatewayService:
         else:
             # Direct delivery via pub/sub (MVP)
             target_channel = f"agent.{message.target_id}"
-            await self._redis.publish(target_channel, message.model_dump_json())  # type: ignore[union-attr]
+            await self._redis.publish(target_channel, message.model_dump_json())
 
             logger.debug(
                 "Message published",
@@ -671,14 +674,17 @@ class GatewayService:
 
         return AuthorizationManager(self)
 
-    async def get_stats(self) -> dict:
+    async def get_stats(self) -> dict[str, Any]:
         """
         Get gateway statistics.
 
         Returns:
             Dictionary with gateway stats
         """
-        audit_stats = await self._audit.get_stats()  # type: ignore[union-attr]
+        if not self._audit:
+            raise RuntimeError("Gateway not started")
+
+        audit_stats = await self._audit.get_stats()
 
         return {
             "audit": audit_stats,

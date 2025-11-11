@@ -1,17 +1,31 @@
 """Simplified Agent SDK."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Optional, TYPE_CHECKING, Callable, Awaitable
-from redis.asyncio import Redis
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Generic,
+    Mapping,
+    MutableMapping,
+    Optional,
+    TYPE_CHECKING,
+    cast,
+)
+
 from pydantic import BaseModel
 
-from .registry import AgentRegistry
-from .state import StateManager
+from .registry import AgentRegistry, AgentRecord
+from .state import StateManager, StateType
 from .protocol import EnvelopeMessage, MessageMeta
+from .redis_client import create_redis_client
+from .redis_types import AsyncRedisProtocol, PubSubProtocol
 
 if TYPE_CHECKING:
     from .gateway import GatewayService
@@ -21,9 +35,11 @@ logger = logging.getLogger(__name__)
 
 # Public alias so external imports continue to work
 AgentMessage = EnvelopeMessage
+JSONDict = dict[str, Any]
+MutableJSONMapping = MutableMapping[str, Any]
 
 
-class Agent:
+class Agent(Generic[StateType]):
     """
     Simplified Agent that communicates peer-to-peer via Redis.
 
@@ -33,16 +49,31 @@ class Agent:
     - Auto-persisted state to Redis
     - Simple discovery by capabilities
     - Automatic heartbeat monitoring
+    - Strongly-typed state via generics
 
-    Usage:
-        class MyAgent(Agent):
+    Usage with typed state:
+        class MyState(BaseModel):
+            counter: int = 0
+
+        class MyAgent(Agent[MyState]):
+            def __init__(self, agent_id: str, redis_url: str):
+                super().__init__(agent_id, state_model=MyState, redis_url=redis_url)
+
             async def on_message(self, message: AgentMessage):
-                print(f"Got: {message.payload}")
-                await self.send(message.sender_id, {"reply": "thanks"})
+                # self.state is strongly typed as MyState
+                print(f"Counter: {self.state.counter}")
+                await self.update_state({"counter": self.state.counter + 1})
 
-        agent = MyAgent("my_agent", capabilities=["chat"])
-        await agent.start()
-        await agent.send("other_agent", {"hello": "world"})
+    Usage with dict state (backward compatible):
+        class MyAgent(Agent[dict[str, Any]]):
+            def __init__(self, agent_id: str, redis_url: str):
+                super().__init__(agent_id, redis_url=redis_url)
+                # state_model defaults to None, so state is dict
+
+            async def on_message(self, message: AgentMessage):
+                # self.state is typed as dict
+                counter = self.state.get("counter", 0)
+                await self.update_state({"counter": counter + 1})
     """
 
     def __init__(
@@ -50,7 +81,7 @@ class Agent:
         agent_id: str,
         capabilities: list[str] | None = None,
         redis_url: str = "redis://localhost:6379",
-        state_model: type[BaseModel] | None = None,
+        state_model: type[StateType] | None = None,
         use_gateway: bool = False,
         gateway_url: Optional[str] = None,
     ):
@@ -61,7 +92,8 @@ class Agent:
             agent_id: Unique agent identifier
             capabilities: List of agent capabilities for discovery
             redis_url: Redis connection URL
-            state_model: Optional Pydantic model for typed state
+            state_model: Optional Pydantic model for typed state.
+                        If provided, self.state will be strongly typed.
             use_gateway: Whether to route messages through gateway
             gateway_url: Gateway service URL (if different from redis_url)
         """
@@ -72,29 +104,39 @@ class Agent:
         self.gateway_url = gateway_url or redis_url
 
         # Internal state
-        self._redis: Optional[Redis] = None
-        self._pubsub = None
+        self._redis: Optional[AsyncRedisProtocol] = None
+        self._pubsub: Optional[PubSubProtocol] = None
         self._token: Optional[str] = None
         self._running = False
-        self._tasks: list[asyncio.Task] = []
+        self._tasks: list[asyncio.Task[Any]] = []
         # Transport readiness gate - set once startup completes
         self._transport_ready: asyncio.Event = asyncio.Event()
 
         # Registry and state
         self._registry: Optional[AgentRegistry] = None
-        self._state_manager: Optional[StateManager] = None
-        self._state_model = state_model
+        self._state_manager: Optional[StateManager[StateType]] = None
+        self._state_model: type[StateType] | None = state_model
 
         # Gateway client (if use_gateway=True)
-        self._gateway = None
+        self._gateway: Optional["GatewayService"] = None
 
         # Request-response tracking
         self._pending_requests: dict[str, asyncio.Future[AgentMessage]] = {}
 
     @property
-    def state(self) -> Any:
-        """Get current state."""
-        return self._state_manager.state if self._state_manager else None
+    def state(self) -> StateType:
+        """
+        Get current state.
+
+        Type is inferred from state_model passed to __init__.
+        If state_model is a Pydantic BaseModel, returns that model instance.
+        If state_model is None, returns dict.
+        """
+        if self._state_manager is None:
+            raise RuntimeError(
+                "Agent not started. State is only available after calling start()."
+            )
+        return self._state_manager.state
 
     @property
     def token(self) -> Optional[str]:
@@ -103,8 +145,9 @@ class Agent:
 
     async def start(self) -> None:
         """Start the agent."""
-        self._redis = Redis.from_url(self.redis_url, decode_responses=True)
-        self._registry = AgentRegistry(self._redis)
+        redis_client = create_redis_client(url=self.redis_url, decode_responses=True)
+        self._redis = redis_client
+        self._registry = AgentRegistry(redis_client)
 
         # Register agent
         self._token = await self._registry.register(
@@ -113,12 +156,12 @@ class Agent:
 
         # Initialize state manager
         self._state_manager = StateManager(
-            self.id, self._redis, state_model=self._state_model
+            self.id, redis_client, state_model=self._state_model
         )
         await self._state_manager.load()
 
         # Subscribe to agent's channel
-        self._pubsub = self._redis.pubsub()
+        self._pubsub = redis_client.pubsub()
         await self._pubsub.subscribe(f"agent.{self.id}")
 
         self._running = True
@@ -128,7 +171,7 @@ class Agent:
         self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
 
         # Publish registration event
-        await self._redis.publish(
+        await redis_client.publish(
             "mas.system",
             json.dumps(
                 {
@@ -197,7 +240,9 @@ class Agent:
         """
         self._gateway = gateway
 
-    async def send(self, target_id: str, message_type: str, data: dict) -> None:
+    async def send(
+        self, target_id: str, message_type: str, data: Mapping[str, Any]
+    ) -> None:
         """
         Send message to target agent.
 
@@ -210,11 +255,12 @@ class Agent:
         """
         if not self._redis:
             raise RuntimeError("Agent not started")
+        payload = dict(data)
         message = AgentMessage(
             sender_id=self.id,
             target_id=target_id,
             message_type=message_type,
-            data=data,
+            data=payload,
         )
         await self._send_envelope(message)
 
@@ -262,7 +308,7 @@ class Agent:
         self,
         target_id: str,
         message_type: str,
-        data: dict,
+        data: Mapping[str, Any],
         timeout: float | None = None,
     ) -> AgentMessage:
         """
@@ -301,7 +347,7 @@ class Agent:
 
             # Responder side:
             @Agent.on("diagnosis.request")
-            async def handle_diagnosis(self, msg: AgentMessage, payload: dict):
+            async def handle_diagnosis(self, msg: AgentMessage, payload: Mapping[str, Any]):
                 diagnosis = await self.analyze(payload)
                 await msg.reply("diagnosis.response", {"diagnosis": diagnosis})
             ```
@@ -313,11 +359,12 @@ class Agent:
         future: asyncio.Future[AgentMessage] = asyncio.Future()
         self._pending_requests[correlation_id] = future
 
+        payload = dict(data)
         message = AgentMessage(
             sender_id=self.id,
             target_id=target_id,
             message_type=message_type,
-            data=data,
+            data=payload,
             meta=MessageMeta(
                 correlation_id=correlation_id, expects_reply=True, is_reply=False
             ),
@@ -371,13 +418,15 @@ class Agent:
         self,
         target_id: str,
         message_type: str,
-        data: dict,
+        data: Mapping[str, Any],
         timeout: float | None = None,
     ) -> AgentMessage:
         """Alias for request() - kept for backward compatibility."""
         return await self.request(target_id, message_type, data, timeout)
 
-    async def discover(self, capabilities: list[str] | None = None) -> list[dict]:
+    async def discover(
+        self, capabilities: list[str] | None = None
+    ) -> list[AgentRecord]:
         """
         Discover agents by capabilities.
 
@@ -386,7 +435,7 @@ class Agent:
                          If None, returns all active agents.
 
         Returns:
-            List of agent info dictionaries
+            List of agent records with id, capabilities, and metadata.
         """
         if not self._registry:
             raise RuntimeError("Agent not started")
@@ -405,7 +454,7 @@ class Agent:
         else:
             await asyncio.wait_for(self._transport_ready.wait(), timeout)
 
-    async def update_state(self, updates: dict) -> None:
+    async def update_state(self, updates: Mapping[str, Any]) -> None:
         """
         Update agent state.
 
@@ -434,11 +483,12 @@ class Agent:
                 if not self._running:
                     break
 
-                if message["type"] != "message":
+                if message.get("type") != "message":
                     continue
 
                 try:
-                    msg = AgentMessage.model_validate_json(message["data"])
+                    msg_data = cast(str, message["data"])
+                    msg = AgentMessage.model_validate_json(msg_data)
                     # Attach agent reference for reply() method
                     msg.attach_agent(self)
 
@@ -516,7 +566,9 @@ class Agent:
         """
         # Model type is annotated; no runtime check needed
 
-        def decorator(fn: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
+        def decorator(
+            fn: Callable[..., Awaitable[None]],
+        ) -> Callable[..., Awaitable[None]]:
             if not callable(fn):
                 raise TypeError("handler must be callable")
             registry = dict(getattr(cls, "_handlers", {}))
@@ -531,7 +583,9 @@ class Agent:
         Validate and dispatch based on message_type registry.
         Returns True if a handler was found and executed.
         """
-        registry: dict[str, Agent._HandlerSpec] = getattr(self.__class__, "_handlers", {})
+        registry: dict[str, Agent._HandlerSpec] = getattr(
+            self.__class__, "_handlers", {}
+        )
         spec = registry.get(msg.message_type)
         if not spec:
             return False
@@ -541,8 +595,8 @@ class Agent:
         await spec.fn(self, msg, payload_obj)
         return True
 
-    async def _send_reply_envelope(
-        self, original: AgentMessage, message_type: str, data: dict
+    async def send_reply_envelope(
+        self, original: AgentMessage, message_type: str, data: Mapping[str, Any]
     ) -> None:
         """
         Send a correlated reply to the original message.
@@ -550,11 +604,12 @@ class Agent:
         if not original.meta.correlation_id:
             raise RuntimeError("Original message missing correlation_id")
 
+        payload = dict(data)
         reply = AgentMessage(
             sender_id=self.id,
             target_id=original.sender_id,
             message_type=message_type,
-            data=data,
+            data=payload,
             meta=MessageMeta(
                 correlation_id=original.meta.correlation_id,
                 expects_reply=False,
@@ -563,14 +618,20 @@ class Agent:
         )
         await self._send_envelope(reply)
 
-    def get_metadata(self) -> dict:
+    async def _send_reply_envelope(
+        self, original: AgentMessage, message_type: str, data: Mapping[str, Any]
+    ) -> None:
+        """Backward-compatible alias for send_reply_envelope()."""
+        await self.send_reply_envelope(original, message_type, data)
+
+    def get_metadata(self) -> JSONDict:
         """
         Override to provide agent metadata.
 
         Returns:
             Metadata dictionary
         """
-        return {}
+        return cast(JSONDict, {})
 
     async def on_start(self) -> None:
         """Called when agent starts. Override to add initialization logic."""

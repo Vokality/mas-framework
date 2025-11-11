@@ -31,6 +31,7 @@ class GreetingRequest(BaseModel):
 
 class TypedResponderState(BaseModel):
     """State model for TypedResponderAgent."""
+
     echo_count: int = 0
     greeting_count: int = 0
 
@@ -52,25 +53,33 @@ class TypedResponderAgent(Agent):
         """Handle echo requests with typed payload."""
         # Get current echo count from typed state
         echo_count = self.state.echo_count + 1
-        
+
         echoed_text = " ".join([payload.text] * payload.count)
         await msg.reply(
             "echo.response",
             EchoResponse(echoed=echoed_text, request_count=echo_count).model_dump(),
         )
-        
+
         # Update state with incremented counter
         await self.update_state({"echo_count": echo_count})
 
     @Agent.on("greeting.request", model=GreetingRequest)
-    async def handle_greeting(self, msg: AgentMessage, payload: GreetingRequest) -> None:
+    async def handle_greeting(
+        self, msg: AgentMessage, payload: GreetingRequest
+    ) -> None:
         """Handle greeting requests with typed payload."""
         # Get current greeting count from typed state
         greeting_count = self.state.greeting_count + 1
-        
-        greeting = f"Hello, {payload.name}!" if payload.language == "en" else f"Hola, {payload.name}!"
-        await msg.reply("greeting.response", {"greeting": greeting, "count": greeting_count})
-        
+
+        greeting = (
+            f"Hello, {payload.name}!"
+            if payload.language == "en"
+            else f"Hola, {payload.name}!"
+        )
+        await msg.reply(
+            "greeting.response", {"greeting": greeting, "count": greeting_count}
+        )
+
         # Update state with incremented counter
         await self.update_state({"greeting_count": greeting_count})
 
@@ -221,8 +230,10 @@ async def test_fallback_to_on_message(mas_service):
 @pytest.mark.asyncio
 async def test_handler_without_model(mas_service):
     """Test handler registration without Pydantic model."""
+
     class SimpleTypedAgentState(BaseModel):
         """State model for SimpleTypedAgent."""
+
         handled: bool = False
 
     class SimpleTypedAgent(Agent):
@@ -259,4 +270,3 @@ async def test_handler_without_model(mas_service):
 
     await requester.stop()
     await responder.stop()
-

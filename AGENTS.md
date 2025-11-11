@@ -1,10 +1,18 @@
 ## Development
+
 - Package manager: `uv`
-- Testing framework: `pytest` (run with `uv run pytest`)
+- Testing framework: `basedpyright` (run with `uvx basedpyright src`)
 - Linter: `ruff` (run with `uv run ruff check .`)
 - Formatter: `ruff` (run with `uv run ruff format .`)
+- Type checks: `pyright` (run with `uv run pyright`)
 - Python version: 3.14
 - Strict typing is required
+
+## Engineering Rules
+
+- Organize code by functionality
+- Organize related code/modules into packages
+- Keep things DRY
 
 ## Issue Tracking with bd (beads)
 
@@ -20,23 +28,27 @@
 ### Quick Start
 
 **Check for ready work:**
+
 ```bash
 bd ready --json
 ```
 
 **Create new issues:**
+
 ```bash
 bd create "Issue title" -t bug|feature|task -p 0-4 --json
 bd create "Issue title" -p 1 --deps discovered-from:bd-123 --json
 ```
 
 **Claim and update:**
+
 ```bash
 bd update bd-42 --status in_progress --json
 bd update bd-42 --priority 1 --json
 ```
 
 **Complete work:**
+
 ```bash
 bd close bd-42 --reason "Completed" --json
 ```
@@ -70,6 +82,7 @@ bd close bd-42 --reason "Completed" --json
 ### Auto-Sync
 
 bd automatically syncs with git:
+
 - Exports to `.beads/issues.jsonl` after changes (5s debounce)
 - Imports from JSONL when newer (e.g., after `git pull`)
 - No manual export/import needed!
@@ -83,6 +96,7 @@ pip install beads-mcp
 ```
 
 Add to MCP config (e.g., `~/.config/claude/config.json`):
+
 ```json
 {
   "beads": {

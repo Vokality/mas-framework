@@ -2,17 +2,20 @@
 
 import asyncio
 import logging
-from typing import Optional, override
-from pydantic import BaseModel
+from typing import Optional, override, cast
+
+from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from mas import Agent, AgentMessage
+
+from mas import Agent, AgentMessage, AgentRecord
 
 logger = logging.getLogger(__name__)
 
 
 class ConsultationResponse(BaseModel):
     """Consultation response from doctor."""
+
     type: str = "consultation_response"
     advice: str
     question: str | None = None
@@ -20,14 +23,15 @@ class ConsultationResponse(BaseModel):
 
 class PatientState(BaseModel):
     """State model for PatientAgent."""
+
     doctor_id: Optional[str] = None
-    conversation_history: list[dict] = []
+    conversation_history: list[ChatCompletionMessageParam] = Field(default_factory=list)
     questions_asked: int = 0
     max_questions: int = 3
     current_concern: str = "general wellness and preventive care"
 
 
-class PatientAgent(Agent):
+class PatientAgent(Agent[PatientState]):
     """
     Patient agent that asks healthcare-related questions.
 
@@ -72,7 +76,9 @@ class PatientAgent(Agent):
 
         # Discover doctor agent
         await asyncio.sleep(0.5)
-        doctors = await self.discover(capabilities=["healthcare_doctor"])
+        doctors: list[AgentRecord] = await self.discover(
+            capabilities=["healthcare_doctor"]
+        )
 
         if not doctors:
             logger.error("No doctor found! Cannot start consultation.")
@@ -103,7 +109,10 @@ class PatientAgent(Agent):
         # Store in conversation history
         history = list(self.state.conversation_history)
         history.append(
-            {"role": "assistant", "content": f"Doctor advised: {payload.advice}"}
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "assistant", "content": f"Doctor advised: {payload.advice}"},
+            )
         )
         await self.update_state({"conversation_history": history})
 
@@ -131,9 +140,15 @@ Keep it concise (1-2 sentences) and avoid including specific personal informatio
 names, dates, or medical record numbers."""
 
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": system_prompt},
+            ),
             *self.state.conversation_history,
-            {"role": "user", "content": "What should I ask the doctor next?"},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "user", "content": "What should I ask the doctor next?"},
+            ),
         ]
 
         try:
@@ -157,7 +172,12 @@ names, dates, or medical record numbers."""
 
             # Store in conversation history
             history = list(self.state.conversation_history)
-            history.append({"role": "user", "content": question})
+            history.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": "user", "content": question},
+                )
+            )
             await self.update_state({"conversation_history": history})
 
             # Send question to doctor through gateway

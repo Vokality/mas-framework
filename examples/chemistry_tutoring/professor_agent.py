@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 class QuestionMessage(BaseModel):
     """Question message from student."""
+
     type: str = "question"
     question: str
     topic: str = "chemistry"
@@ -19,16 +20,18 @@ class QuestionMessage(BaseModel):
 
 class ThanksMessage(BaseModel):
     """Thanks message from student."""
+
     type: str = "thanks"
     message: str
 
 
 class ProfessorState(BaseModel):
     """State model for ProfessorAgent."""
+
     questions_answered: int = 0
 
 
-class ProfessorAgent(Agent):
+class ProfessorAgent(Agent[ProfessorState]):
     """
     Professor agent that answers chemistry questions.
 
@@ -66,7 +69,9 @@ class ProfessorAgent(Agent):
         logger.info(f"Professor agent {self.id} started, ready to answer questions...")
 
     @Agent.on("question", model=QuestionMessage)
-    async def handle_question(self, message: AgentMessage, payload: QuestionMessage) -> None:
+    async def handle_question(
+        self, message: AgentMessage, payload: QuestionMessage
+    ) -> None:
         """
         Handle questions from students.
 
@@ -94,7 +99,9 @@ class ProfessorAgent(Agent):
         await self.update_state({"questions_answered": questions_answered})
 
     @Agent.on("thanks", model=ThanksMessage)
-    async def handle_thanks(self, message: AgentMessage, payload: ThanksMessage) -> None:
+    async def handle_thanks(
+        self, message: AgentMessage, payload: ThanksMessage
+    ) -> None:
         """
         Handle thanks message from students.
 

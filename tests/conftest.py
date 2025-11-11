@@ -58,5 +58,3 @@ async def mas_service():
     await service.start()
     yield service
     await service.stop()
-
-
