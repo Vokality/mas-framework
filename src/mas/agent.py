@@ -45,11 +45,11 @@ MutableJSONMapping = MutableMapping[str, Any]
 
 class Agent(Generic[StateType]):
     """
-    Simplified Agent that communicates peer-to-peer via Redis.
+    Agent that communicates via the Gateway using Redis Streams.
 
     Key features:
     - Self-contained (only needs Redis URL)
-    - Peer-to-peer messaging (no central routing)
+    - Gateway-mediated messaging (central routing and policy enforcement)
     - Auto-persisted state to Redis
     - Simple discovery by capabilities
     - Automatic heartbeat monitoring
@@ -241,7 +241,7 @@ class Agent(Generic[StateType]):
         """
         Send message to target agent.
 
-        Routes through gateway if use_gateway=True, otherwise sends P2P.
+        Always routes through the gateway (Redis Streams ingress).
 
         Args:
             target_id: Target agent identifier
@@ -260,11 +260,11 @@ class Agent(Generic[StateType]):
         await self._send_envelope(message)
 
     async def _send_envelope(self, message: AgentMessage) -> None:
-        """Route an envelope via gateway or P2P."""
+        """Route an envelope via the gateway ingress stream."""
         if not self._redis:
             raise RuntimeError("Agent not started")
 
-        # Always route via Redis Streams ingress in gateway-only mode
+        # Always route via Redis Streams ingress
         await self._transport_ready.wait()
         if not self._redis:
             raise RuntimeError("Agent not started")
@@ -489,7 +489,7 @@ class Agent(Generic[StateType]):
                 for _, messages in items:
                     for entry_id, fields in messages:
                         try:
-                            data_json = cast(str, fields.get("envelope", ""))
+                            data_json = fields.get("envelope", "")
                             if not data_json:
                                 await self._redis.xack(stream, group, entry_id)
                                 continue

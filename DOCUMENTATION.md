@@ -1549,7 +1549,9 @@ print(f"Active agents: {[a['id'] for a in agents]}")
 2. Target agent has a matching `@Agent.on("<message.type>")` handler registered
 3. Correct agent ID used in `send()`
 4. No exceptions in handler execution (check logs)
-5. Redis pub/sub working: `redis-cli PUBSUB CHANNELS agent.*`
+5. Redis Streams present:
+   - `redis-cli XINFO STREAM mas.gateway.ingress`
+   - `redis-cli XRANGE agent.stream:<target_id> - + COUNT 1`
 
 **Debug**:
 ```python
@@ -2092,13 +2094,12 @@ print(settings.summary())
 
 See the `examples/` directory for complete working examples:
 
-### Chemistry Tutoring (Peer-to-Peer)
+### Chemistry Tutoring
 `examples/chemistry_tutoring/`
 
 Two agents (student and professor) having an educational conversation using OpenAI.
 
 **Demonstrates:**
-- Peer-to-peer messaging
 - Agent discovery
 - Request-response pattern
 - OpenAI integration
@@ -2187,7 +2188,7 @@ v2_agents = [a for a in agents if a["metadata"].get("version") == "2.0.0"]
 
 **Q: Can I use MAS Framework with other message brokers?**
 
-A: Currently only Redis is supported. The framework is designed around Redis primitives (pub/sub, streams, hashes).
+A: Currently only Redis is supported. The framework is designed around Redis primitives (streams, hashes).
 
 ### Reporting Issues
 
