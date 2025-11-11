@@ -3,11 +3,45 @@
 import asyncio
 import logging
 from typing import Optional, override
+from pydantic import BaseModel
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from mas import Agent, AgentMessage
 
 logger = logging.getLogger(__name__)
+
+
+class ConsultationRequest(BaseModel):
+    """Consultation request from patient."""
+    type: str = "consultation_request"
+    question: str
+    concern: str = "general health"
+
+
+class ConsultationEnd(BaseModel):
+    """Consultation end message from patient."""
+    type: str = "consultation_end"
+    message: str
+
+
+class SpecialistConsultationRequest(BaseModel):
+    """Specialist consultation request payload."""
+    patient_question: str
+    concern: str = "general health"
+    gp_diagnosis: str = ""
+    patient_id: str
+
+
+class SpecialistConsultationResponse(BaseModel):
+    """Specialist consultation response payload."""
+    specialist_advice: str
+    specialization: str = "specialist"
+
+
+class DoctorState(BaseModel):
+    """State model for DoctorAgent."""
+    consultations_completed: int = 0
+    specialist_id: Optional[str] = None
 
 
 class DoctorAgent(Agent):
@@ -46,11 +80,10 @@ class DoctorAgent(Agent):
             capabilities=["healthcare_doctor", "medical_advisor"],
             redis_url=redis_url,
             use_gateway=True,  # Enable gateway mode for compliance
+            state_model=DoctorState,
         )
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = model
-        self.consultations_completed = 0
-        self.specialist_id: Optional[str] = None
 
     @override
     async def on_start(self) -> None:
@@ -63,8 +96,8 @@ class DoctorAgent(Agent):
         specialists = await self.discover(capabilities=["healthcare_specialist"])
 
         if specialists:
-            self.specialist_id = specialists[0]["id"]
-            logger.info(f"Found specialist: {self.specialist_id}")
+            await self.update_state({"specialist_id": specialists[0]["id"]})
+            logger.info(f"Found specialist: {self.state.specialist_id}")
         else:
             logger.warning(
                 "No specialist found - will handle all consultations directly"
@@ -72,8 +105,10 @@ class DoctorAgent(Agent):
 
         logger.info("Ready for consultations...")
 
-    @override
-    async def on_message(self, message: AgentMessage) -> None:
+    @Agent.on("consultation_request", model=ConsultationRequest)
+    async def handle_consultation_request(
+        self, message: AgentMessage, payload: ConsultationRequest
+    ) -> None:
         """
         Handle consultation requests from patients.
 
@@ -86,35 +121,45 @@ class DoctorAgent(Agent):
 
         Args:
             message: Message from a patient (via gateway)
+            payload: Validated consultation request payload
         """
-        msg_type = message.payload.get("type")
+        # Handle patient consultation (spawned as task for concurrency)
+        await self._handle_patient_consultation(message, payload)
 
-        if msg_type == "consultation_request":
-            # Handle patient consultation (spawned as task for concurrency)
-            await self._handle_patient_consultation(message)
+    @Agent.on("consultation_end", model=ConsultationEnd)
+    async def handle_consultation_end(
+        self, message: AgentMessage, payload: ConsultationEnd
+    ) -> None:
+        """
+        Handle consultation end message from patients.
 
-        elif msg_type == "consultation_end":
-            logger.info(f"\n{'=' * 60}")
-            logger.info(f"Patient says: {message.payload.get('message')}")
-            logger.info(
-                f"Total consultations completed: {self.consultations_completed}"
-            )
-            logger.info(f"{'=' * 60}\n")
-            logger.info("✓ All consultations logged in audit trail")
+        Args:
+            message: Message from a patient (via gateway)
+            payload: Validated consultation end payload
+        """
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"Patient says: {payload.message}")
+        logger.info(
+            f"Total consultations completed: {self.state.consultations_completed}"
+        )
+        logger.info(f"{'=' * 60}\n")
+        logger.info("✓ All consultations logged in audit trail")
 
-    async def _handle_patient_consultation(self, message: AgentMessage) -> None:
+    async def _handle_patient_consultation(
+        self, message: AgentMessage, payload: ConsultationRequest
+    ) -> None:
         """
         Handle a patient consultation request.
 
         This runs as a separate task, allowing concurrent handling of multiple patients.
-        """
-        question = message.payload.get("question")
-        concern = message.payload.get("concern", "general health")
-        patient_id = message.sender_id
 
-        if not question or not isinstance(question, str):
-            logger.error("Received consultation without valid question")
-            return
+        Args:
+            message: Message from patient
+            payload: Validated consultation request payload
+        """
+        question = payload.question
+        concern = payload.concern
+        patient_id = message.sender_id
 
         logger.info(f"\n{'=' * 60}")
         logger.info(f"CONSULTATION REQUEST from {patient_id}")
@@ -132,40 +177,35 @@ class DoctorAgent(Agent):
         logger.info(f"{'=' * 60}\n")
 
         # Consult specialist if available (using new request-response API)
-        if self.specialist_id:
-            logger.info(f"Consulting specialist {self.specialist_id}...")
+        if self.state.specialist_id:
+            logger.info(f"Consulting specialist {self.state.specialist_id}...")
 
             try:
                 # Request-response pattern - waits for specialist reply
                 # But doesn't block other patients (runs in separate task)
+                request_payload = SpecialistConsultationRequest(
+                    patient_question=question,
+                    concern=concern,
+                    gp_diagnosis=initial_diagnosis,
+                    patient_id=patient_id,
+                )
                 specialist_response = await self.request(
-                    self.specialist_id,
-                    {
-                        "patient_question": question,
-                        "concern": concern,
-                        "gp_diagnosis": initial_diagnosis,
-                        "patient_id": patient_id,
-                    },
+                    self.state.specialist_id,
+                    "specialist_consultation",
+                    request_payload.model_dump(),
                     timeout=30.0,
                 )
 
-                specialist_advice_unknown = specialist_response.payload.get(
-                    "specialist_advice"
+                # Parse response payload
+                response_payload = SpecialistConsultationResponse.model_validate(
+                    specialist_response.data
                 )
-                specialization = specialist_response.payload.get(
-                    "specialization", "specialist"
-                )
+                specialist_advice = response_payload.specialist_advice
+                specialization = response_payload.specialization
 
                 logger.info(f"\n{'=' * 60}")
                 logger.info(f"SPECIALIST RESPONSE RECEIVED ({specialization})")
                 logger.info(f"{'=' * 60}\n")
-
-                # Validate specialist advice and synthesize final advice
-                specialist_advice: str
-                if isinstance(specialist_advice_unknown, str):
-                    specialist_advice = specialist_advice_unknown
-                else:
-                    specialist_advice = "Specialist advice not available."
 
                 # Synthesize final advice combining GP and specialist input
                 final_advice = await self._synthesize_final_advice(
@@ -183,6 +223,7 @@ class DoctorAgent(Agent):
                 # Send final advice to patient
                 await self.send(
                     patient_id,
+                    "consultation_response",
                     {
                         "type": "consultation_response",
                         "question": question,
@@ -205,6 +246,7 @@ class DoctorAgent(Agent):
 
                     await self.send(
                         patient_id,
+                        "consultation_response",
                         {
                             "type": "consultation_response",
                             "question": question,
@@ -222,6 +264,7 @@ class DoctorAgent(Agent):
             # No specialist available, send initial diagnosis directly to patient
             await self.send(
                 patient_id,
+                "consultation_response",
                 {
                     "type": "consultation_response",
                     "question": question,
@@ -229,7 +272,8 @@ class DoctorAgent(Agent):
                 },
             )
 
-        self.consultations_completed += 1
+        consultations_completed = self.state.consultations_completed + 1
+        await self.update_state({"consultations_completed": consultations_completed})
 
     async def _generate_initial_diagnosis(self, question: str, concern: str) -> str:
         """
