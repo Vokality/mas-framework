@@ -20,7 +20,7 @@ from typing import Any, Optional
 import logging
 from pydantic import BaseModel
 
-from mas.redis_types import AsyncRedisProtocol
+from ..redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 

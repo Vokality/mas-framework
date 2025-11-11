@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from typing import Any, Optional
-from mas.redis_types import AsyncRedisProtocol
+from ..redis_types import AsyncRedisProtocol
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)

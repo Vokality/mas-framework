@@ -7,7 +7,7 @@ import secrets
 import time
 from typing import Any, List, Optional, TypedDict
 
-from mas.redis_types import AsyncRedisProtocol
+from .redis_types import AsyncRedisProtocol
 
 __all__ = ["AgentRegistry", "AgentRecord"]
 

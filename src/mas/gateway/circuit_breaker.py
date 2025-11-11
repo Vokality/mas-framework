@@ -7,7 +7,7 @@ from typing import Any, Mapping, Optional
 
 from pydantic import BaseModel
 
-from mas.redis_types import AsyncRedisProtocol
+from ..redis_types import AsyncRedisProtocol
 
 from .metrics import MetricsCollector
 

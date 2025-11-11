@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel
 
-from mas.redis_types import AsyncRedisProtocol
+from ..redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 
