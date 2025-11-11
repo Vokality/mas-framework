@@ -57,13 +57,22 @@ import asyncio
 from pydantic import BaseModel
 from mas import Agent, AgentMessage
 
+class MyState(BaseModel):
+    processed: int = 0
+
 class ReplyRequest(BaseModel):
     hello: str
 
-class MyAgent(Agent):
+class MyAgent(Agent[MyState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=MyState, **kwargs)
+
     @Agent.on("greeting.message", model=ReplyRequest)
     async def handle_greeting(self, message: AgentMessage, payload: ReplyRequest):
-        await message.reply("reply.message", {"reply": f"got {payload.hello}"})
+        # Use strongly-typed state
+        self.state.processed += 1
+        await self.update_state({"processed": self.state.processed})
+        await message.reply("reply.message", {"reply": f"got {payload.hello}", "count": self.state.processed})
 
 async def main():
     # Create and start agent
@@ -90,24 +99,35 @@ For better type safety and cleaner code, use decorator-based handlers:
 
 ```python
 import asyncio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from mas import Agent, AgentMessage
 
 class GreetingRequest(BaseModel):
     name: str
     language: str = "en"
 
-class TypedAgent(Agent):
+class TypedState(BaseModel):
+    greetings_handled: int = Field(default=0)
+    status_checks: int = Field(default=0)
+
+class TypedAgent(Agent[TypedState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=TypedState, **kwargs)
+
     @Agent.on("greeting.request", model=GreetingRequest)
     async def handle_greeting(self, message: AgentMessage, payload: GreetingRequest):
         """Handle greeting requests with typed payload"""
+        self.state.greetings_handled += 1
         greeting = f"Hello, {payload.name}!" if payload.language == "en" else f"Hola, {payload.name}!"
-        await message.reply("greeting.response", {"greeting": greeting})
+        await self.update_state({"greetings_handled": self.state.greetings_handled})
+        await message.reply("greeting.response", {"greeting": greeting, "handled": self.state.greetings_handled})
     
     @Agent.on("status.check")
     async def handle_status(self, message: AgentMessage, payload: None):
         """Handle status checks"""
-        await message.reply("status.response", {"status": "healthy"})
+        self.state.status_checks += 1
+        await self.update_state({"status_checks": self.state.status_checks})
+        await message.reply("status.response", {"status": "healthy", "checks": self.state.status_checks})
 
 async def main():
     agent = TypedAgent("typed_agent")
@@ -165,29 +185,29 @@ Gateway mode is the default and recommended for production deployments.
 Agent state is automatically saved to Redis:
 
 ```python
-import asyncio
+from pydantic import BaseModel
 from mas import Agent
 
-async def main():
-    agent = Agent("my_agent")
-    await agent.start()
-    
-    # Update state (automatically persisted)
-    await agent.update_state({"counter": 42, "status": "active"})
-    
-    # Access state
-    print(agent.state["counter"])  # "42" (if dict) or agent.state.counter (if typed)
-    
-    # State survives restarts
-    await agent.stop()
-    
-    agent2 = Agent("my_agent")  # Same ID
-    await agent2.start()
-    print(agent2.state["counter"])  # Still "42"
-    await agent2.stop()
+class MyState(BaseModel):
+    counter: int = 0
+    status: str = "idle"
 
-if __name__ == "__main__":
-    asyncio.run(main())
+class MyAgent(Agent[MyState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=MyState, **kwargs)
+
+# Update state (automatically persisted)
+agent = MyAgent("my_agent")
+await agent.start()
+await agent.update_state({"counter": 42, "status": "active"})
+print(agent.state.counter)  # 42
+await agent.stop()
+
+# State survives restarts
+agent2 = MyAgent("my_agent")  # Same ID
+await agent2.start()
+print(agent2.state.counter)  # Still 42
+await agent2.stop()
 ```
 
 ### Discovery by Capabilities
@@ -310,26 +330,39 @@ Use decorator-based handlers for type-safe message handling:
 
 ```python
 import asyncio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from mas import Agent, AgentMessage
 
 class ChatRequest(BaseModel):
     text: str
     user_id: str
 
-class ChatAgent(Agent):
+class SummarizeRequest(BaseModel):
+    text: str
+
+class ChatState(BaseModel):
+    messages: int = Field(default=0)
+    summaries: int = Field(default=0)
+
+class ChatAgent(Agent[ChatState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=ChatState, **kwargs)
+
     @Agent.on("chat.message", model=ChatRequest)
     async def handle_chat(self, message: AgentMessage, payload: ChatRequest):
         """Handle chat messages with typed payload"""
+        self.state.messages += 1
         response = f"You said: {payload.text}"
-        await message.reply("chat.response", {"response": response})
+        await self.update_state({"messages": self.state.messages})
+        await message.reply("chat.response", {"response": response, "count": self.state.messages})
     
-    @Agent.on("summarize.request")
-    async def handle_summarize(self, message: AgentMessage, payload: None):
+    @Agent.on("summarize.request", model=SummarizeRequest)
+    async def handle_summarize(self, message: AgentMessage, payload: SummarizeRequest):
         """Handle summarize requests"""
-        text = message.data.get("text", "")
-        summary = self.summarize(text)
-        await message.reply("summarize.response", {"summary": summary})
+        self.state.summaries += 1
+        await self.update_state({"summaries": self.state.summaries})
+        summary = self.summarize(payload.text)
+        await message.reply("summarize.response", {"summary": summary, "count": self.state.summaries})
 
 async def main():
     agent = ChatAgent("chat_agent")
@@ -535,7 +568,7 @@ uv sync
 uv run pytest
 
 # Run type checker
-uv run pyright
+uv run basedpyright
 
 # Format code
 uv run ruff format .

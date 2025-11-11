@@ -368,11 +368,20 @@ class PublisherAgent(Agent):
 Chain agents together for multi-step processing:
 
 ```python
+from pydantic import BaseModel
+
+class StageOneRequest(BaseModel):
+    data: dict
+
+class StageTwoRequest(BaseModel):
+    data: dict
+    stage: int
+
 class StageOneAgent(Agent):
     """First stage of pipeline"""
-    @Agent.on("stage1.process")
-    async def handle_stage1(self, message: AgentMessage, payload: dict):
-        input_data = payload["data"]
+    @Agent.on("stage1.process", model=StageOneRequest)
+    async def handle_stage1(self, message: AgentMessage, payload: StageOneRequest):
+        input_data = payload.data
         processed = self.stage_one_processing(input_data)
         stage_two = await self.discover(capabilities=["stage_two"])
         if stage_two:
@@ -380,10 +389,10 @@ class StageOneAgent(Agent):
 
 class StageTwoAgent(Agent):
     """Second stage of pipeline"""
-    @Agent.on("stage2.process")
-    async def handle_stage2(self, message: AgentMessage, payload: dict):
-        if payload.get("stage") == 2:
-            data = payload["data"]
+    @Agent.on("stage2.process", model=StageTwoRequest)
+    async def handle_stage2(self, message: AgentMessage, payload: StageTwoRequest):
+        if payload.stage == 2:
+            data = payload.data
             final_result = self.stage_two_processing(data)
             await message.reply("pipeline.complete", {"result": final_result, "completed": True})
 ```
@@ -511,22 +520,28 @@ async def distribute_work(self, tasks: list):
 Agents have automatic state persistence:
 
 ```python
-class StatefulAgent(Agent):
+from pydantic import BaseModel, Field
+from mas import Agent, AgentMessage
+
+class MyAgentState(BaseModel):
+    counter: int = Field(default=0)
+    status: str = Field(default="idle")
+
+class StatefulAgent(Agent[MyAgentState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=MyAgentState, **kwargs)
+
     async def on_start(self):
         # State is automatically loaded from Redis
         print(f"Current state: {self.state}")
-        
-        # Update state (automatically persisted to Redis)
-        await self.update_state({
-            "counter": 0,
-            "status": "active"
-        })
+        # Initialize state (automatically persisted to Redis)
+        await self.update_state({"counter": 0, "status": "active"})
 
     @Agent.on("counter.increment")
     async def handle_increment(self, message: AgentMessage, payload: None):
-        current_count = self.state.counter if isinstance(self.state, MyAgentState) else int(self.state.get("counter", 0))
-        await self.update_state({"counter": current_count + 1})
-        print(f"Processed {current_count + 1} messages")
+        self.state.counter += 1
+        await self.update_state({"counter": self.state.counter})
+        print(f"Processed {self.state.counter} messages")
 ```
 
 ### State Persistence
@@ -534,17 +549,28 @@ class StatefulAgent(Agent):
 State automatically persists across restarts:
 
 ```python
+from pydantic import BaseModel
+from mas import Agent
+
+class MyState(BaseModel):
+    counter: int = 0
+    name: str = "Alice"
+
+class MyAgent(Agent[MyState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=MyState, **kwargs)
+
 # First run
 agent = MyAgent("my_agent")
 await agent.start()
-await agent.update_state({"counter": 42, "name": "Alice"})
+await agent.update_state({"counter": 42})
 await agent.stop()
 
 # Second run (after restart)
 agent = MyAgent("my_agent")  # Same ID!
 await agent.start()
-print(agent.state["counter"])  # Prints: 42 (if dict) or agent.state.counter (if typed)
-print(agent.state["name"])     # Prints: Alice (if dict) or agent.state.name (if typed)
+print(agent.state.counter)  # 42
+print(agent.state.name)     # "Alice"
 ```
 
 ### Typed State with Pydantic
@@ -1415,22 +1441,30 @@ Use structured logging:
 ```python
 import logging
 import json
+from pydantic import BaseModel
+from mas import Agent, AgentMessage
 
 # Configure structured logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
+
+class AuditEvent(BaseModel):
+    action: str
 
 class MyAgent(Agent):
-    async def on_message(self, message: AgentMessage):
+    @Agent.on("audit.event", model=AuditEvent)
+    async def handle_audit(self, message: AgentMessage, payload: AuditEvent):
         logger.info(
             "Message processed",
             extra={
                 "agent_id": self.id,
                 "sender_id": message.sender_id,
-                "message_type": message.payload.get("type"),
-                "message_id": message.message_id
+                "message_type": message.message_type,
+                "message_id": message.message_id,
+                "action": payload.action,
             }
         )
 ```
@@ -1441,20 +1475,22 @@ Track agent metrics:
 
 ```python
 from prometheus_client import Counter, Histogram, start_http_server
+from pydantic import BaseModel
+from mas import Agent, AgentMessage
 
 messages_received = Counter('agent_messages_received', 'Messages received', ['agent_id'])
 messages_sent = Counter('agent_messages_sent', 'Messages sent', ['agent_id'])
 message_processing_time = Histogram('agent_message_processing_seconds', 'Time to process message')
 
+class TaskRequest(BaseModel):
+    task: str
+
 class MeteredAgent(Agent):
-    async def on_message(self, message: AgentMessage):
+    @Agent.on("task.process", model=TaskRequest)
+    async def handle_task(self, message: AgentMessage, payload: TaskRequest):
         messages_received.labels(agent_id=self.id).inc()
-        
         with message_processing_time.time():
-            await self.process_message(message)
-    
-    async def send(self, target_id: str, payload: dict):
-        await super().send(target_id, payload)
+            await self.process_task(payload.task)
         messages_sent.labels(agent_id=self.id).inc()
 
 # Start metrics server
@@ -1510,22 +1546,18 @@ print(f"Active agents: {[a['id'] for a in agents]}")
 
 **Checklist**:
 1. Target agent is started: `await target_agent.start()`
-2. Target agent has `on_message` implemented
+2. Target agent has a matching `@Agent.on("<message.type>")` handler registered
 3. Correct agent ID used in `send()`
-4. No exceptions in `on_message` (check logs)
+4. No exceptions in handler execution (check logs)
 5. Redis pub/sub working: `redis-cli PUBSUB CHANNELS agent.*`
 
 **Debug**:
 ```python
 class DebugAgent(Agent):
-    async def on_message(self, message: AgentMessage):
+    @Agent.on("debug.message")
+    async def handle_debug(self, message: AgentMessage, payload: None):
         print(f"DEBUG: Received message from {message.sender_id}")
-        print(f"DEBUG: Payload: {message.payload}")
-        try:
-            await self.process_message(message)
-        except Exception as e:
-            print(f"DEBUG: Error processing: {e}")
-            raise
+        print(f"DEBUG: Payload: {message.data}")
 ```
 
 #### Request Timeouts
@@ -1539,9 +1571,9 @@ response = await agent.request("slow_agent", {...}, timeout=60.0)
 
 # 2. Check responder implements reply
 class ResponderAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        if message.expects_reply:
-            await message.reply({"result": "success"})  # Don't forget this!
+    @Agent.on("query.request")
+    async def handle_query(self, message: AgentMessage, payload: None):
+        await message.reply("query.response", {"result": "success"})  # Don't forget this!
 
 # 3. Check for errors in responder
 # Look at responder agent logs for exceptions

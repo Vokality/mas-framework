@@ -1,10 +1,10 @@
 ## Development
 
 - Package manager: `uv`
-- Testing framework: `basedpyright` (run with `uvx basedpyright src`)
+- Testing framework: `pytest` (run with `uv run pytest`)
 - Linter: `ruff` (run with `uv run ruff check .`)
 - Formatter: `ruff` (run with `uv run ruff format .`)
-- Type checks: `pyright` (run with `uv run pyright`)
+- Type checks: `basedpyright` (run with `uvx basedpyright src`)
 - Python version: 3.14
 - Strict typing is required
 

@@ -828,9 +828,9 @@ async def handler(self, message: AgentMessage, payload: PayloadModel) -> None:
     pass
 ```
 
-**Pyright Configuration**:
+**BasedPyright Configuration**:
 ```toml
-[tool.pyright]
+[tool.basedpyright]
 typeCheckingMode = "standard"
 reportMissingImports = "error"
 enableReachabilityAnalysis = true
@@ -841,11 +841,21 @@ enableReachabilityAnalysis = true
 ### Basic Agent Creation
 
 ```python
+from pydantic import BaseModel
 from mas import Agent
 
-agent = Agent("my_agent", capabilities=["nlp"])
+class MyState(BaseModel):
+    tasks_sent: int = 0
+
+class MyAgent(Agent[MyState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=MyState, **kwargs)
+
+agent = MyAgent("my_agent", capabilities=["nlp"])
 await agent.start()
 await agent.send("target", "task.message", {"task": "process"})
+agent.state.tasks_sent += 1
+await agent.update_state({"tasks_sent": agent.state.tasks_sent})
 ```
 
 ### Decorator-Based Message Handling
@@ -858,11 +868,23 @@ class TaskRequest(BaseModel):
     task_id: str
     priority: int = 1
 
-class MyAgent(Agent):
+class MyAgent(Agent[TaskState]):
+    # Demonstrate typed state alongside handlers
+    pass
+
+class TaskState(BaseModel):
+    processed: int = 0
+
+class MyAgent(Agent[TaskState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=TaskState, **kwargs)
+
     @Agent.on("task.process", model=TaskRequest)
     async def handle_task(self, message: AgentMessage, payload: TaskRequest):
         """Type-safe handler with validated payload"""
-        await message.reply("task.complete", {"status": "done"})
+        self.state.processed += 1
+        await self.update_state({"processed": self.state.processed})
+        await message.reply("task.complete", {"status": "done", "count": self.state.processed})
 ```
 
 ### Agent Characteristics

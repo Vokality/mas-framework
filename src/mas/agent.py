@@ -55,7 +55,7 @@ class Agent(Generic[StateType]):
     - Automatic heartbeat monitoring
     - Strongly-typed state via generics
 
-    Usage with typed state:
+    Usage with typed state and decorator-based handlers:
         class MyState(BaseModel):
             counter: int = 0
 
@@ -63,21 +63,11 @@ class Agent(Generic[StateType]):
             def __init__(self, agent_id: str, redis_url: str):
                 super().__init__(agent_id, state_model=MyState, redis_url=redis_url)
 
-            async def on_message(self, message: AgentMessage):
+            @Agent.on("counter.increment")
+            async def handle_increment(self, message: AgentMessage, payload: None):
                 # self.state is strongly typed as MyState
-                print(f"Counter: {self.state.counter}")
-                await self.update_state({"counter": self.state.counter + 1})
-
-    Usage with dict state (backward compatible):
-        class MyAgent(Agent[dict[str, Any]]):
-            def __init__(self, agent_id: str, redis_url: str):
-                super().__init__(agent_id, redis_url=redis_url)
-                # state_model defaults to None, so state is dict
-
-            async def on_message(self, message: AgentMessage):
-                # self.state is typed as dict
-                counter = self.state.get("counter", 0)
-                await self.update_state({"counter": counter + 1})
+                self.state.counter += 1
+                await self.update_state({"counter": self.state.counter})
     """
 
     def __init__(
