@@ -1,19 +1,10 @@
 # MAS Framework - Multi-Agent System
 
-A Python framework for building multi-agent systems with Redis. Supports two messaging modes:
+A Python framework for building multi-agent systems with Redis. Messages are routed through a centralized gateway that provides security, reliability, and observability.
 
 ## Architecture
 
-### Mode 1: Peer-to-Peer (Default)
-```
-MAS Service (Registry & Discovery)
-         ↓ ↑
-       Redis
-         ↓ ↑
-  Agent ↔ Agent (Direct Pub/Sub)
-```
-
-### Mode 2: Gateway (Enterprise)
+### Gateway Architecture
 ```
 Agent A → Gateway Service → Redis Streams → Agent B
           (auth, authz,
@@ -22,10 +13,9 @@ Agent A → Gateway Service → Redis Streams → Agent B
 ```
 
 **Key Capabilities:**
-- **Dual messaging modes** - Peer-to-peer (default) or gateway-mediated (enterprise)
+- **Gateway-mediated messaging** - Centralized validation and routing
 - **Agent registry** - Capability-based discovery via MAS Service
 - **Auto-persisted state** - Agent state saved to Redis hash structures
-- **Configurable routing** - Choose between P2P (low latency) or gateway (security/audit)
 - **Decorator-based handlers** - Type-safe message handling with Pydantic models
 - **Strongly-typed state** - Optional Pydantic models for type-safe state management
 
@@ -64,20 +54,23 @@ if __name__ == "__main__":
 
 ```python
 import asyncio
+from pydantic import BaseModel
 from mas import Agent, AgentMessage
 
+class ReplyRequest(BaseModel):
+    hello: str
+
 class MyAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        print(f"Received: {message.data}")
-        # Send reply with message type
-        await self.send(message.sender_id, "reply.message", {"reply": "got it"})
+    @Agent.on("greeting.message", model=ReplyRequest)
+    async def handle_greeting(self, message: AgentMessage, payload: ReplyRequest):
+        await message.reply("reply.message", {"reply": f"got {payload.hello}"})
 
 async def main():
     # Create and start agent
     agent = MyAgent("my_agent", capabilities=["chat", "nlp"])
     await agent.start()
 
-    # Send message to another agent with message type
+    # Send typed message to another agent
     await agent.send("other_agent", "greeting.message", {"hello": "world"})
 
     # Discover agents by capability
@@ -126,36 +119,9 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## Messaging Modes
+## Messaging
 
-### Peer-to-Peer Mode (Default)
-
-Agents communicate directly via Redis pub/sub channels:
-
-```python
-import asyncio
-from mas import Agent
-
-async def main():
-    agent = Agent("sender_agent")
-    await agent.start()
-    
-    # Direct send (publishes to Redis channel: agent.target_id)
-    await agent.send("target_agent", "test.message", {"data": "hello"})
-    
-    await agent.stop()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-**Characteristics:**
-- Direct agent-to-agent communication via Redis pub/sub
-- No central message routing overhead
-- At-most-once delivery (Redis pub/sub semantics)
-- Suitable for high-throughput, low-latency scenarios
-
-### Gateway Mode (Enterprise)
+Messages are routed through a centralized gateway for security and compliance:
 
 Messages routed through centralized gateway for security and compliance:
 
@@ -178,7 +144,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**Capabilities:**
+**Gateway capabilities:**
 - **Authentication** - Token-based agent authentication
 - **Authorization** - Role-based access control (RBAC)
 - **Rate Limiting** - Per-agent token bucket rate limits
@@ -190,19 +156,7 @@ if __name__ == "__main__":
 
 See [GATEWAY.md](GATEWAY.md) for complete gateway documentation.
 
-### Choosing a Mode
-
-| Requirement | Use Peer-to-Peer | Use Gateway |
-|-------------|------------------|-------------|
-| Low latency required | ✅ | ❌ |
-| High throughput required | ✅ | ⚠️ (scaled) |
-| Audit trail required | ❌ | ✅ |
-| Compliance (SOC2, HIPAA, etc.) | ❌ | ✅ |
-| PII/PHI data protection | ❌ | ✅ |
-| Rate limiting needed | ❌ | ✅ |
-| Message reliability critical | ❌ | ✅ |
-| Simple dev/test environment | ✅ | ❌ |
-| Production enterprise deployment | ⚠️ | ✅ |
+Gateway mode is the default and recommended for production deployments.
 
 ## Features
 
@@ -280,11 +234,6 @@ class MyAgent(Agent):
         """Called when agent stops"""
         print("Agent stopping...")
         # await self.cleanup_resources()  # Your cleanup logic
-    
-    async def on_message(self, message: AgentMessage):
-        """Called when message received"""
-        print(f"Got message: {message.message_type}")
-        print(f"Data: {message.data}")
 
 async def main():
     agent = MyAgent("my_agent")
@@ -381,10 +330,6 @@ class ChatAgent(Agent):
         text = message.data.get("text", "")
         summary = self.summarize(text)
         await message.reply("summarize.response", {"summary": summary})
-    
-    async def on_message(self, message: AgentMessage):
-        """Fallback for unhandled message types"""
-        await self.send(message.sender_id, "error.message", {"error": "unknown message type"})
 
 async def main():
     agent = ChatAgent("chat_agent")
@@ -438,14 +383,13 @@ if __name__ == "__main__":
 
 ## Examples
 
-### Chemistry Tutoring (Peer-to-Peer Mode)
+### Chemistry Tutoring
 
-Simple P2P messaging with two OpenAI-powered agents:
+Two OpenAI-powered agents exchanging information:
 
 - **Student Agent**: Asks chemistry homework questions
 - **Professor Agent**: Provides educational explanations
-- **Mode**: Peer-to-peer (direct Redis pub/sub)
-- **Use case**: Development, low-latency scenarios
+- **Use case**: Educational demo showcasing agent discovery and messaging
 
 ```bash
 cd examples/chemistry_tutoring
@@ -487,7 +431,7 @@ See [examples/healthcare_consultation/README.md](examples/healthcare_consultatio
 uv run pytest
 
 # Run specific test
-uv run pytest tests/test_simple_messaging.py::test_peer_to_peer_messaging
+uv run pytest tests/test_simple_messaging.py::test_bidirectional_messaging
 
 # Run with coverage
 uv run pytest --cov=src/mas
@@ -495,7 +439,7 @@ uv run pytest --cov=src/mas
 
 ## Performance Characteristics
 
-The framework uses Redis pub/sub for messaging. Performance depends on:
+The framework uses Redis Streams for reliable messaging through the gateway. Performance depends on:
 - Redis instance configuration and network latency
 - Message payload size
 - Number of concurrent agents
@@ -505,7 +449,7 @@ Performance benchmarks are planned for future releases.
 
 ## Documentation
 
-- **[Architecture Guide](ARCHITECTURE.md)** - Peer-to-peer architecture, design decisions, and implementation details
+- **[Architecture Guide](ARCHITECTURE.md)** - Architecture, design decisions, and implementation details
 - **[Gateway Guide](GATEWAY.md)** - Enterprise gateway pattern with security, audit, and compliance features
 - **[API Reference](#messaging-modes)** - Feature documentation and usage examples
 
@@ -520,11 +464,6 @@ Performance benchmarks are planned for future releases.
 
 **Message Flow:**
 
-Peer-to-Peer Mode:
-```
-Agent A → Redis Pub/Sub (channel: agent.B) → Agent B
-```
-
 Gateway Mode:
 ```
 Agent A → Gateway Service → Redis Streams → Agent B
@@ -535,7 +474,6 @@ Agent A → Gateway Service → Redis Streams → Agent B
 - `agent:{id}` - Agent metadata
 - `agent:{id}:heartbeat` - Health monitoring (60s TTL)
 - `agent.state:{id}` - Persisted agent state
-- `agent.{id}` - Message channel (pub/sub, P2P mode)
 - `agent.stream:{id}` - Message stream (gateway mode)
 - `mas.system` - System events (pub/sub)
 
@@ -544,8 +482,7 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Roadmap
 
 ### Current Features
-- ✅ Peer-to-peer messaging (Redis pub/sub)
-- ✅ Gateway mode with security controls
+- ✅ Gateway-mediated messaging with security controls
 - ✅ Authentication and authorization (RBAC)
 - ✅ Rate limiting (token bucket)
 - ✅ Data loss prevention (DLP)
@@ -572,7 +509,7 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 ## FAQ
 
 **Q: Why Redis?**
-A: Redis provides pub/sub for P2P messaging, Streams for reliable delivery in gateway mode, hash structures for state, and TTL for heartbeats. Single dependency with well-understood operational characteristics.
+A: Redis provides Streams for reliable delivery via the gateway, hash structures for state, and TTL for heartbeats. Single dependency with well-understood operational characteristics.
 
 **Q: What if Redis goes down?**
 A: Agents will lose connection and cannot communicate. Consider Redis Cluster or Sentinel for high availability in production.
@@ -584,11 +521,7 @@ A: Yes. All agents connect to the same Redis instance via the redis:// URL.
 A: The framework has been tested with small numbers of agents. Limits depend on Redis capacity and agent workload.
 
 **Q: Message delivery guarantees?**
-A: Depends on mode:
-- **Peer-to-peer mode**: At-most-once (Redis pub/sub)
-- **Gateway mode**: At-least-once (Redis Streams)
-
-Choose based on your requirements: P2P for low latency, gateway for reliability and compliance.
+A: At-least-once via Redis Streams through the gateway.
 
 ## Development
 

@@ -113,25 +113,12 @@ stop()
   └─→ Close Redis connection
 ```
 
-**Message Loop** (`_message_loop`):
+**Message Loop**:
 ```python
 async def _message_loop(self):
-    async for message in self._pubsub.listen():
-        if message["type"] == "message":
-            msg = AgentMessage.model_validate_json(message["data"])
-            msg.attach_agent(self)  # For reply() convenience
-            
-            # Check if reply to pending request
-            if msg.meta.is_reply:
-                correlation_id = msg.meta.correlation_id
-                if correlation_id in self._pending_requests:
-                    future = self._pending_requests.pop(correlation_id)
-                    future.set_result(msg)
-                    continue
-            
-            # Try decorator-based dispatch first
-            await self._dispatch_typed(msg)
-            # Falls back to on_message() if no handler registered
+    # Internal loop receives envelopes and dispatches to registered decorators.
+    # Replies resolve pending requests via correlation IDs.
+    ...
 ```
 
 **Heartbeat Loop** (`_heartbeat_loop`):
@@ -302,10 +289,6 @@ class MyAgent(Agent):
     async def handle_status(self, message: AgentMessage, payload: None):
         """Handler without payload model"""
         await message.reply("status.response", {"status": "healthy"})
-    
-    async def on_message(self, message: AgentMessage):
-        """Fallback for unhandled message types"""
-        pass
 ```
 
 ## Message Flow
@@ -332,8 +315,6 @@ class MyAgent(Agent):
 6. Agent B's _dispatch_typed() checks for registered handlers
    ↓
 7a. If handler found: Call @Agent.on() handler with validated payload
-   OR
-7b. If no handler: Call on_message() fallback
 ```
 
 ### System Messages (Registration)
@@ -746,7 +727,6 @@ async for message in self._pubsub.listen():
         
         # Try decorator-based dispatch
         await self._dispatch_typed(msg)
-        # Falls back to on_message() if no handler
     except Exception as e:
         logger.error("Failed to handle message", exc_info=e)
         # Continue processing other messages
@@ -785,7 +765,8 @@ class ReceiverAgent(Agent):
         self.messages = []
         self.message_event = asyncio.Event()
     
-    async def on_message(self, message):
+    @Agent.on("test.message")
+    async def handle_test(self, message: AgentMessage, payload: dict):
         self.messages.append(message)
         self.message_event.set()
 
@@ -882,10 +863,6 @@ class MyAgent(Agent):
     async def handle_task(self, message: AgentMessage, payload: TaskRequest):
         """Type-safe handler with validated payload"""
         await message.reply("task.complete", {"status": "done"})
-    
-    async def on_message(self, message: AgentMessage):
-        """Fallback for unhandled message types"""
-        pass
 ```
 
 ### Agent Characteristics
@@ -893,7 +870,6 @@ class MyAgent(Agent):
 - **Self-contained**: Only needs agent ID and Redis URL
 - **Optional MAS Service**: Service is for monitoring, not required for messaging
 - **Simple lifecycle**: Single `await agent.start()` call
-- **Direct messaging**: Peer-to-peer communication
 - **Auto-persisted state**: Automatic state management
 - **Minimal code**: ~200 lines per component
 

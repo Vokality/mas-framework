@@ -37,8 +37,7 @@ A multi-agent system consists of multiple autonomous software agents that:
 
 ### Key Features
 
-- **Peer-to-Peer Messaging**: Agents communicate directly via Redis pub/sub (default mode)
-- **Gateway Mode**: Enterprise-grade routing with security and compliance (optional)
+- **Gateway Messaging**: Centralized routing with security and compliance
 - **Agent Discovery**: Find agents by their capabilities
 - **Auto-Persisted State**: Agent state automatically saved to Redis
 - **Request-Response**: Built-in support for synchronous request-response patterns
@@ -158,29 +157,26 @@ cd examples/chemistry_tutoring
 
 ### Minimal Example
 
-Here's the simplest possible agent:
+Here's a simple agent using a decorator-based handler:
 
 ```python
 import asyncio
+from pydantic import BaseModel
 from mas import Agent, AgentMessage
 
+class HelloRequest(BaseModel):
+    text: str
+
 class HelloAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        """Handle incoming messages"""
-        print(f"Received: {message.data}")
+    @Agent.on("hello.message", model=HelloRequest)
+    async def handle_hello(self, message: AgentMessage, payload: HelloRequest):
+        print(f"Received: {payload.text}")
 
 async def main():
-    # Create and start agent
     agent = HelloAgent("hello_agent", capabilities=["greeting"])
     await agent.start()
-    
-    # Send a message to another agent
-    await agent.send("other_agent", {"text": "Hello, world!"})
-    
-    # Keep running for 60 seconds
+    await agent.send("other_agent", "hello.message", {"text": "Hello, world!"})
     await asyncio.sleep(60)
-    
-    # Stop the agent
     await agent.stop()
 
 if __name__ == "__main__":
@@ -192,50 +188,38 @@ if __name__ == "__main__":
 Let's create two agents that talk to each other:
 
 ```python
-import asyncio
+import asyncio, time
+from pydantic import BaseModel
 from mas import Agent, AgentMessage
+
+class Greeting(BaseModel):
+    greeting: str
+    timestamp: float
+
+class Reply(BaseModel):
+    reply: str
+    received_at: float
 
 class SenderAgent(Agent):
     async def on_start(self):
-        """Called when agent starts"""
         print(f"{self.id} is ready!")
-        
-        # Discover the receiver
         agents = await self.discover(capabilities=["receiver"])
         if agents:
             receiver_id = agents[0]["id"]
-            print(f"Found receiver: {receiver_id}")
-            
-            # Send a message
-            await self.send(receiver_id, {
-                "greeting": "Hello from sender!",
-                "timestamp": time.time()
-            })
+            await self.send(receiver_id, "greeting.message", Greeting(greeting="Hello from sender!", timestamp=time.time()).model_dump())
 
 class ReceiverAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        """Handle incoming messages"""
-        print(f"Received from {message.sender_id}: {message.data}")
-        
-        # Send a reply with message type
-        await self.send(message.sender_id, "greeting.reply", {
-            "reply": "Hello back!",
-            "received_at": time.time()
-        })
+    @Agent.on("greeting.message", model=Greeting)
+    async def handle_greeting(self, message: AgentMessage, payload: Greeting):
+        print(f"Received from {message.sender_id}: {payload.greeting}")
+        await message.reply("greeting.reply", Reply(reply="Hello back!", received_at=time.time()).model_dump())
 
 async def main():
-    # Start receiver first
     receiver = ReceiverAgent("receiver_agent", capabilities=["receiver"])
     await receiver.start()
-    
-    # Start sender
     sender = SenderAgent("sender_agent", capabilities=["sender"])
     await sender.start()
-    
-    # Let them communicate
     await asyncio.sleep(5)
-    
-    # Stop both
     await sender.stop()
     await receiver.stop()
 
@@ -258,10 +242,6 @@ class MyAgent(Agent):
         """Called when agent stops - use for cleanup"""
         print("Agent stopping...")
         # Close connections, save final state, etc.
-    
-    async def on_message(self, message: AgentMessage):
-        """Called when message received - main message handler"""
-        print(f"Got message: {message.payload}")
 ```
 
 ---
@@ -390,31 +370,22 @@ Chain agents together for multi-step processing:
 ```python
 class StageOneAgent(Agent):
     """First stage of pipeline"""
-    async def on_message(self, message: AgentMessage):
-        # Process data
-        input_data = message.payload["data"]
+    @Agent.on("stage1.process")
+    async def handle_stage1(self, message: AgentMessage, payload: dict):
+        input_data = payload["data"]
         processed = self.stage_one_processing(input_data)
-        
-        # Send to next stage
         stage_two = await self.discover(capabilities=["stage_two"])
         if stage_two:
-            await self.send(stage_two[0]["id"], {
-                "data": processed,
-                "stage": 2
-            })
+            await self.send(stage_two[0]["id"], "stage2.process", {"data": processed, "stage": 2})
 
 class StageTwoAgent(Agent):
     """Second stage of pipeline"""
-    async def on_message(self, message: AgentMessage):
-        if message.payload.get("stage") == 2:
-            data = message.payload["data"]
+    @Agent.on("stage2.process")
+    async def handle_stage2(self, message: AgentMessage, payload: dict):
+        if payload.get("stage") == 2:
+            data = payload["data"]
             final_result = self.stage_two_processing(data)
-            
-            # Send to original requester or final destination
-            await self.send(message.sender_id, {
-                "result": final_result,
-                "completed": True
-            })
+            await message.reply("pipeline.complete", {"result": final_result, "completed": True})
 ```
 
 ---
@@ -550,14 +521,11 @@ class StatefulAgent(Agent):
             "counter": 0,
             "status": "active"
         })
-    
-    async def on_message(self, message: AgentMessage):
-        # Access state
+
+    @Agent.on("counter.increment")
+    async def handle_increment(self, message: AgentMessage, payload: None):
         current_count = self.state.counter if isinstance(self.state, MyAgentState) else int(self.state.get("counter", 0))
-        
-        # Update state
         await self.update_state({"counter": current_count + 1})
-        
         print(f"Processed {current_count + 1} messages")
 ```
 
@@ -599,17 +567,12 @@ class TypedAgent(Agent):
             state_model=MyAgentState,  # Use typed state
             **kwargs
         )
-    
-    async def on_message(self, message: AgentMessage):
-        # State is now typed!
-        self.state.counter += 1  # Type: int
-        self.state.items.append(message.payload["item"])  # Type: list[str]
-        
-        # Updates are validated by Pydantic
-        await self.update_state({
-            "counter": self.state.counter,
-            "items": self.state.items
-        })
+
+    @Agent.on("item.append")
+    async def handle_item(self, message: AgentMessage, payload: dict):
+        self.state.counter += 1
+        self.state.items.append(payload["item"])
+        await self.update_state({"counter": self.state.counter, "items": self.state.items})
 ```
 
 **Benefits of Typed State:**
@@ -634,72 +597,7 @@ await agent.reset_state()
 
 ---
 
-## Messaging Modes
-
-MAS Framework supports two messaging modes:
-
-### Comparison Table
-
-| Feature | Peer-to-Peer (Default) | Gateway Mode |
-|---------|------------------------|--------------|
-| **Latency** | <5ms | 10-20ms |
-| **Throughput** | 10,000+ msg/s | 2,000-5,000 msg/s |
-| **Delivery** | At-most-once | At-least-once |
-| **Authentication** | None | Token-based |
-| **Authorization** | None | RBAC |
-| **Rate Limiting** | None | Yes |
-| **DLP** | None | Yes |
-| **Audit Trail** | None | Complete |
-| **Use Case** | Dev/test, high-speed | Production, compliance |
-
----
-
-## Peer-to-Peer Mode (Default)
-
-### Overview
-
-In peer-to-peer mode:
-- Agents communicate directly via Redis pub/sub
-- No central message routing
-- Lowest latency and highest throughput
-- Suitable for development and high-performance scenarios
-
-### Usage
-
-P2P is the default mode, no configuration needed:
-
-```python
-agent = Agent("my_agent")
-await agent.start()
-
-# Messages go directly via Redis pub/sub
-await agent.send("target_agent", {"data": "hello"})
-```
-
-### Characteristics
-
-**Pros:**
-- ✅ Lowest latency (<5ms)
-- ✅ Highest throughput (10,000+ msg/s)
-- ✅ Simple setup
-- ✅ No additional infrastructure
-
-**Cons:**
-- ❌ No audit trail
-- ❌ No message persistence
-- ❌ No built-in security
-- ❌ At-most-once delivery only
-
-### When to Use P2P
-
-Use peer-to-peer mode when:
-- Building prototypes or MVP
-- Running in trusted environments
-- Latency is critical (e.g., real-time systems)
-- No compliance requirements
-- Simple agent-to-agent communication
-
----
+## Messaging
 
 ## Gateway Mode (Enterprise)
 
@@ -935,21 +833,7 @@ Gateway mode enables compliance with:
 
 ### Performance Considerations
 
-Gateway mode adds overhead:
-
-| Metric | P2P Mode | Gateway Mode |
-|--------|----------|--------------|
-| Latency (P50) | <5ms | 10-15ms |
-| Latency (P99) | <10ms | 50-80ms |
-| Throughput (single instance) | 10,000+ msg/s | 2,000-5,000 msg/s |
-| Throughput (clustered) | N/A | 6,000-9,000 msg/s |
-
-**Optimization tips:**
-- Use gateway for sensitive operations only
-- Cache authentication results
-- Batch operations when possible
-- Scale horizontally (multiple gateway instances)
-- Use async DLP for non-critical scanning
+The gateway adds security and reliability features that introduce modest overhead. Optimize by caching, batching, and horizontal scaling when needed.
 
 ---
 
@@ -963,37 +847,22 @@ Build hierarchical agent systems:
 # Coordinator agent
 class CoordinatorAgent(Agent):
     async def on_start(self):
-        # Discover workers
         self.workers = await self.discover(capabilities=["worker"])
         print(f"Found {len(self.workers)} workers")
-    
-    async def on_message(self, message: AgentMessage):
-        if message.payload.get("type") == "job":
-            # Distribute work to workers
-            job_data = message.payload["data"]
-            tasks = self.split_job(job_data)
-            
-            for i, task in enumerate(tasks):
-                worker = self.workers[i % len(self.workers)]
-                await self.send(worker["id"], {
-                    "type": "task",
-                    "task": task,
-                    "job_id": message.payload["job_id"]
-                })
+
+    @Agent.on("job.submit")
+    async def handle_job(self, message: AgentMessage, payload: dict):
+        tasks = self.split_job(payload["data"])
+        for i, task in enumerate(tasks):
+            worker = self.workers[i % len(self.workers)]
+            await self.send(worker["id"], "task.process", {"task": task, "job_id": payload["job_id"]})
 
 # Worker agent
 class WorkerAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        if message.payload.get("type") == "task":
-            task = message.payload["task"]
-            result = await self.process_task(task)
-            
-            # Send result back to coordinator
-            await self.send(message.sender_id, {
-                "type": "result",
-                "result": result,
-                "job_id": message.payload["job_id"]
-            })
+    @Agent.on("task.process")
+    async def handle_task(self, message: AgentMessage, payload: dict):
+        result = await self.process_task(payload["task"])
+        await message.reply("task.result", {"result": result, "job_id": payload["job_id"]})
 ```
 
 ### Consensus Patterns
@@ -1024,23 +893,17 @@ class VotingAgent(Agent):
         # Tally results
         return self.tally_votes(proposal_id)
     
-    async def on_message(self, message: AgentMessage):
-        if message.payload.get("type") == "vote_request":
-            # Evaluate proposal and cast vote
-            vote = await self.evaluate_proposal(message.payload["proposal"])
-            
-            await self.send(message.sender_id, {
-                "type": "vote",
-                "proposal_id": message.payload["proposal_id"],
-                "vote": vote  # "yes" or "no"
-            })
-        
-        elif message.payload.get("type") == "vote":
-            # Record vote
-            proposal_id = message.payload["proposal_id"]
-            if proposal_id not in self.votes:
-                self.votes[proposal_id] = []
-            self.votes[proposal_id].append(message.payload["vote"])
+    @Agent.on("vote.request")
+    async def handle_vote_request(self, message: AgentMessage, payload: dict):
+        vote = await self.evaluate_proposal(payload["proposal"])
+        await message.reply("vote.response", {"proposal_id": payload["proposal_id"], "vote": vote})
+    
+    @Agent.on("vote.response")
+    async def record_vote(self, message: AgentMessage, payload: dict):
+        proposal_id = payload["proposal_id"]
+        if proposal_id not in self.votes:
+            self.votes[proposal_id] = []
+        self.votes[proposal_id].append(payload["vote"])
 ```
 
 ### Error Handling and Retries
@@ -1049,54 +912,36 @@ Robust error handling:
 
 ```python
 class ResilientAgent(Agent):
-    async def send_with_retry(
-        self,
-        target_id: str,
-        payload: dict,
-        max_retries: int = 3,
-        retry_delay: float = 1.0
-    ):
+    async def send_with_retry(self, target_id: str, message_type: str, payload: dict, max_retries: int = 3, retry_delay: float = 1.0):
         """Send message with automatic retry"""
         for attempt in range(max_retries):
             try:
-                await self.send(target_id, payload)
+                await self.send(target_id, message_type, payload)
                 return  # Success
             except Exception as e:
                 if attempt == max_retries - 1:
-                    # Last attempt failed
                     logger.error(f"Failed to send after {max_retries} attempts: {e}")
                     raise
-                else:
-                    # Wait before retry
-                    await asyncio.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
-    
-    async def request_with_timeout(
-        self,
-        target_id: str,
-        payload: dict,
-        timeout: float = 10.0
-    ):
+                await asyncio.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+
+    async def request_with_timeout(self, target_id: str, message_type: str, payload: dict, timeout: float = 10.0):
         """Request with timeout handling"""
         try:
-            response = await self.request(target_id, payload, timeout=timeout)
+            response = await self.request(target_id, message_type, payload, timeout=timeout)
             return response
         except asyncio.TimeoutError:
             logger.warning(f"Request to {target_id} timed out")
-            # Fallback behavior
             return None
-    
-    async def on_message(self, message: AgentMessage):
+
+    @Agent.on("task.process", model=TaskRequest)
+    async def handle_task(self, message: AgentMessage, payload: TaskRequest):
         try:
-            await self.process_message(message)
+            await self.process_task(payload)
+            await message.reply("task.complete", {"status": "done"})
         except Exception as e:
             logger.error(f"Error processing message: {e}")
-            
-            # Send error response if reply expected
             if message.expects_reply:
-                await message.reply({
-                    "error": str(e),
-                    "error_type": type(e).__name__
-                })
+                await message.reply("task.error", {"error": "Internal error"})
 ```
 
 ### Health Checks
@@ -1118,20 +963,16 @@ class MonitorableAgent(Agent):
             "messages_processed": self.messages_processed
         }
     
-    async def on_message(self, message: AgentMessage):
+    @Agent.on("health_check.request")
+    async def handle_health(self, message: AgentMessage, payload: None):
         self.last_activity = time.time()
         self.messages_processed += 1
-        
-        # Respond to health checks
-        if message.payload.get("type") == "health_check":
-            await message.reply({
-                "status": "healthy",
-                "uptime": time.time() - self.start_time,
-                "messages_processed": self.messages_processed,
-                "last_activity": self.last_activity
-            })
-        else:
-            await self.process_message(message)
+        await message.reply("health_check.response", {
+            "status": "healthy",
+            "uptime": time.time() - self.start_time,
+            "messages_processed": self.messages_processed,
+            "last_activity": self.last_activity
+        })
 
 # Health checker agent
 class HealthChecker(Agent):
@@ -1139,10 +980,11 @@ class HealthChecker(Agent):
         try:
             response = await self.request(
                 agent_id,
-                {"type": "health_check"},
+                "health_check.request",
+                {},
                 timeout=5.0
             )
-            return response.payload
+            return response.data
         except asyncio.TimeoutError:
             return {"status": "unhealthy", "reason": "timeout"}
         except Exception as e:
@@ -1239,23 +1081,10 @@ await agent.send("worker", {
 Always validate message structure:
 
 ```python
-async def on_message(self, message: AgentMessage):
-    # Validate message type
-    msg_type = message.payload.get("type")
-    if not msg_type:
-        logger.warning(f"Message missing type from {message.sender_id}")
-        return
-    
-    # Route by type
-    if msg_type == "task":
-        if "task_data" not in message.payload:
-            logger.error("Task message missing task_data")
-            return
-        await self.handle_task(message)
-    elif msg_type == "query":
-        await self.handle_query(message)
-    else:
-        logger.warning(f"Unknown message type: {msg_type}")
+@Agent.on("task.process", model=TaskRequest)
+async def handle_task(self, message: AgentMessage, payload: TaskRequest):
+    # Validated payload; process task
+    await message.reply("task.complete", {"status": "done"})
 ```
 
 ### State Management
@@ -1299,21 +1128,20 @@ class MyAgent(Agent):
 
 ### Error Handling
 
-#### Always Handle on_message Errors
-Never let exceptions escape:
+#### Handler Error Handling
+Never let exceptions escape your decorator-based handlers:
 
 ```python
-async def on_message(self, message: AgentMessage):
+@Agent.on("task.process", model=TaskRequest)
+async def handle_task(self, message: AgentMessage, payload: TaskRequest):
     try:
-        await self.process_message(message)
-    except ValueError as e:
-        logger.error(f"Invalid message format: {e}")
-        if message.expects_reply:
-            await message.reply({"error": "Invalid format"})
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        if message.expects_reply:
-            await message.reply({"error": "Internal error"})
+        await self.process_task(payload)
+        await message.reply("task.complete", {"status": "done"})
+    except ValueError:
+        await message.reply("task.error", {"error": "Invalid format"})
+    except Exception:
+        logger.exception("Unexpected error")
+        await message.reply("task.error", {"error": "Internal error"})
 ```
 
 #### Use Timeouts
@@ -1839,16 +1667,13 @@ async def send_with_backoff(self, target_id: str, payload: dict):
 # 1. Check network latency to Redis
 # Use redis-cli --latency
 
-# 2. Use P2P mode instead of gateway
-agent = Agent("my_agent", use_gateway=False)
-
-# 3. Check message size
+# 2. Check message size
 # Large payloads slow down serialization
 import sys
 payload_size = sys.getsizeof(json.dumps(payload))
 print(f"Payload size: {payload_size} bytes")
 
-# 4. Check CPU usage
+# 3. Check CPU usage
 # Gateway DLP scanning is CPU-intensive
 # Consider disabling for non-sensitive messages
 ```
@@ -2045,21 +1870,8 @@ class MyAgent(Agent):
         # Close connections, save data, etc.
 ```
 
-##### `async on_message(message: AgentMessage) -> None`
-Called for unhandled message types (fallback handler). Override to handle messages that don't have decorator-based handlers.
-
-```python
-class MyAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        print(f"Received unhandled message type: {message.message_type}")
-        print(f"Data: {message.data}")
-        # Process message
-```
-
-**Parameters:**
-- `message`: Received AgentMessage
-
-**Note:** For better type safety, use decorator-based handlers with `@Agent.on()` instead.
+##### Handler Registration
+Register handlers exclusively with the `@Agent.on()` decorator.
 
 ##### Decorator-Based Message Handlers
 
@@ -2099,7 +1911,6 @@ class MyAgent(Agent):
 - Automatic payload validation
 - Type safety with IDE support
 - Clean separation of concerns
-- Fallback to `on_message()` for unhandled types
 
 ##### `get_metadata() -> dict`
 Override to provide custom metadata for discovery.
