@@ -182,7 +182,7 @@ class AuthorizationManager:
         """
         target_list = [targets] if isinstance(targets, str) else list(targets)
         self._pending_operations.append(
-            {"type": "allow", "sender": sender, "targets": target_list}
+            AllowOperation(type="allow", sender=sender, targets=target_list)
         )
         return self
 
@@ -204,7 +204,7 @@ class AuthorizationManager:
                 .apply())
         """
         self._pending_operations.append(
-            {"type": "block", "sender": sender, "target": target}
+            BlockOperation(type="block", sender=sender, target=target)
         )
         return self
 
@@ -236,12 +236,12 @@ class AuthorizationManager:
         else:
             permission_list = list(permissions)
         self._pending_operations.append(
-            {
-                "type": "create_role",
-                "role_name": role_name,
-                "description": description,
-                "permissions": permission_list,
-            }
+            CreateRoleOperation(
+                type="create_role",
+                role_name=role_name,
+                description=description,
+                permissions=permission_list,
+            )
         )
         return self
 
@@ -264,7 +264,11 @@ class AuthorizationManager:
                 .apply())
         """
         self._pending_operations.append(
-            {"type": "assign_role", "agent_id": agent_id, "role_name": role_name}
+            AssignRoleOperation(
+                type="assign_role",
+                agent_id=agent_id,
+                role_name=role_name,
+            )
         )
         return self
 

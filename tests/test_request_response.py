@@ -5,6 +5,8 @@ from typing import override
 import pytest
 from pydantic import BaseModel
 from mas import Agent, AgentMessage
+from mas.gateway import GatewayService
+from mas.gateway.config import GatewaySettings, FeaturesSettings
 
 
 class ResponderState(BaseModel):
@@ -63,8 +65,22 @@ async def test_basic_request_response(mas_service):
     responder = ResponderAgent("responder_1", "redis://localhost:6379")
     requester = RequesterAgent("requester_1", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Make a request
     response = await requester.request(
@@ -79,6 +95,7 @@ async def test_basic_request_response(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -87,8 +104,22 @@ async def test_concurrent_requests(mas_service):
     responder = ResponderAgent("responder_2", "redis://localhost:6379")
     requester = RequesterAgent("requester_2", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Make multiple concurrent requests
     tasks = [
@@ -113,6 +144,7 @@ async def test_concurrent_requests(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -135,8 +167,22 @@ async def test_request_timeout(mas_service):
     slow_responder = SlowResponderAgent("slow_responder", "redis://localhost:6379")
     requester = RequesterAgent("requester_3", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await slow_responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, slow_responder.id)
 
     # Request should timeout
     with pytest.raises(asyncio.TimeoutError):
@@ -149,6 +195,7 @@ async def test_request_timeout(mas_service):
 
     await requester.stop()
     await slow_responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -175,8 +222,22 @@ async def test_reply_without_request(mas_service):
         "sender", capabilities=["sender"], redis_url="redis://localhost:6379"
     )
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await bad_responder.start()
     await sender.start()
+
+    await gateway.auth_manager().allow_bidirectional(sender.id, bad_responder.id)
 
     # Send regular message (not a request)
     await sender.send(bad_responder.id, "test.message", {"data": "test"})
@@ -186,6 +247,7 @@ async def test_reply_without_request(mas_service):
 
     await sender.stop()
     await bad_responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -194,8 +256,22 @@ async def test_request_response_preserves_data(mas_service):
     responder = ResponderAgent("responder_4", "redis://localhost:6379")
     requester = RequesterAgent("requester_4", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Send complex payload
     payload = {
@@ -221,3 +297,4 @@ async def test_request_response_preserves_data(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()

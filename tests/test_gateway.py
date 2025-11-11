@@ -445,14 +445,11 @@ class TestAgentWithGateway:
 
         try:
             # Create agents
-            sender = Agent("agent_a", use_gateway=True)
+            sender = Agent("agent_a")
             receiver = Agent("agent_b")
 
             await sender.start()
             await receiver.start()
-
-            # Configure sender to use gateway
-            sender.set_gateway(gateway)
 
             # Grant permissions
             await gateway.authz.set_permissions(

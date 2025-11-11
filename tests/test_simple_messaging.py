@@ -4,6 +4,8 @@ import asyncio
 from typing import override
 import pytest
 from mas import Agent, AgentMessage
+from mas.gateway import GatewayService
+from mas.gateway.config import GatewaySettings, FeaturesSettings
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
@@ -27,12 +29,27 @@ class ReceiverAgent(Agent):
 @pytest.mark.asyncio
 async def test_peer_to_peer_messaging(mas_service):
     """Test direct peer-to-peer messaging between agents."""
+    # Start gateway (streams, signing disabled for tests)
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
     # Create agents
     agent_a = ReceiverAgent("agent_a", capabilities=["send"])
     agent_b = ReceiverAgent("agent_b", capabilities=["receive"])
 
     await agent_a.start()
     await agent_b.start()
+
+    # Allow A <-> B
+    await gateway.auth_manager().allow_bidirectional(agent_a.id, agent_b.id)
 
     # Send message from A to B
     await agent_a.send("agent_b", "test.message", {"test": "data", "number": 42})
@@ -51,6 +68,7 @@ async def test_peer_to_peer_messaging(mas_service):
     # Cleanup
     await agent_a.stop()
     await agent_b.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -59,8 +77,22 @@ async def test_bidirectional_messaging(mas_service):
     agent_a = ReceiverAgent("agent_a", capabilities=["chat"])
     agent_b = ReceiverAgent("agent_b", capabilities=["chat"])
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await agent_a.start()
     await agent_b.start()
+
+    await gateway.auth_manager().allow_bidirectional(agent_a.id, agent_b.id)
 
     # A sends to B
     await agent_a.send("agent_b", "chat.message", {"from_a": "hello"})
@@ -80,6 +112,7 @@ async def test_bidirectional_messaging(mas_service):
 
     await agent_a.stop()
     await agent_b.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -160,8 +193,22 @@ async def test_multiple_messages(mas_service):
     agent_a = ReceiverAgent("sender", capabilities=["send"])
     agent_b = ReceiverAgent("receiver", capabilities=["receive"])
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await agent_a.start()
     await agent_b.start()
+
+    await gateway.auth_manager().allow_bidirectional(agent_a.id, agent_b.id)
 
     # Send 10 messages rapidly
     num_messages = 10
@@ -180,3 +227,4 @@ async def test_multiple_messages(mas_service):
 
     await agent_a.stop()
     await agent_b.stop()
+    await gateway.stop()

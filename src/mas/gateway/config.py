@@ -171,6 +171,41 @@ class GatewaySettings(BaseSettings):
     message_signing: MessageSigningSettings = Field(
         default_factory=MessageSigningSettings
     )
+    # Ingress/delivery/ACL settings for streams-based gateway mode
+    ingress_stream: str = Field(
+        default="mas.gateway.ingress", description="Inbound stream for agent messages"
+    )
+    ingress_group: str = Field(
+        default="gateway", description="Consumer group name for ingress processing"
+    )
+    dlq_stream: str = Field(
+        default="mas.gateway.dlq", description="DLQ stream for rejected/failed messages"
+    )
+    agent_stream_prefix: str = Field(
+        default="agent.stream:",
+        description="Prefix for per-agent delivery streams (agent.stream:{id})",
+    )
+    delivery_max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description="Max delivery attempts before moving to delivery DLQ",
+    )
+    delivery_backoff_ms: int = Field(
+        default=200, ge=0, description="Base backoff for reclaims in milliseconds"
+    )
+    delivery_reclaim_idle_ms: int = Field(
+        default=30_000,
+        ge=100,
+        description="Idle time before reclaiming pending deliveries (ms)",
+    )
+    acl_provision_on_register: bool = Field(
+        default=False,
+        description="Provision Redis ACLs per agent at registration (requires Redis 6+)",
+    )
+    acl_teardown_on_stop: bool = Field(
+        default=False,
+        description="Tear down provisioned Redis ACL users on gateway stop",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="GATEWAY_",

@@ -26,6 +26,10 @@ from .state import StateManager, StateType
 from .protocol import EnvelopeMessage, MessageMeta
 from .redis_client import create_redis_client
 from .redis_types import AsyncRedisProtocol, PubSubProtocol
+import os
+import time
+import hmac
+import hashlib
 
 if TYPE_CHECKING:
     from .gateway import GatewayService
@@ -41,17 +45,17 @@ MutableJSONMapping = MutableMapping[str, Any]
 
 class Agent(Generic[StateType]):
     """
-    Simplified Agent that communicates peer-to-peer via Redis.
+    Agent that communicates via the Gateway using Redis Streams.
 
     Key features:
     - Self-contained (only needs Redis URL)
-    - Peer-to-peer messaging (no central routing)
+    - Gateway-mediated messaging (central routing and policy enforcement)
     - Auto-persisted state to Redis
     - Simple discovery by capabilities
     - Automatic heartbeat monitoring
     - Strongly-typed state via generics
 
-    Usage with typed state:
+    Usage with typed state and decorator-based handlers:
         class MyState(BaseModel):
             counter: int = 0
 
@@ -59,21 +63,11 @@ class Agent(Generic[StateType]):
             def __init__(self, agent_id: str, redis_url: str):
                 super().__init__(agent_id, state_model=MyState, redis_url=redis_url)
 
-            async def on_message(self, message: AgentMessage):
+            @Agent.on("counter.increment")
+            async def handle_increment(self, message: AgentMessage, payload: None):
                 # self.state is strongly typed as MyState
-                print(f"Counter: {self.state.counter}")
-                await self.update_state({"counter": self.state.counter + 1})
-
-    Usage with dict state (backward compatible):
-        class MyAgent(Agent[dict[str, Any]]):
-            def __init__(self, agent_id: str, redis_url: str):
-                super().__init__(agent_id, redis_url=redis_url)
-                # state_model defaults to None, so state is dict
-
-            async def on_message(self, message: AgentMessage):
-                # self.state is typed as dict
-                counter = self.state.get("counter", 0)
-                await self.update_state({"counter": counter + 1})
+                self.state.counter += 1
+                await self.update_state({"counter": self.state.counter})
     """
 
     def __init__(
@@ -160,14 +154,20 @@ class Agent(Generic[StateType]):
         )
         await self._state_manager.load()
 
-        # Subscribe to agent's channel
-        self._pubsub = redis_client.pubsub()
-        await self._pubsub.subscribe(f"agent.{self.id}")
+        # Ensure delivery stream consumer group exists and start consumer loop
+        delivery_stream = f"agent.stream:{self.id}"
+        try:
+            await redis_client.xgroup_create(
+                delivery_stream, "agents", id="$", mkstream=True
+            )
+        except Exception as e:
+            if "BUSYGROUP" not in str(e):
+                raise
 
         self._running = True
 
         # Start background tasks
-        self._tasks.append(asyncio.create_task(self._message_loop()))
+        self._tasks.append(asyncio.create_task(self._stream_loop()))
         self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
 
         # Publish registration event
@@ -219,9 +219,7 @@ class Agent(Generic[StateType]):
         if self._registry:
             await self._registry.deregister(self.id)
 
-        if self._pubsub:
-            await self._pubsub.unsubscribe()
-            await self._pubsub.aclose()
+        # No pubsub to close in streams mode
 
         # Note: Don't stop gateway - it's shared across agents
         # Gateway lifecycle is managed externally
@@ -233,10 +231,7 @@ class Agent(Generic[StateType]):
 
     def set_gateway(self, gateway: "GatewayService") -> None:
         """
-        Set gateway instance for message routing.
-
-        Args:
-            gateway: GatewayService instance to use for message routing
+        Retained for backward compatibility; no-op in streams-only mode.
         """
         self._gateway = gateway
 
@@ -246,7 +241,7 @@ class Agent(Generic[StateType]):
         """
         Send message to target agent.
 
-        Routes through gateway if use_gateway=True, otherwise sends P2P.
+        Always routes through the gateway (Redis Streams ingress).
 
         Args:
             target_id: Target agent identifier
@@ -265,44 +260,44 @@ class Agent(Generic[StateType]):
         await self._send_envelope(message)
 
     async def _send_envelope(self, message: AgentMessage) -> None:
-        """Route an envelope via gateway or P2P."""
+        """Route an envelope via the gateway ingress stream."""
         if not self._redis:
             raise RuntimeError("Agent not started")
 
-        if self.use_gateway:
-            await self._transport_ready.wait()
-            if not self._gateway:
-                raise RuntimeError(
-                    "Gateway not configured. Use set_gateway() to configure gateway instance."
-                )
-            if not self._token:
-                raise RuntimeError("No token available for gateway authentication")
-            result = await self._gateway.handle_message(message, self._token)
-            if not result.success:
-                raise RuntimeError(
-                    f"Gateway rejected message: {result.decision} - {result.message}"
-                )
-            logger.debug(
-                "Message sent via gateway",
-                extra={
-                    "from": self.id,
-                    "to": message.target_id,
-                    "message_id": message.message_id,
-                    "latency_ms": result.latency_ms,
-                },
-            )
-        else:
-            await self._redis.publish(
-                f"agent.{message.target_id}", message.model_dump_json()
-            )
-            logger.debug(
-                "Message sent (P2P)",
-                extra={
-                    "from": self.id,
-                    "to": message.target_id,
-                    "message_id": message.message_id,
-                },
-            )
+        # Always route via Redis Streams ingress
+        await self._transport_ready.wait()
+        if not self._redis:
+            raise RuntimeError("Agent not started")
+        if not self._token:
+            raise RuntimeError("No token available for gateway authentication")
+        signing_key = os.getenv("SIGNING_KEY")
+        ts = str(int(time.time()))
+        nonce = str(uuid.uuid4())
+        envelope_json = message.model_dump_json()
+        fields: dict[str, str] = {
+            "envelope": envelope_json,
+            "agent_id": self.id,
+            "token": self._token,
+            "timestamp": ts,
+            "nonce": nonce,
+        }
+        if signing_key:
+            mac = hmac.new(
+                signing_key.encode(),
+                f"{envelope_json}.{ts}.{nonce}".encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            fields["signature"] = mac
+            fields["alg"] = "HMAC-SHA256"
+        await self._redis.xadd("mas.gateway.ingress", fields)
+        logger.debug(
+            "Message enqueued to gateway ingress",
+            extra={
+                "from": self.id,
+                "to": message.target_id,
+                "message_id": message.message_id,
+            },
+        )
 
     async def request(
         self,
@@ -473,46 +468,57 @@ class Agent(Generic[StateType]):
 
         await self._state_manager.reset()
 
-    async def _message_loop(self) -> None:
-        """Listen for incoming messages."""
-        if not self._pubsub:
+    async def _stream_loop(self) -> None:
+        """Consume incoming messages from the agent's delivery stream."""
+        if not self._redis:
             return
-
+        stream = f"agent.stream:{self.id}"
+        group = "agents"
+        consumer = f"{self.id}-1"
         try:
-            async for message in self._pubsub.listen():
-                if not self._running:
-                    break
-
-                if message.get("type") != "message":
+            while self._running:
+                items = await self._redis.xreadgroup(
+                    group,
+                    consumer,
+                    streams={stream: ">"},
+                    count=50,
+                    block=1000,
+                )
+                if not items:
                     continue
+                for _, messages in items:
+                    for entry_id, fields in messages:
+                        try:
+                            data_json = fields.get("envelope", "")
+                            if not data_json:
+                                await self._redis.xack(stream, group, entry_id)
+                                continue
+                            msg = AgentMessage.model_validate_json(data_json)
+                            msg.attach_agent(self)
 
-                try:
-                    msg_data = cast(str, message["data"])
-                    msg = AgentMessage.model_validate_json(msg_data)
-                    # Attach agent reference for reply() method
-                    msg.attach_agent(self)
+                            # Replies resolve pending requests
+                            if msg.meta.is_reply:
+                                correlation_id = msg.meta.correlation_id
+                                if (
+                                    correlation_id
+                                    and correlation_id in self._pending_requests
+                                ):
+                                    future = self._pending_requests.pop(correlation_id)
+                                    if not future.done():
+                                        future.set_result(msg)
+                                    await self._redis.xack(stream, group, entry_id)
+                                    continue
 
-                    # Check if this is a reply to a pending request
-                    if msg.meta.is_reply:
-                        correlation_id = msg.meta.correlation_id
-                        if correlation_id and correlation_id in self._pending_requests:
-                            # Resolve the pending request future
-                            future = self._pending_requests.pop(correlation_id)
-                            if not future.done():
-                                future.set_result(msg)
-                            continue  # Don't call on_message for replies
-
-                    # For all other messages, spawn a task to handle concurrently
-                    # This allows the agent to process multiple messages at once
-                    # without blocking the message loop
-                    asyncio.create_task(self._handle_message_with_error_handling(msg))
-
-                except Exception as e:
-                    logger.error(
-                        "Failed to process message",
-                        exc_info=e,
-                        extra={"agent_id": self.id},
-                    )
+                            asyncio.create_task(
+                                self._handle_message_with_error_handling(msg)
+                            )
+                            await self._redis.xack(stream, group, entry_id)
+                        except Exception as e:
+                            logger.error(
+                                "Failed to process stream message",
+                                exc_info=e,
+                                extra={"agent_id": self.id},
+                            )
         except asyncio.CancelledError:
             pass
 

@@ -17,58 +17,49 @@
 
 ## Overview
 
-MAS Framework is a lightweight, peer-to-peer multi-agent system built on Redis. Agents communicate directly with each other using Redis pub/sub channels, without routing through a central server.
+MAS Framework uses a gateway-mediated architecture built on Redis Streams. Agents send messages to a shared gateway ingress stream where centralized security, policy, and routing are applied. The gateway then delivers messages to per-agent delivery streams.
 
-### Architecture: Peer-to-Peer Messaging
+### Architecture: Gateway-Mediated Messaging
 
 ```
-Agent A → Redis Pub/Sub (channel: agent.B) → Agent B
-              (direct, no routing)
+Agent A → Gateway Ingress (mas.gateway.ingress) → Gateway (auth, authz, DLP, rate limit, audit)
+         ↓
+    Agent B Delivery Stream (agent.stream:agent_b) → Agent B (consumer group: agents)
 ```
 
 This architectural approach provides:
-- **High throughput**: 10,000+ messages/second
-- **Low latency**: <5ms median latency
-- **No single point of failure**: Agents communicate directly
-- **Linear scalability**: Adding agents doesn't create bottlenecks
+- **Centralized controls**: Authentication, authorization (RBAC/ACL), DLP, rate limiting, audit logging
+- **Reliable delivery**: At-least-once via Redis Streams with consumer groups
+- **Operational visibility**: Metrics and audit trail for all messages
 
 ## Design Philosophy
 
 The framework is built on five core principles:
 
-### 1. Peer-to-Peer Communication
-Agents publish messages directly to target agent channels. The MAS Service never touches message content.
+### 1. Gateway-Mediated Communication
+Agents enqueue messages into a Redis Stream ingress for the gateway. The gateway validates, authorizes, audits, and delivers to the target agent’s delivery stream.
 
 ### 2. Minimal Central Service
-The MAS Service only handles:
+The MAS Service handles:
 - Agent registration/deregistration
 - Discovery queries
 - Health monitoring
-
-It does NOT:
-- Route messages
-- Store message content
-- Act as a message broker
+and works alongside the Gateway Service, which performs message routing and enforcement.
 
 ### 3. Auto-Persisted State
 Agent state automatically persists to Redis, surviving restarts without manual save/load logic.
 
 ### 4. Minimal Bootstrapping
-3 lines of code to create and run an agent:
-```python
-agent = Agent("my_agent", capabilities=["chat"])
-await agent.start()
-await agent.send("other_agent", "greeting.message", {"hello": "world"})
-```
+Create and run an agent with centralized routing and typed handlers.
 
-### 5. Redis as Single Dependency
-All functionality (messaging, state, discovery, health) uses Redis primitives: pub/sub, hashes, strings with TTL.
+### 5. Redis Primitives
+Core functionality uses Redis primitives: streams (messaging), hashes (state), strings with TTL (heartbeats), and pub/sub for system events.
 
 ## Core Components
 
 ### 1. Agent (`src/mas/agent.py`)
 
-**Purpose**: Self-contained agent that communicates peer-to-peer.
+**Purpose**: Agent that communicates via the gateway using Redis Streams.
 
 **Key Responsibilities**:
 - Subscribe to own Redis channel: `agent.{agent_id}`
@@ -82,11 +73,10 @@ All functionality (messaging, state, discovery, health) uses Redis primitives: p
 ```python
 Agent
 ├── _redis: Redis           # Redis connection
-├── _pubsub: PubSub        # Message subscription
 ├── _registry: Registry     # Registration handler
 ├── _state_manager: State   # State persistence
 ├── _tasks: [Task]         # Background tasks
-│   ├── _message_loop()    # Listen for incoming messages
+│   ├── _stream_loop()     # Consume per-agent delivery stream (consumer group)
 │   └── _heartbeat_loop()  # Send periodic heartbeats
 └── _running: bool         # Lifecycle flag
 ```
@@ -97,9 +87,9 @@ start()
   ├─→ Connect to Redis
   ├─→ Register with registry
   ├─→ Load state from Redis
-  ├─→ Subscribe to agent.{id} channel
+  ├─→ Ensure delivery stream and consumer group
   ├─→ Start background tasks
-  │   ├─→ _message_loop (listen for messages)
+  │   ├─→ _stream_loop (listen for messages via XREADGROUP)
   │   └─→ _heartbeat_loop (every 30s)
   ├─→ Publish REGISTER to mas.system
   └─→ Call on_start() hook
@@ -109,29 +99,15 @@ stop()
   ├─→ Publish DEREGISTER to mas.system
   ├─→ Cancel background tasks
   ├─→ Deregister from registry
-  ├─→ Unsubscribe from pub/sub
   └─→ Close Redis connection
 ```
 
-**Message Loop** (`_message_loop`):
+**Stream Consumer Loop**:
 ```python
-async def _message_loop(self):
-    async for message in self._pubsub.listen():
-        if message["type"] == "message":
-            msg = AgentMessage.model_validate_json(message["data"])
-            msg.attach_agent(self)  # For reply() convenience
-            
-            # Check if reply to pending request
-            if msg.meta.is_reply:
-                correlation_id = msg.meta.correlation_id
-                if correlation_id in self._pending_requests:
-                    future = self._pending_requests.pop(correlation_id)
-                    future.set_result(msg)
-                    continue
-            
-            # Try decorator-based dispatch first
-            await self._dispatch_typed(msg)
-            # Falls back to on_message() if no handler registered
+async def _stream_loop(self):
+    # Consume from agent.stream:{agent_id} with XREADGROUP
+    # Dispatch to @Agent.on handlers with validated payloads
+    # Resolve replies via correlation metadata
 ```
 
 **Heartbeat Loop** (`_heartbeat_loop`):
@@ -302,38 +278,27 @@ class MyAgent(Agent):
     async def handle_status(self, message: AgentMessage, payload: None):
         """Handler without payload model"""
         await message.reply("status.response", {"status": "healthy"})
-    
-    async def on_message(self, message: AgentMessage):
-        """Fallback for unhandled message types"""
-        pass
 ```
 
 ## Message Flow
 
-### Peer-to-Peer Send
+### Gateway Send and Delivery (Streams)
 
 ```
 1. Agent A calls send("agent_b", "task.message", {"data": "hello"})
    ↓
-2. Create EnvelopeMessage
-   sender_id: "agent_a"
-   target_id: "agent_b"
-   message_type: "task.message"
-   data: {"data": "hello"}
-   meta: MessageMeta(...)
+2. Creates EnvelopeMessage (message_type, data, meta with correlation if needed)
    ↓
-3. Publish to Redis channel: agent.agent_b
-   await redis.publish("agent.agent_b", message.model_dump_json())
+3. XADD to gateway ingress stream: mas.gateway.ingress
+   fields: envelope, agent_id, token, timestamp, nonce, [signature]
    ↓
-4. Agent B's pubsub listener receives
+4. Gateway validates (auth, authz, DLP, rate limits), audits, and routes
    ↓
-5. Agent B's _message_loop parses message
+5. XADD to Agent B delivery stream: agent.stream:agent_b
    ↓
-6. Agent B's _dispatch_typed() checks for registered handlers
+6. Agent B's _stream_loop (XREADGROUP) receives and dispatches to @Agent.on()
    ↓
-7a. If handler found: Call @Agent.on() handler with validated payload
-   OR
-7b. If no handler: Call on_message() fallback
+7. For requests, Agent B replies using msg.reply() which XADDs back to Agent A stream
 ```
 
 ### System Messages (Registration)
@@ -526,7 +491,8 @@ t=120s: MAS Service scan detects expired heartbeat
 | `agent:{id}` | Hash | Agent metadata | None |
 | `agent:{id}:heartbeat` | String | Last heartbeat timestamp | 60s |
 | `agent.state:{id}` | Hash | Agent state | None |
-| `agent.{id}` | Pub/Sub Channel | Agent message channel | N/A |
+| `agent.stream:{id}` | Stream | Per-agent delivery stream | N/A |
+| `mas.gateway.ingress` | Stream | Gateway ingress | N/A |
 | `mas.system` | Pub/Sub Channel | System messages | N/A |
 
 ### Data Structures
@@ -562,17 +528,19 @@ HGETALL agent.state:my_agent
 }
 ```
 
-### Pub/Sub Channels
+### Streams and System Channel
 
-**Agent Channel** (`agent.{id}`):
-- Each agent subscribes to its own channel
-- Other agents publish messages here
-- Format: JSON-encoded EnvelopeMessage with message_type, data, and meta fields
+**Per-Agent Delivery Stream** (`agent.stream:{id}`):
+- Gateway writes validated messages for the agent
+- Agents consume via consumer group `agents` using XREADGROUP
+- EnvelopeMessage JSON stored in the `envelope` field
+
+**Gateway Ingress** (`mas.gateway.ingress`):
+- Agents enqueue outbound messages here
+- Fields include envelope, agent_id, token, timestamp, nonce, optional signature
 
 **System Channel** (`mas.system`):
-- MAS Service subscribes
-- Agents publish REGISTER/DEREGISTER events
-- Format: JSON with type + data
+- Pub/Sub for REGISTER/DEREGISTER events only
 
 ## Lifecycle Management
 
@@ -669,7 +637,7 @@ print(agent2.state["counter"])  # "42"
 
 | Operation | Performance | Notes |
 |-----------|-------------|-------|
-| Message send | 10,000+ msg/sec | Redis pub/sub |
+| Message send | Gateway/Streams dependent | Redis Streams + Gateway |
 | State update | 5,000+ ops/sec | Redis hash set |
 | Discovery | 1,000+ queries/sec | Redis scan |
 | Heartbeat | 30s interval | Minimal overhead |
@@ -684,8 +652,8 @@ print(agent2.state["counter"])  # "42"
 
 ### Scalability
 
-- **Agents**: Tested with 100+ agents, Redis supports 10,000+ pub/sub channels
-- **Messages**: Linear scaling, no central bottleneck
+- **Agents**: Scales with Redis Streams and gateway instances
+- **Messages**: Scales horizontally with gateway sharding and Redis performance
 - **Discovery**: O(N) scan, acceptable for <1000 agents
 - **State**: O(1) per agent, hash operations
 
@@ -697,8 +665,7 @@ print(agent2.state["counter"])  # "42"
 2. **Discovery scans**: O(N) for large agent counts
    - Solution: Add capability index using Redis sets
    
-3. **Pub/Sub reliability**: At-most-once delivery
-   - Solution: Redis Streams for at-least-once (roadmap)
+3. **Delivery reliability**: At-least-once via Redis Streams consumer groups
 
 ## Implementation Details
 
@@ -746,7 +713,6 @@ async for message in self._pubsub.listen():
         
         # Try decorator-based dispatch
         await self._dispatch_typed(msg)
-        # Falls back to on_message() if no handler
     except Exception as e:
         logger.error("Failed to handle message", exc_info=e)
         # Continue processing other messages
@@ -785,7 +751,8 @@ class ReceiverAgent(Agent):
         self.messages = []
         self.message_event = asyncio.Event()
     
-    async def on_message(self, message):
+    @Agent.on("test.message")
+    async def handle_test(self, message: AgentMessage, payload: dict):
         self.messages.append(message)
         self.message_event.set()
 
@@ -847,9 +814,9 @@ async def handler(self, message: AgentMessage, payload: PayloadModel) -> None:
     pass
 ```
 
-**Pyright Configuration**:
+**BasedPyright Configuration**:
 ```toml
-[tool.pyright]
+[tool.basedpyright]
 typeCheckingMode = "standard"
 reportMissingImports = "error"
 enableReachabilityAnalysis = true
@@ -860,11 +827,21 @@ enableReachabilityAnalysis = true
 ### Basic Agent Creation
 
 ```python
+from pydantic import BaseModel
 from mas import Agent
 
-agent = Agent("my_agent", capabilities=["nlp"])
+class MyState(BaseModel):
+    tasks_sent: int = 0
+
+class MyAgent(Agent[MyState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=MyState, **kwargs)
+
+agent = MyAgent("my_agent", capabilities=["nlp"])
 await agent.start()
 await agent.send("target", "task.message", {"task": "process"})
+agent.state.tasks_sent += 1
+await agent.update_state({"tasks_sent": agent.state.tasks_sent})
 ```
 
 ### Decorator-Based Message Handling
@@ -877,15 +854,23 @@ class TaskRequest(BaseModel):
     task_id: str
     priority: int = 1
 
-class MyAgent(Agent):
+class MyAgent(Agent[TaskState]):
+    # Demonstrate typed state alongside handlers
+    pass
+
+class TaskState(BaseModel):
+    processed: int = 0
+
+class MyAgent(Agent[TaskState]):
+    def __init__(self, agent_id: str, **kwargs):
+        super().__init__(agent_id, state_model=TaskState, **kwargs)
+
     @Agent.on("task.process", model=TaskRequest)
     async def handle_task(self, message: AgentMessage, payload: TaskRequest):
         """Type-safe handler with validated payload"""
-        await message.reply("task.complete", {"status": "done"})
-    
-    async def on_message(self, message: AgentMessage):
-        """Fallback for unhandled message types"""
-        pass
+        self.state.processed += 1
+        await self.update_state({"processed": self.state.processed})
+        await message.reply("task.complete", {"status": "done", "count": self.state.processed})
 ```
 
 ### Agent Characteristics
@@ -893,13 +878,12 @@ class MyAgent(Agent):
 - **Self-contained**: Only needs agent ID and Redis URL
 - **Optional MAS Service**: Service is for monitoring, not required for messaging
 - **Simple lifecycle**: Single `await agent.start()` call
-- **Direct messaging**: Peer-to-peer communication
 - **Auto-persisted state**: Automatic state management
 - **Minimal code**: ~200 lines per component
 
-## Gateway Pattern (Enterprise Deployment)
+## Gateway
 
-The framework includes an optional **Gateway Service** for enterprise deployments requiring centralized security, compliance, and operational control.
+The framework includes a **Gateway Service** that provides centralized security, compliance, and operational control for all messages.
 
 ### Gateway Architecture
 
@@ -1024,25 +1008,16 @@ Additional keys used by gateway:
 | `message_nonces:{id}` | String | Nonce replay protection |
 | `priority_queue:{target}:{priority}` | Sorted Set | Priority queues |
 
-### When to Use Gateway vs Pure P2P
+### When to Use the Gateway
 
-**Use Gateway Pattern if**:
+**Use Gateway**:
 - Regulated industry (finance, healthcare, government)
 - Handling sensitive data (PII, PHI, PCI)
 - Compliance requirements (SOC2, HIPAA, GDPR)
 - Multi-tenant with strict isolation
 - Zero-trust security architecture required
 
-**Use Pure P2P if**:
-- Internal tools in trusted environment
-- Performance is critical (<5ms latency required)
-- No regulatory compliance requirements
-- Rapid iteration and development
-
-**Hybrid Approach**:
-- P2P for internal, trusted agents (high performance)
-- Gateway for external agents (security)
-- Gateway for sensitive operations (compliance)
+P2P is not supported.
 
 ### Gateway Performance
 
@@ -1052,7 +1027,7 @@ Additional keys used by gateway:
 - Clustered (3 instances): 6,000-9,000 msg/s
 
 **Latency**:
-- P50: 10-15ms (vs <5ms for pure P2P)
+- P50: 10-15ms
 - P95: 25-35ms
 - P99: 50-80ms
 
@@ -1270,11 +1245,9 @@ settings = GatewaySettings.from_yaml("production.yaml")
 
 ## Summary
 
-MAS Framework achieves high performance through:
-1. **Peer-to-peer messaging**: Agents publish directly to target channels
-2. **Minimal central service**: Registry only, no message routing
-3. **Redis primitives**: Pub/sub, hashes, strings with TTL
+MAS Framework provides:
+1. **Gateway-mediated messaging**: Central validation, routing, and policy enforcement via Redis Streams
+2. **Minimal central service**: Lightweight registry plus gateway component
+3. **Redis primitives**: Streams (messaging), hashes (state), strings with TTL (heartbeats), pub/sub (system events)
 4. **Auto-persisted state**: State survives restarts automatically
-5. **Simple API**: 3 lines to create and run an agent
-
-This architecture delivers high throughput (10,000+ msg/sec) and low latency (<5ms) while maintaining simplicity and ease of use.
+5. **Simple API**: Decorator-based handlers with typed payloads and state
