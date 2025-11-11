@@ -2,7 +2,6 @@
 
 import asyncio
 import pytest
-from redis.asyncio import Redis
 from mas.gateway.priority_queue import (
     PriorityQueueModule,
     MessagePriority,
@@ -10,14 +9,6 @@ from mas.gateway.priority_queue import (
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-async def redis():
-    """Create Redis connection."""
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
-    yield r
-    await r.aclose()
 
 
 @pytest.fixture

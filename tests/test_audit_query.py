@@ -4,31 +4,10 @@ import json
 import asyncio
 import pytest
 import time
-from redis.asyncio import Redis
 from mas.gateway.audit import AuditModule
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-async def redis():
-    """Create Redis connection."""
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
-
-    # Pre-cleanup: Clear all audit streams before tests
-    keys = await r.keys("audit:*")
-    if keys:
-        await r.delete(*keys)
-
-    yield r
-
-    # Post-cleanup: delete all audit streams after tests
-    keys = await r.keys("audit:*")
-    if keys:
-        await r.delete(*keys)
-
-    await r.aclose()
 
 
 @pytest.fixture

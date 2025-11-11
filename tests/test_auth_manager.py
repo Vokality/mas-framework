@@ -1,7 +1,6 @@
 """Tests for AuthorizationManager high-level API."""
 
 import pytest
-from redis.asyncio import Redis
 from mas.gateway import GatewayService, AuthorizationManager
 from mas.gateway.config import GatewaySettings, FeaturesSettings
 
@@ -19,15 +18,6 @@ def _test_settings():
             circuit_breaker=False,
         )
     )
-
-
-@pytest.fixture
-async def redis():
-    """Redis connection fixture."""
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
-    yield r
-    await r.flushdb()
-    await r.aclose()
 
 
 async def test_authorization_manager_import():
