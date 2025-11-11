@@ -123,7 +123,7 @@ class AgentRegistry:
 
         async for key in self.redis.scan_iter(match=pattern):
             # Skip non-agent keys (like agent:id:heartbeat)
-            if key.count(":") != 1:
+            if not key.startswith("agent:") or key.count(":") != 1:
                 continue
 
             agent_data = await self.redis.hgetall(key)

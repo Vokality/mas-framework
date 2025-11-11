@@ -5,6 +5,8 @@ from typing import override
 import pytest
 from pydantic import BaseModel
 from mas import Agent, AgentMessage
+from mas.gateway import GatewayService
+from mas.gateway.config import GatewaySettings, FeaturesSettings
 
 
 # Test Pydantic models for typed messages
@@ -104,8 +106,22 @@ async def test_decorator_based_dispatch(mas_service):
     responder = TypedResponderAgent("typed_responder_1", "redis://localhost:6379")
     requester = TypedRequesterAgent("typed_requester_1", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Make a typed request
     response = await requester.request(
@@ -124,6 +140,7 @@ async def test_decorator_based_dispatch(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -132,8 +149,22 @@ async def test_pydantic_validation(mas_service):
     responder = TypedResponderAgent("typed_responder_2", "redis://localhost:6379")
     requester = TypedRequesterAgent("typed_requester_2", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Send invalid data (missing required field)
     await requester.send(
@@ -153,6 +184,7 @@ async def test_pydantic_validation(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -161,8 +193,22 @@ async def test_multiple_typed_handlers(mas_service):
     responder = TypedResponderAgent("typed_responder_3", "redis://localhost:6379")
     requester = TypedRequesterAgent("typed_requester_3", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Send echo request
     echo_response = await requester.request(
@@ -192,6 +238,7 @@ async def test_multiple_typed_handlers(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -200,8 +247,22 @@ async def test_fallback_to_on_message(mas_service):
     responder = TypedResponderAgent("typed_responder_4", "redis://localhost:6379")
     requester = TypedRequesterAgent("typed_requester_4", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Send unhandled message type
     await requester.send(
@@ -225,6 +286,7 @@ async def test_fallback_to_on_message(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -256,8 +318,22 @@ async def test_handler_without_model(mas_service):
     responder = SimpleTypedAgent("simple_responder", "redis://localhost:6379")
     requester = TypedRequesterAgent("simple_requester", "redis://localhost:6379")
 
+    settings = GatewaySettings(
+        features=FeaturesSettings(
+            dlp=False,
+            priority_queue=False,
+            rbac=False,
+            message_signing=False,
+            circuit_breaker=False,
+        )
+    )
+    gateway = GatewayService(settings=settings)
+    await gateway.start()
+
     await responder.start()
     await requester.start()
+
+    await gateway.auth_manager().allow_bidirectional(requester.id, responder.id)
 
     # Send message
     await requester.send(responder.id, "simple.message", {"test": "data"})
@@ -270,3 +346,4 @@ async def test_handler_without_model(mas_service):
 
     await requester.stop()
     await responder.stop()
+    await gateway.stop()

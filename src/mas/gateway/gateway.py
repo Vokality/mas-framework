@@ -1,5 +1,6 @@
 """Gateway Service - Central message validation and routing."""
 
+import asyncio
 import logging
 import time
 from typing import Any, Optional
@@ -162,10 +163,22 @@ class GatewayService:
                 },
             },
         )
+        # Start ingress consumer for Redis Streams gateway mode
+        await self._start_ingress_consumer()
 
     async def stop(self) -> None:
         """Stop the gateway service."""
         self._running = False
+        # Stop ingress consumer task if running
+        try:
+            task = getattr(self, "_ingress_task", None)
+            if task:
+                task.cancel()
+                await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
         if self._redis:
             await self._redis.aclose()
@@ -541,7 +554,7 @@ class GatewayService:
         Route message to target agent's stream.
 
         If priority queue is enabled, enqueues message by priority.
-        Otherwise, uses direct pub/sub for immediate delivery.
+        Otherwise, delivers to per-agent Redis Stream (at-least-once).
 
         Args:
             message: Message to route
@@ -569,15 +582,20 @@ class GatewayService:
                 },
             )
         else:
-            # Direct delivery via pub/sub (MVP)
-            target_channel = f"agent.{message.target_id}"
-            await self._redis.publish(target_channel, message.model_dump_json())
+            # Stream-based delivery (at-least-once)
+            target_stream = f"{self.settings.agent_stream_prefix}{message.target_id}"
+            await self._redis.xadd(
+                target_stream,
+                {
+                    "envelope": message.model_dump_json(),
+                },
+            )
 
             logger.debug(
-                "Message published",
+                "Message written to delivery stream",
                 extra={
                     "message_id": message.message_id,
-                    "target_channel": target_channel,
+                    "target_stream": target_stream,
                 },
             )
 
@@ -690,3 +708,78 @@ class GatewayService:
             "audit": audit_stats,
             "status": "running" if self._running else "stopped",
         }
+
+    async def _start_ingress_consumer(self) -> None:
+        """
+        Start the Redis Streams ingress consumer in the background.
+        """
+        assert self._redis is not None
+        stream = self.settings.ingress_stream
+        group = self.settings.ingress_group
+
+        # Ensure consumer group exists (idempotent)
+        try:
+            await self._redis.xgroup_create(stream, group, id="$", mkstream=True)
+        except Exception as e:
+            # BUSYGROUP means the group already exists
+            if "BUSYGROUP" not in str(e):
+                logger.error("Failed to create ingress consumer group", exc_info=e)
+                raise
+
+        async def _loop() -> None:
+            assert self._redis is not None
+            consumer = "gw-1"
+            while self._running:
+                try:
+                    items = await self._redis.xreadgroup(
+                        group,
+                        consumer,
+                        streams={stream: ">"},
+                        count=100,
+                        block=1000,
+                    )
+                    if not items:
+                        continue
+                    for _, messages in items:
+                        for entry_id, fields in messages:
+                            try:
+                                envelope_json = fields.get("envelope", "")
+                                token = fields.get("token", "")
+                                signature = fields.get("signature")
+                                ts_str = fields.get("timestamp")
+                                nonce = fields.get("nonce")
+                                timestamp = (
+                                    float(ts_str) if ts_str is not None else None
+                                )
+
+                                msg = AgentMessage.model_validate_json(envelope_json)
+                                result = await self.handle_message(
+                                    msg,
+                                    token,
+                                    signature=signature,
+                                    timestamp=timestamp,
+                                    nonce=nonce,
+                                )
+                                if not result.success:
+                                    # Write to DLQ with reason
+                                    await self._redis.xadd(
+                                        self.settings.dlq_stream,
+                                        {
+                                            "envelope": envelope_json,
+                                            "decision": result.decision,
+                                            "message": result.message or "",
+                                        },
+                                    )
+                            finally:
+                                # Always ACK the ingress entry to avoid reprocessing loops
+                                try:
+                                    await self._redis.xack(stream, group, entry_id)
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    logger.error("Ingress consumer loop error", exc_info=e)
+                    await asyncio.sleep(1.0)
+
+        import asyncio  # local import to avoid unused in type-checking contexts
+
+        self._ingress_task = asyncio.create_task(_loop())
