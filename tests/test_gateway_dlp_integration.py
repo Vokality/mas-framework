@@ -2,7 +2,6 @@
 
 import pytest
 import time
-from redis.asyncio import Redis
 
 from mas.agent import AgentMessage
 from mas.gateway import GatewayService
@@ -10,16 +9,6 @@ from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSetti
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-async def redis():
-    """Redis connection fixture."""
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
-    yield r
-    # Cleanup
-    await r.flushdb()
-    await r.aclose()
 
 
 @pytest.fixture
@@ -97,7 +86,8 @@ class TestGatewayDLPIntegration:
         message = AgentMessage(
             sender_id=agent_a_id,
             target_id=agent_b_id,
-            payload={"card": "4532-0151-2345-6789", "message": "Payment info"},
+            message_type="test.message",
+            data={"card": "4532-0151-2345-6789", "message": "Payment info"},
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -119,7 +109,8 @@ class TestGatewayDLPIntegration:
         message = AgentMessage(
             sender_id=agent_a_id,
             target_id=agent_b_id,
-            payload={"config": "AWS key: AKIAIOSFODNN7EXAMPLE"},
+            message_type="test.message",
+            data={"config": "AWS key: AKIAIOSFODNN7EXAMPLE"},
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -141,7 +132,8 @@ class TestGatewayDLPIntegration:
         message = AgentMessage(
             sender_id=agent_a_id,
             target_id=agent_b_id,
-            payload={"ssn": "123-45-6789", "name": "John Doe"},
+            message_type="test.message",
+            data={"ssn": "123-45-6789", "name": "John Doe"},
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -163,7 +155,8 @@ class TestGatewayDLPIntegration:
         message = AgentMessage(
             sender_id=agent_a_id,
             target_id=agent_b_id,
-            payload={"message": "Hello, how are you?", "count": 42},
+            message_type="test.message",
+            data={"message": "Hello, how are you?", "count": 42},
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -186,7 +179,8 @@ class TestGatewayDLPIntegration:
         message = AgentMessage(
             sender_id=agent_a_id,
             target_id=agent_b_id,
-            payload={"card": "4532-0151-2345-6789"},
+            message_type="test.message",
+            data={"card": "4532-0151-2345-6789"},
         )
 
         result = await gateway_without_dlp.handle_message(message, token_a)
@@ -207,7 +201,8 @@ class TestGatewayDLPIntegration:
         message = AgentMessage(
             sender_id=agent_a_id,
             target_id=agent_b_id,
-            payload={"card": "4532-0151-2345-6789"},
+            message_type="test.message",
+            data={"card": "4532-0151-2345-6789"},
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)

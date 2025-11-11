@@ -6,11 +6,13 @@ import io
 import json
 import logging
 import time
-from typing import Optional
-from mas.redis_types import AsyncRedisProtocol
+from typing import Any, Optional
+from ..redis_types import AsyncRedisProtocol
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+AuditRecord = dict[str, Any]
 
 
 class AuditEntry(BaseModel):
@@ -62,7 +64,7 @@ class AuditModule:
         target_id: str,
         decision: str,
         latency_ms: float,
-        payload: dict,
+        payload: AuditRecord,
         violations: Optional[list[str]] = None,
     ) -> str:
         """
@@ -139,7 +141,11 @@ class AuditModule:
 
         return main_stream_id
 
-    async def log_security_event(self, event_type: str, details: dict) -> str:
+    async def log_security_event(
+        self,
+        event_type: str,
+        details: AuditRecord,
+    ) -> str:
         """
         Log security event to audit stream.
 
@@ -172,7 +178,7 @@ class AuditModule:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         count: int = 100,
-    ) -> list[dict]:
+    ) -> list[AuditRecord]:
         """
         Query audit log by sender.
 
@@ -194,7 +200,7 @@ class AuditModule:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         count: int = 100,
-    ) -> list[dict]:
+    ) -> list[AuditRecord]:
         """
         Query audit log by target.
 
@@ -215,7 +221,7 @@ class AuditModule:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         count: int = 100,
-    ) -> list[dict]:
+    ) -> list[AuditRecord]:
         """
         Query security events.
 
@@ -237,7 +243,7 @@ class AuditModule:
         start_time: Optional[float],
         end_time: Optional[float],
         count: int,
-    ) -> list[dict]:
+    ) -> list[AuditRecord]:
         """
         Query Redis Stream with time range.
 
@@ -262,10 +268,10 @@ class AuditModule:
         # Read from stream
         try:
             entries = await self.redis.xrange(stream, start_id, end_id, count)
-            result: list[dict] = []
+            result: list[AuditRecord] = []
             for stream_id, raw in entries:
                 # Work with a mutable, more general-typed copy
-                data: dict[str, object] = dict(raw)
+                data: AuditRecord = {str(k): v for k, v in raw.items()}
                 # Parse violations JSON if present
                 if "violations" in data:
                     try:
@@ -325,7 +331,7 @@ class AuditModule:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         count: int = 100,
-    ) -> list[dict]:
+    ) -> list[AuditRecord]:
         """
         Query audit log by decision type.
 
@@ -356,7 +362,7 @@ class AuditModule:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         count: int = 100,
-    ) -> list[dict]:
+    ) -> list[AuditRecord]:
         """
         Query audit log by violation type.
 
@@ -375,9 +381,11 @@ class AuditModule:
         )
 
         # Filter by violation type
-        filtered = []
+        filtered: list[AuditRecord] = []
         for entry in all_entries:
-            violations = entry.get("violations", [])
+            violations = entry.get("violations")
+            if not isinstance(violations, list):
+                continue
             if violation_type in violations:
                 filtered.append(entry)
                 if len(filtered) >= count:
@@ -390,7 +398,7 @@ class AuditModule:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         count: int = 100,
-    ) -> list[dict]:
+    ) -> list[AuditRecord]:
         """
         Query all audit log entries.
 
@@ -406,7 +414,7 @@ class AuditModule:
 
     async def export_to_csv(
         self,
-        entries: list[dict],
+        entries: list[AuditRecord],
     ) -> str:
         """
         Export audit entries to CSV format.
@@ -449,7 +457,7 @@ class AuditModule:
 
     async def export_to_json(
         self,
-        entries: list[dict],
+        entries: list[AuditRecord],
         pretty: bool = True,
     ) -> str:
         """
@@ -493,7 +501,7 @@ class AuditModule:
         else:
             raise ValueError(f"Unsupported format: {format_type}")
 
-    async def get_stats(self) -> dict:
+    async def get_stats(self) -> dict[str, int]:
         """
         Get audit log statistics.
 

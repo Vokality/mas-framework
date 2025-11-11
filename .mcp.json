@@ -1,7 +1,0 @@
-{
-    "mcpServers": {
-      "beads" : {
-        "command": "uvx beads-mcp"
-      }
-    }
-  }

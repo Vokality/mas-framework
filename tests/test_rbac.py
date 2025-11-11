@@ -1,25 +1,9 @@
 """Tests for RBAC (Role-Based Access Control) functionality."""
 
 import pytest
-from redis.asyncio import Redis
 from mas.gateway.authorization import AuthorizationModule
 
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-async def redis():
-    """Create Redis connection."""
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
-
-    # Cleanup before tests
-    await r.flushdb()
-
-    yield r
-
-    # Cleanup after tests
-    await r.flushdb()
-    await r.aclose()
 
 
 @pytest.fixture

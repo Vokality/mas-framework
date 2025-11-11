@@ -3,10 +3,11 @@
 import logging
 import time
 from enum import Enum
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 from pydantic import BaseModel
-from redis.asyncio import Redis
+
+from ..redis_types import AsyncRedisProtocol
 
 from .metrics import MetricsCollector
 
@@ -70,7 +71,7 @@ class CircuitBreakerModule:
 
     def __init__(
         self,
-        redis: Redis,
+        redis: AsyncRedisProtocol,
         config: Optional[CircuitBreakerConfig] = None,
     ):
         """
@@ -80,7 +81,7 @@ class CircuitBreakerModule:
             redis: Redis connection
             config: Circuit breaker configuration
         """
-        self.redis = redis
+        self.redis: AsyncRedisProtocol = redis
         self.config = config or CircuitBreakerConfig()
 
     async def check_circuit(self, target_id: str) -> CircuitStatus:
@@ -94,7 +95,7 @@ class CircuitBreakerModule:
             Circuit status with state and whether message is allowed
         """
         circuit_key = f"circuit:{target_id}"
-        circuit_data = await self.redis.hgetall(circuit_key)  # type: ignore
+        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
 
         if not circuit_data:
             # No circuit data, default to CLOSED
@@ -157,7 +158,7 @@ class CircuitBreakerModule:
             Updated circuit status
         """
         circuit_key = f"circuit:{target_id}"
-        circuit_data = await self.redis.hgetall(circuit_key)  # type: ignore
+        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
 
         if not circuit_data:
             # No circuit data, initialize
@@ -215,9 +216,10 @@ class CircuitBreakerModule:
             Updated circuit status
         """
         circuit_key = f"circuit:{target_id}"
-        circuit_data = await self.redis.hgetall(circuit_key)  # type: ignore
+        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
 
         current_time = time.time()
+        opened_at: Optional[float] = None
 
         if not circuit_data:
             # Initialize circuit data
@@ -279,7 +281,7 @@ class CircuitBreakerModule:
             )
 
         # Update circuit state
-        await self.redis.hset(  # type: ignore
+        await self.redis.hset(
             circuit_key,
             mapping={
                 "state": state.value,
@@ -291,7 +293,7 @@ class CircuitBreakerModule:
         )
 
         # Set TTL to cleanup old circuits
-        await self.redis.expire(circuit_key, int(self.config.timeout_seconds * 2))  # type: ignore  # type: ignore
+        await self.redis.expire(circuit_key, int(self.config.timeout_seconds * 2))
 
         return CircuitStatus(
             state=state,
@@ -319,7 +321,7 @@ class CircuitBreakerModule:
             success_count: Current success count
         """
         circuit_key = f"circuit:{target_id}"
-        await self.redis.hset(  # type: ignore
+        await self.redis.hset(
             circuit_key,
             mapping={
                 "state": state.value,
@@ -329,7 +331,7 @@ class CircuitBreakerModule:
         )
 
         # Set TTL
-        await self.redis.expire(circuit_key, int(self.config.timeout_seconds * 2))  # type: ignore  # type: ignore
+        await self.redis.expire(circuit_key, int(self.config.timeout_seconds * 2))
 
     async def reset_circuit(self, target_id: str) -> None:
         """
@@ -352,7 +354,7 @@ class CircuitBreakerModule:
         Returns:
             Dictionary mapping target_id to circuit status
         """
-        circuits = {}
+        circuits: dict[str, CircuitStatus] = {}
         pattern = "circuit:*"
 
         async for key in self.redis.scan_iter(match=pattern):
@@ -363,7 +365,7 @@ class CircuitBreakerModule:
         return circuits
 
     async def add_to_dlq(
-        self, target_id: str, message_id: str, payload: dict, reason: str
+        self, target_id: str, message_id: str, payload: dict[str, Any], reason: str
     ) -> None:
         """
         Add failed message to Dead Letter Queue.
@@ -396,7 +398,7 @@ class CircuitBreakerModule:
             },
         )
 
-    async def get_dlq_messages(self, count: int = 100) -> list[dict]:
+    async def get_dlq_messages(self, count: int = 100) -> list[dict[str, Any]]:
         """
         Get messages from Dead Letter Queue.
 
@@ -409,16 +411,25 @@ class CircuitBreakerModule:
         dlq_key = "dlq:messages"
         messages = await self.redis.xrange(dlq_key, "-", "+", count=count)
 
-        result = []
+        result: list[dict[str, Any]] = []
         for msg_id, msg_data in messages:
+            normalized = {str(k): str(v) for k, v in msg_data.items()}
+            timestamp_value = normalized.get("timestamp")
+            timestamp = float(timestamp_value) if timestamp_value else 0.0
             result.append(
                 {
                     "id": msg_id,
-                    "message_id": msg_data.get("message_id"),
-                    "target_id": msg_data.get("target_id"),
-                    "reason": msg_data.get("reason"),
-                    "timestamp": float(msg_data.get("timestamp", 0)),
+                    "message_id": normalized.get("message_id"),
+                    "target_id": normalized.get("target_id"),
+                    "reason": normalized.get("reason"),
+                    "timestamp": timestamp,
                 }
             )
 
         return result
+
+    @staticmethod
+    def _normalize_hash(raw: Mapping[str, str] | None) -> dict[str, str]:
+        if not raw:
+            return {}
+        return dict(raw)

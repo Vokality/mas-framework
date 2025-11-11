@@ -4,7 +4,6 @@ import asyncio
 from typing import override
 import pytest
 import time
-from redis.asyncio import Redis
 
 from mas.agent import Agent, AgentMessage
 from mas.gateway import (
@@ -18,16 +17,6 @@ from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSetti
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-async def redis():
-    """Redis connection fixture."""
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
-    yield r
-    # Cleanup
-    await r.flushdb()
-    await r.aclose()
 
 
 @pytest.fixture
@@ -304,7 +293,10 @@ class TestGatewayService:
 
         # Send message
         message = AgentMessage(
-            sender_id=sender, target_id=target, payload={"test": "data"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "data"},
         )
 
         result = await gateway.handle_message(message, token)
@@ -332,7 +324,10 @@ class TestGatewayService:
         await redis.hset(f"agent:{target}", "status", "ACTIVE")
 
         message = AgentMessage(
-            sender_id=sender, target_id=target, payload={"test": "data"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "data"},
         )
 
         result = await gateway.handle_message(message, token)
@@ -347,7 +342,10 @@ class TestGatewayService:
         await redis.hset(f"agent:{sender}", "status", "ACTIVE")
 
         message = AgentMessage(
-            sender_id=sender, target_id=target, payload={"test": "data"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "data"},
         )
 
         result = await gateway.handle_message(message, "wrong_token")
@@ -375,14 +373,20 @@ class TestGatewayService:
         # Send messages up to limit (10)
         for i in range(10):
             message = AgentMessage(
-                sender_id=sender, target_id=target, payload={"msg": i}
+                sender_id=sender,
+                target_id=target,
+                message_type="test.message",
+                data={"msg": i},
             )
             result = await gateway.handle_message(message, token)
             assert result.success is True
 
         # Next message should be rate limited
         message = AgentMessage(
-            sender_id=sender, target_id=target, payload={"msg": "over_limit"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"msg": "over_limit"},
         )
         result = await gateway.handle_message(message, token)
         assert result.success is False
@@ -408,7 +412,10 @@ class TestGatewayService:
 
         # Send message
         message = AgentMessage(
-            sender_id=sender, target_id=target, payload={"test": "audit"}
+            sender_id=sender,
+            target_id=target,
+            message_type="test.message",
+            data={"test": "audit"},
         )
         await gateway.handle_message(message, token)
 
@@ -469,7 +476,7 @@ class TestAgentWithGateway:
             )
 
             # Send through gateway
-            await sender.send(receiver_agent.id, {"test": "gateway"})
+            await sender.send(receiver_agent.id, "test.message", {"test": "gateway"})
 
             # Wait a bit for message delivery
             await asyncio.sleep(0.5)

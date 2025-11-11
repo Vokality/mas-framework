@@ -1,13 +1,43 @@
 """Authorization Manager - High-level API for configuring authorization."""
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 if TYPE_CHECKING:
     from .gateway import GatewayService
     from .authorization import AuthorizationModule
 
 logger = logging.getLogger(__name__)
+
+
+class AllowOperation(TypedDict):
+    type: Literal["allow"]
+    sender: str
+    targets: list[str]
+
+
+class BlockOperation(TypedDict):
+    type: Literal["block"]
+    sender: str
+    target: str
+
+
+class CreateRoleOperation(TypedDict):
+    type: Literal["create_role"]
+    role_name: str
+    description: str
+    permissions: list[str]
+
+
+class AssignRoleOperation(TypedDict):
+    type: Literal["assign_role"]
+    agent_id: str
+    role_name: str
+
+
+PendingOperation = (
+    AllowOperation | BlockOperation | CreateRoleOperation | AssignRoleOperation
+)
 
 
 class AuthorizationManager:
@@ -53,7 +83,7 @@ class AuthorizationManager:
             raise RuntimeError(
                 "Gateway must be started before using AuthorizationManager"
             )
-        self._pending_operations: list = []
+        self._pending_operations: list[PendingOperation] = []
 
     async def allow_bidirectional(self, agent_a: str, agent_b: str) -> None:
         """
@@ -150,8 +180,10 @@ class AuthorizationManager:
                 .allow("agent2", ["agent3", "agent4"])
                 .apply())
         """
-        target_list = [targets] if isinstance(targets, str) else targets
-        self._pending_operations.append(("allow", sender, target_list))
+        target_list = [targets] if isinstance(targets, str) else list(targets)
+        self._pending_operations.append(
+            {"type": "allow", "sender": sender, "targets": target_list}
+        )
         return self
 
     def block(self, sender: str, target: str) -> "AuthorizationManager":
@@ -171,7 +203,9 @@ class AuthorizationManager:
                 .block("agent1", "agent2")  # Except agent2
                 .apply())
         """
-        self._pending_operations.append(("block", sender, target))
+        self._pending_operations.append(
+            {"type": "block", "sender": sender, "target": target}
+        )
         return self
 
     def create_role(
@@ -197,8 +231,17 @@ class AuthorizationManager:
                 .create_role("admin", permissions=["send:*", "manage:*"])
                 .apply())
         """
+        if permissions is None:
+            permission_list: list[str] = []
+        else:
+            permission_list = list(permissions)
         self._pending_operations.append(
-            ("create_role", role_name, description, permissions or [])
+            {
+                "type": "create_role",
+                "role_name": role_name,
+                "description": description,
+                "permissions": permission_list,
+            }
         )
         return self
 
@@ -220,7 +263,9 @@ class AuthorizationManager:
                 .assign_role("dr_jones", "doctor")
                 .apply())
         """
-        self._pending_operations.append(("assign_role", agent_id, role_name))
+        self._pending_operations.append(
+            {"type": "assign_role", "agent_id": agent_id, "role_name": role_name}
+        )
         return self
 
     async def apply(self) -> None:
@@ -234,29 +279,35 @@ class AuthorizationManager:
                 .apply())
         """
         for op in self._pending_operations:
-            op_type = op[0]
+            op_type = op["type"]
 
             if op_type == "allow":
-                _, sender, targets = op
-                for target in targets:
-                    await self._authz.add_permission(sender, target)
+                allow_op = cast(AllowOperation, op)
+                for target in allow_op["targets"]:
+                    await self._authz.add_permission(allow_op["sender"], target)
 
             elif op_type == "block":
-                _, sender, target = op
-                await self._authz.block_target(sender, target)
+                block_op = cast(BlockOperation, op)
+                await self._authz.block_target(block_op["sender"], block_op["target"])
 
             elif op_type == "create_role":
-                _, role_name, description, permissions = op
-                await self._authz.create_role(role_name, description, permissions)
+                role_op = cast(CreateRoleOperation, op)
+                await self._authz.create_role(
+                    role_op["role_name"],
+                    role_op["description"],
+                    role_op["permissions"],
+                )
 
             elif op_type == "assign_role":
-                _, agent_id, role_name = op
-                await self._authz.assign_role(agent_id, role_name)
+                assign_op = cast(AssignRoleOperation, op)
+                await self._authz.assign_role(
+                    assign_op["agent_id"], assign_op["role_name"]
+                )
 
         logger.info(f"Applied {len(self._pending_operations)} authorization operations")
         self._pending_operations.clear()
 
-    async def get_summary(self, agent_id: str) -> dict:
+    async def get_summary(self, agent_id: str) -> dict[str, Any]:
         """
         Get human-readable authorization summary for an agent.
 
@@ -273,7 +324,7 @@ class AuthorizationManager:
         acl = await self._authz.get_permissions(agent_id)
         roles = await self._authz.get_agent_roles(agent_id)
 
-        role_permissions = {}
+        role_permissions: dict[str, list[str]] = {}
         for role in roles:
             role_permissions[role] = await self._authz.get_role_permissions(role)
 

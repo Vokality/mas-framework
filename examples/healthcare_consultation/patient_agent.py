@@ -2,15 +2,36 @@
 
 import asyncio
 import logging
-from typing import Optional, override
+from typing import Optional, override, cast
+
+from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from mas import Agent, AgentMessage
+
+from mas import Agent, AgentMessage, AgentRecord
 
 logger = logging.getLogger(__name__)
 
 
-class PatientAgent(Agent):
+class ConsultationResponse(BaseModel):
+    """Consultation response from doctor."""
+
+    type: str = "consultation_response"
+    advice: str
+    question: str | None = None
+
+
+class PatientState(BaseModel):
+    """State model for PatientAgent."""
+
+    doctor_id: Optional[str] = None
+    conversation_history: list[ChatCompletionMessageParam] = Field(default_factory=list)
+    questions_asked: int = 0
+    max_questions: int = 3
+    current_concern: str = "general wellness and preventive care"
+
+
+class PatientAgent(Agent[PatientState]):
     """
     Patient agent that asks healthcare-related questions.
 
@@ -42,14 +63,10 @@ class PatientAgent(Agent):
             capabilities=["healthcare_patient", "question_asker"],
             redis_url=redis_url,
             use_gateway=True,  # Enable gateway mode for security
+            state_model=PatientState,
         )
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = model
-        self.doctor_id: Optional[str] = None
-        self.conversation_history: list[ChatCompletionMessageParam] = []
-        self.questions_asked = 0
-        self.max_questions = 3
-        self.current_concern = "general wellness and preventive care"
 
     @override
     async def on_start(self) -> None:
@@ -59,65 +76,79 @@ class PatientAgent(Agent):
 
         # Discover doctor agent
         await asyncio.sleep(0.5)
-        doctors = await self.discover(capabilities=["healthcare_doctor"])
+        doctors: list[AgentRecord] = await self.discover(
+            capabilities=["healthcare_doctor"]
+        )
 
         if not doctors:
             logger.error("No doctor found! Cannot start consultation.")
             return
 
-        self.doctor_id = doctors[0]["id"]
-        logger.info(f"Found doctor: {self.doctor_id}")
+        await self.update_state({"doctor_id": doctors[0]["id"]})
+        logger.info(f"Found doctor: {self.state.doctor_id}")
 
         # Start consultation by asking first question
         await self._ask_question()
 
-    @override
-    async def on_message(self, message: AgentMessage) -> None:
+    @Agent.on("consultation_response", model=ConsultationResponse)
+    async def handle_consultation_response(
+        self, message: AgentMessage, payload: ConsultationResponse
+    ) -> None:
         """
-        Handle responses from the doctor.
+        Handle consultation responses from the doctor.
 
         Args:
             message: Message from the doctor (passed through gateway)
+            payload: Validated consultation response payload
         """
-        if message.payload.get("type") == "consultation_response":
-            advice = message.payload.get("advice")
+        logger.info(f"\n{'=' * 60}")
+        logger.info("DOCTOR'S ADVICE:")
+        logger.info(f"{payload.advice}")
+        logger.info(f"{'=' * 60}\n")
 
-            logger.info(f"\n{'=' * 60}")
-            logger.info("DOCTOR'S ADVICE:")
-            logger.info(f"{advice}")
-            logger.info(f"{'=' * 60}\n")
-
-            # Store in conversation history
-            self.conversation_history.append(
-                {"role": "assistant", "content": f"Doctor advised: {advice}"}
+        # Store in conversation history
+        history = list(self.state.conversation_history)
+        history.append(
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "assistant", "content": f"Doctor advised: {payload.advice}"},
             )
+        )
+        await self.update_state({"conversation_history": history})
 
-            # Ask follow-up question or finish
-            self.questions_asked += 1
+        # Ask follow-up question or finish
+        questions_asked = self.state.questions_asked + 1
+        await self.update_state({"questions_asked": questions_asked})
 
-            if self.questions_asked < self.max_questions:
-                await asyncio.sleep(1)
-                await self._ask_question()
-            else:
-                logger.info("Consultation complete! Thank you, doctor.")
-                await self._send_thanks()
+        if questions_asked < self.state.max_questions:
+            await asyncio.sleep(1)
+            await self._ask_question()
+        else:
+            logger.info("Consultation complete! Thank you, doctor.")
+            await self._send_thanks()
 
     async def _ask_question(self) -> None:
         """Generate and ask a healthcare question using OpenAI."""
-        if not self.doctor_id:
+        if not self.state.doctor_id:
             logger.error("No doctor available")
             return
 
         # Build prompt for question generation
-        system_prompt = f"""You are a patient seeking medical advice about {self.current_concern}. 
+        system_prompt = f"""You are a patient seeking medical advice about {self.state.current_concern}. 
 Generate a thoughtful, realistic question that a patient might ask their doctor. 
 Keep it concise (1-2 sentences) and avoid including specific personal information like 
 names, dates, or medical record numbers."""
 
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
-            *self.conversation_history,
-            {"role": "user", "content": "What should I ask the doctor next?"},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": system_prompt},
+            ),
+            *self.state.conversation_history,
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "user", "content": "What should I ask the doctor next?"},
+            ),
         ]
 
         try:
@@ -135,12 +166,19 @@ names, dates, or medical record numbers."""
                 return
 
             logger.info(f"\n{'=' * 60}")
-            logger.info(f"PATIENT'S QUESTION #{self.questions_asked + 1}:")
+            logger.info(f"PATIENT'S QUESTION #{self.state.questions_asked + 1}:")
             logger.info(f"{question}")
             logger.info(f"{'=' * 60}\n")
 
             # Store in conversation history
-            self.conversation_history.append({"role": "user", "content": question})
+            history = list(self.state.conversation_history)
+            history.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": "user", "content": question},
+                )
+            )
+            await self.update_state({"conversation_history": history})
 
             # Send question to doctor through gateway
             # Gateway will:
@@ -151,11 +189,12 @@ names, dates, or medical record numbers."""
             # 5. Log to audit trail
             # 6. Route to doctor via Redis Streams
             await self.send(
-                self.doctor_id,
+                self.state.doctor_id,
+                "consultation_request",
                 {
                     "type": "consultation_request",
                     "question": question,
-                    "concern": self.current_concern,
+                    "concern": self.state.current_concern,
                 },
             )
 
@@ -166,9 +205,10 @@ names, dates, or medical record numbers."""
 
     async def _send_thanks(self) -> None:
         """Send thank you message to doctor."""
-        if self.doctor_id:
+        if self.state.doctor_id:
             await self.send(
-                self.doctor_id,
+                self.state.doctor_id,
+                "consultation_end",
                 {
                     "type": "consultation_end",
                     "message": "Thank you for the consultation!",

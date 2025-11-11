@@ -167,7 +167,7 @@ from mas import Agent, AgentMessage
 class HelloAgent(Agent):
     async def on_message(self, message: AgentMessage):
         """Handle incoming messages"""
-        print(f"Received: {message.payload}")
+        print(f"Received: {message.data}")
 
 async def main():
     # Create and start agent
@@ -215,10 +215,10 @@ class SenderAgent(Agent):
 class ReceiverAgent(Agent):
     async def on_message(self, message: AgentMessage):
         """Handle incoming messages"""
-        print(f"Received from {message.sender_id}: {message.payload}")
+        print(f"Received from {message.sender_id}: {message.data}")
         
-        # Send a reply
-        await self.send(message.sender_id, {
+        # Send a reply with message type
+        await self.send(message.sender_id, "greeting.reply", {
             "reply": "Hello back!",
             "received_at": time.time()
         })
@@ -274,15 +274,16 @@ Send a message without waiting for a response:
 
 ```python
 # Sender
-await agent.send("target_agent", {
+await agent.send("target_agent", "process.task", {
     "action": "process",
     "data": [1, 2, 3]
 })
 
-# Receiver
-async def on_message(self, message: AgentMessage):
-    if message.payload.get("action") == "process":
-        data = message.payload["data"]
+# Receiver - using decorator-based handler
+class ProcessorAgent(Agent):
+    @Agent.on("process.task")
+    async def handle_process(self, message: AgentMessage, payload: None):
+        data = message.data["data"]
         result = self.process(data)
         # Do something with result
 ```
@@ -292,31 +293,51 @@ async def on_message(self, message: AgentMessage):
 Send a message and wait for a response:
 
 ```python
+from pydantic import BaseModel
+
+class CalculationRequest(BaseModel):
+    operation: str
+    numbers: list[float]
+
+class CalculationResponse(BaseModel):
+    result: float
+
 # Requester
 response = await agent.request(
     "calculator_agent",
-    {"operation": "add", "numbers": [1, 2, 3]},
+    "calculation.request",
+    CalculationRequest(operation="add", numbers=[1, 2, 3]).model_dump(),
     timeout=10.0  # Wait up to 10 seconds
 )
-result = response.payload["result"]
+result = response.data["result"]
 print(f"Result: {result}")
 
-# Responder
-async def on_message(self, message: AgentMessage):
-    if message.expects_reply:
-        # Process the request
-        numbers = message.payload["numbers"]
-        result = sum(numbers)
+# Responder - using decorator-based handler
+class CalculatorAgent(Agent):
+    @Agent.on("calculation.request", model=CalculationRequest)
+    async def handle_calculation(self, message: AgentMessage, payload: CalculationRequest):
+        if payload.operation == "add":
+            result = sum(payload.numbers)
+        elif payload.operation == "multiply":
+            result = 1
+            for n in payload.numbers:
+                result *= n
+        else:
+            raise ValueError(f"Unknown operation: {payload.operation}")
         
         # Send reply using message.reply()
-        await message.reply({"result": result})
+        await message.reply(
+            "calculation.response",
+            CalculationResponse(result=result).model_dump()
+        )
 ```
 
 **Key Points:**
 - `request()` automatically handles correlation IDs
-- Responder uses `message.reply()` to send response
+- Responder uses `message.reply(message_type, payload)` to send response
 - `message.expects_reply` tells responder a reply is expected
 - Timeout is configurable (default: 30 seconds)
+- Use Pydantic models for type-safe request/response payloads
 
 ### Broadcast Pattern
 
@@ -329,7 +350,7 @@ async def broadcast_to_workers(self):
     
     # Send task to each worker
     for worker in workers:
-        await self.send(worker["id"], {
+        await self.send(worker["id"], "task.assign", {
             "task": "process_chunk",
             "chunk_id": worker["id"]
         })
@@ -341,13 +362,13 @@ Multiple agents listen for specific message types:
 
 ```python
 class SubscriberAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        msg_type = message.payload.get("type")
-        
-        if msg_type == "notification":
-            await self.handle_notification(message.payload)
-        elif msg_type == "alert":
-            await self.handle_alert(message.payload)
+    @Agent.on("notification.message")
+    async def handle_notification(self, message: AgentMessage, payload: None):
+        await self.handle_notification(message.data)
+    
+    @Agent.on("alert.message")
+    async def handle_alert(self, message: AgentMessage, payload: None):
+        await self.handle_alert(message.data)
 
 # Publisher
 class PublisherAgent(Agent):
@@ -357,8 +378,7 @@ class PublisherAgent(Agent):
         
         # Send to each
         for sub in subscribers:
-            await self.send(sub["id"], {
-                "type": "notification",
+            await self.send(sub["id"], "notification.message", {
                 "text": text
             })
 ```
@@ -533,7 +553,7 @@ class StatefulAgent(Agent):
     
     async def on_message(self, message: AgentMessage):
         # Access state
-        current_count = int(self.state.get("counter", 0))
+        current_count = self.state.counter if isinstance(self.state, MyAgentState) else int(self.state.get("counter", 0))
         
         # Update state
         await self.update_state({"counter": current_count + 1})
@@ -555,8 +575,8 @@ await agent.stop()
 # Second run (after restart)
 agent = MyAgent("my_agent")  # Same ID!
 await agent.start()
-print(agent.state["counter"])  # Prints: 42
-print(agent.state["name"])     # Prints: Alice
+print(agent.state["counter"])  # Prints: 42 (if dict) or agent.state.counter (if typed)
+print(agent.state["name"])     # Prints: Alice (if dict) or agent.state.name (if typed)
 ```
 
 ### Typed State with Pydantic
@@ -1902,11 +1922,11 @@ Stop the agent and cleanup resources.
 await agent.stop()
 ```
 
-#### `async send(target_id: str, payload: dict) -> None`
+#### `async send(target_id: str, message_type: str, data: dict) -> None`
 Send a message to another agent (fire-and-forget).
 
 ```python
-await agent.send("target_agent", {
+await agent.send("target_agent", "process.task", {
     "action": "process",
     "data": {"key": "value"}
 })
@@ -1914,26 +1934,29 @@ await agent.send("target_agent", {
 
 **Parameters:**
 - `target_id`: Target agent identifier
-- `payload`: Message payload (must be JSON-serializable)
+- `message_type`: Message type identifier (string)
+- `data`: Message payload dictionary (must be JSON-serializable)
 
 **Raises:**
 - `RuntimeError`: If agent not started or gateway rejects message
 
-#### `async request(target_id: str, payload: dict, timeout: float = 30.0) -> AgentMessage`
+#### `async request(target_id: str, message_type: str, data: dict, timeout: float = 30.0) -> AgentMessage`
 Send a request and wait for response.
 
 ```python
 response = await agent.request(
     "calculator_agent",
+    "calculation.request",
     {"operation": "add", "numbers": [1, 2, 3]},
     timeout=10.0
 )
-result = response.payload["result"]
+result = response.data["result"]
 ```
 
 **Parameters:**
 - `target_id`: Target agent identifier
-- `payload`: Request payload
+- `message_type`: Message type identifier (string)
+- `data`: Request payload dictionary (must be JSON-serializable)
 - `timeout`: Maximum wait time in seconds (default: 30.0)
 
 **Returns:**
@@ -2023,17 +2046,60 @@ class MyAgent(Agent):
 ```
 
 ##### `async on_message(message: AgentMessage) -> None`
-Called when message received. Override to handle messages.
+Called for unhandled message types (fallback handler). Override to handle messages that don't have decorator-based handlers.
 
 ```python
 class MyAgent(Agent):
     async def on_message(self, message: AgentMessage):
-        print(f"Received: {message.payload}")
+        print(f"Received unhandled message type: {message.message_type}")
+        print(f"Data: {message.data}")
         # Process message
 ```
 
 **Parameters:**
 - `message`: Received AgentMessage
+
+**Note:** For better type safety, use decorator-based handlers with `@Agent.on()` instead.
+
+##### Decorator-Based Message Handlers
+
+Register typed message handlers using the `@Agent.on()` decorator:
+
+```python
+from pydantic import BaseModel
+from mas import Agent, AgentMessage
+
+class TaskRequest(BaseModel):
+    task_id: str
+    priority: int = 1
+
+class MyAgent(Agent):
+    @Agent.on("task.process", model=TaskRequest)
+    async def handle_task(self, message: AgentMessage, payload: TaskRequest):
+        """Handle task processing with typed payload"""
+        print(f"Processing task {payload.task_id} with priority {payload.priority}")
+        # Process task...
+        await message.reply("task.complete", {"status": "done"})
+    
+    @Agent.on("status.check")
+    async def handle_status(self, message: AgentMessage, payload: None):
+        """Handle status check (no payload model)"""
+        await message.reply("status.response", {"status": "healthy"})
+```
+
+**Decorator Parameters:**
+- `message_type`: String identifier for the message type
+- `model`: Optional Pydantic model for payload validation (if None, payload will be None)
+
+**Handler Signature:**
+- `message: AgentMessage` - The received message envelope
+- `payload: BaseModel | None` - Validated payload (if model provided) or None
+
+**Benefits:**
+- Automatic payload validation
+- Type safety with IDE support
+- Clean separation of concerns
+- Fallback to `on_message()` for unhandled types
 
 ##### `get_metadata() -> dict`
 Override to provide custom metadata for discovery.
@@ -2059,7 +2125,9 @@ class MyAgent(Agent):
 class AgentMessage:
     sender_id: str
     target_id: str
-    payload: dict
+    message_type: str
+    data: dict[str, Any]
+    meta: MessageMeta
     timestamp: float
     message_id: str
 ```
@@ -2067,26 +2135,31 @@ class AgentMessage:
 **Properties:**
 - `sender_id: str` - ID of sender agent
 - `target_id: str` - ID of target agent
-- `payload: dict` - Message content
+- `message_type: str` - Message type identifier
+- `data: dict[str, Any]` - Message payload (business data)
+- `meta: MessageMeta` - Transport metadata (correlation ID, reply flags, version)
 - `timestamp: float` - Unix timestamp when message was created
 - `message_id: str` - Unique message identifier
-- `expects_reply: bool` - Whether message expects a reply
-- `is_reply: bool` - Whether message is a reply to a request
+- `expects_reply: bool` - Whether message expects a reply (convenience property)
+- `is_reply: bool` - Whether message is a reply to a request (convenience property)
+- `payload: dict` - Alias for `data` (backward compatibility)
 
 **Methods:**
 
-#### `async reply(payload: dict) -> None`
+#### `async reply(message_type: str, payload: dict) -> None`
 Reply to this message (request-response pattern).
 
 ```python
-async def on_message(self, message: AgentMessage):
+@Agent.on("query.request", model=QueryRequest)
+async def handle_query(self, message: AgentMessage, payload: QueryRequest):
     if message.expects_reply:
-        result = await self.process(message.payload)
-        await message.reply({"result": result})
+        result = await self.process(payload)
+        await message.reply("query.response", {"result": result})
 ```
 
 **Parameters:**
-- `payload`: Reply payload
+- `message_type`: Message type identifier for the reply
+- `payload`: Response payload dictionary
 
 **Raises:**
 - `RuntimeError`: If message doesn't expect reply or agent not available

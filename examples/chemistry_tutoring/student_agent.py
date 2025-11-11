@@ -2,15 +2,36 @@
 
 import asyncio
 import logging
-from typing import Optional, override
+from typing import Optional, override, cast
+
+from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from mas import Agent, AgentMessage
+
+from mas import Agent, AgentMessage, AgentRecord
 
 logger = logging.getLogger(__name__)
 
 
-class StudentAgent(Agent):
+class AnswerMessage(BaseModel):
+    """Answer message from professor."""
+
+    type: str = "answer"
+    answer: str
+    question: str | None = None
+
+
+class StudentState(BaseModel):
+    """State model for StudentAgent."""
+
+    professor_id: Optional[str] = None
+    conversation_history: list[ChatCompletionMessageParam] = Field(default_factory=list)
+    questions_asked: int = 0
+    max_questions: int = 3
+    current_topic: str = "chemical bonding"
+
+
+class StudentAgent(Agent[StudentState]):
     """
     Student agent that asks chemistry homework questions.
 
@@ -38,14 +59,10 @@ class StudentAgent(Agent):
             agent_id=agent_id,
             capabilities=["chemistry_student", "question_asker"],
             redis_url=redis_url,
+            state_model=StudentState,
         )
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = model
-        self.professor_id: Optional[str] = None
-        self.conversation_history: list[ChatCompletionMessageParam] = []
-        self.questions_asked = 0
-        self.max_questions = 3
-        self.current_topic = "chemical bonding"
 
     @override
     async def on_start(self) -> None:
@@ -54,64 +71,81 @@ class StudentAgent(Agent):
 
         # Discover professor agent
         await asyncio.sleep(0.5)  # Give professor time to register
-        professors = await self.discover(capabilities=["chemistry_professor"])
+        professors: list[AgentRecord] = await self.discover(
+            capabilities=["chemistry_professor"]
+        )
 
         if not professors:
             logger.error("No professor found! Cannot start tutoring session.")
             return
 
-        self.professor_id = professors[0]["id"]
-        logger.info(f"Found professor: {self.professor_id}")
+        await self.update_state({"professor_id": professors[0]["id"]})
+        logger.info(f"Found professor: {self.state.professor_id}")
 
         # Start the tutoring session by asking first question
         await self._ask_question()
 
-    @override
-    async def on_message(self, message: AgentMessage) -> None:
+    @Agent.on("answer", model=AnswerMessage)
+    async def handle_answer(
+        self, message: AgentMessage, payload: AnswerMessage
+    ) -> None:
         """
-        Handle responses from the professor.
+        Handle answer responses from the professor.
 
         Args:
             message: Message from the professor
+            payload: Validated answer payload
         """
-        if message.payload.get("type") == "answer":
-            answer = message.payload.get("answer")
+        logger.info(f"\n{'=' * 60}")
+        logger.info("PROFESSOR'S ANSWER:")
+        logger.info(f"{payload.answer}")
+        logger.info(f"{'=' * 60}\n")
 
-            logger.info(f"\n{'=' * 60}")
-            logger.info("PROFESSOR'S ANSWER:")
-            logger.info(f"{answer}")
-            logger.info(f"{'=' * 60}\n")
-
-            # Store in conversation history
-            self.conversation_history.append(
-                {"role": "assistant", "content": f"Professor answered: {answer}"}
+        # Store in conversation history
+        history = list(self.state.conversation_history)
+        history.append(
+            cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": "assistant",
+                    "content": f"Professor answered: {payload.answer}",
+                },
             )
+        )
+        await self.update_state({"conversation_history": history})
 
-            # Ask follow-up question or finish
-            self.questions_asked += 1
+        # Ask follow-up question or finish
+        questions_asked = self.state.questions_asked + 1
+        await self.update_state({"questions_asked": questions_asked})
 
-            if self.questions_asked < self.max_questions:
-                await asyncio.sleep(1)  # Brief pause between questions
-                await self._ask_question()
-            else:
-                logger.info("Tutoring session complete! Thank you, professor.")
-                await self._send_thanks()
+        if questions_asked < self.state.max_questions:
+            await asyncio.sleep(1)  # Brief pause between questions
+            await self._ask_question()
+        else:
+            logger.info("Tutoring session complete! Thank you, professor.")
+            await self._send_thanks()
 
     async def _ask_question(self) -> None:
         """Generate and ask a chemistry question using OpenAI."""
-        if not self.professor_id:
+        if not self.state.professor_id:
             logger.error("No professor available")
             return
 
         # Build prompt for question generation
-        system_prompt = f"""You are a high school student learning about {self.current_topic} 
+        system_prompt = f"""You are a high school student learning about {self.state.current_topic} 
 in chemistry class. Generate a thoughtful question about this topic that shows you're 
 trying to understand the concepts. Keep it concise (1-2 sentences)."""
 
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
-            *self.conversation_history,
-            {"role": "user", "content": "What should I ask next about this topic?"},
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": system_prompt},
+            ),
+            *self.state.conversation_history,
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "user", "content": "What should I ask next about this topic?"},
+            ),
         ]
 
         try:
@@ -129,20 +163,28 @@ trying to understand the concepts. Keep it concise (1-2 sentences)."""
                 return
 
             logger.info(f"\n{'=' * 60}")
-            logger.info(f"STUDENT'S QUESTION #{self.questions_asked + 1}:")
+            logger.info(f"STUDENT'S QUESTION #{self.state.questions_asked + 1}:")
             logger.info(f"{question}")
             logger.info(f"{'=' * 60}\n")
 
             # Store in conversation history
-            self.conversation_history.append({"role": "user", "content": question})
+            history = list(self.state.conversation_history)
+            history.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": "user", "content": question},
+                )
+            )
+            await self.update_state({"conversation_history": history})
 
             # Send question to professor
             await self.send(
-                self.professor_id,
+                self.state.professor_id,
+                "question",
                 {
                     "type": "question",
                     "question": question,
-                    "topic": self.current_topic,
+                    "topic": self.state.current_topic,
                 },
             )
 
@@ -151,9 +193,10 @@ trying to understand the concepts. Keep it concise (1-2 sentences)."""
 
     async def _send_thanks(self) -> None:
         """Send thank you message to professor."""
-        if self.professor_id:
+        if self.state.professor_id:
             await self.send(
-                self.professor_id,
+                self.state.professor_id,
+                "thanks",
                 {
                     "type": "thanks",
                     "message": "Thank you for helping me understand chemistry!",

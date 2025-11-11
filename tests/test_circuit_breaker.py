@@ -2,7 +2,6 @@
 
 import asyncio
 import pytest
-from redis.asyncio import Redis
 
 from mas.gateway.circuit_breaker import (
     CircuitBreakerModule,
@@ -12,16 +11,6 @@ from mas.gateway.circuit_breaker import (
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-async def redis():
-    """Redis connection fixture."""
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
-    yield r
-    # Cleanup
-    await r.flushdb()
-    await r.aclose()
 
 
 @pytest.fixture

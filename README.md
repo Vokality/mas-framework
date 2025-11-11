@@ -26,6 +26,8 @@ Agent A → Gateway Service → Redis Streams → Agent B
 - **Agent registry** - Capability-based discovery via MAS Service
 - **Auto-persisted state** - Agent state saved to Redis hash structures
 - **Configurable routing** - Choose between P2P (low latency) or gateway (security/audit)
+- **Decorator-based handlers** - Type-safe message handling with Pydantic models
+- **Strongly-typed state** - Optional Pydantic models for type-safe state management
 
 ## Quick Start
 
@@ -66,23 +68,58 @@ from mas import Agent, AgentMessage
 
 class MyAgent(Agent):
     async def on_message(self, message: AgentMessage):
-        print(f"Received: {message.payload}")
-        # Send reply
-        await self.send(message.sender_id, {"reply": "got it"})
+        print(f"Received: {message.data}")
+        # Send reply with message type
+        await self.send(message.sender_id, "reply.message", {"reply": "got it"})
 
 async def main():
     # Create and start agent
     agent = MyAgent("my_agent", capabilities=["chat", "nlp"])
     await agent.start()
 
-    # Send message to another agent
-    await agent.send("other_agent", {"hello": "world"})
+    # Send message to another agent with message type
+    await agent.send("other_agent", "greeting.message", {"hello": "world"})
 
     # Discover agents by capability
     agents = await agent.discover(capabilities=["nlp"])
     print(f"Found {len(agents)} NLP agents")
 
     # Stop agent
+    await agent.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### 4. Use Decorator-Based Handlers (Recommended)
+
+For better type safety and cleaner code, use decorator-based handlers:
+
+```python
+import asyncio
+from pydantic import BaseModel
+from mas import Agent, AgentMessage
+
+class GreetingRequest(BaseModel):
+    name: str
+    language: str = "en"
+
+class TypedAgent(Agent):
+    @Agent.on("greeting.request", model=GreetingRequest)
+    async def handle_greeting(self, message: AgentMessage, payload: GreetingRequest):
+        """Handle greeting requests with typed payload"""
+        greeting = f"Hello, {payload.name}!" if payload.language == "en" else f"Hola, {payload.name}!"
+        await message.reply("greeting.response", {"greeting": greeting})
+    
+    @Agent.on("status.check")
+    async def handle_status(self, message: AgentMessage, payload: None):
+        """Handle status checks"""
+        await message.reply("status.response", {"status": "healthy"})
+
+async def main():
+    agent = TypedAgent("typed_agent")
+    await agent.start()
+    await asyncio.sleep(60)
     await agent.stop()
 
 if __name__ == "__main__":
@@ -104,7 +141,7 @@ async def main():
     await agent.start()
     
     # Direct send (publishes to Redis channel: agent.target_id)
-    await agent.send("target_agent", {"data": "hello"})
+    await agent.send("target_agent", "test.message", {"data": "hello"})
     
     await agent.stop()
 
@@ -133,7 +170,7 @@ async def main():
     
     # Messages now routed through gateway
     # Gateway provides: auth, authz, rate limiting, DLP, audit
-    await agent.send("target_agent", {"data": "hello"})
+    await agent.send("target_agent", "test.message", {"data": "hello"})
     
     await agent.stop()
 
@@ -185,7 +222,7 @@ async def main():
     await agent.update_state({"counter": 42, "status": "active"})
     
     # Access state
-    print(agent.state["counter"])  # "42"
+    print(agent.state["counter"])  # "42" (if dict) or agent.state.counter (if typed)
     
     # State survives restarts
     await agent.stop()
@@ -246,7 +283,8 @@ class MyAgent(Agent):
     
     async def on_message(self, message: AgentMessage):
         """Called when message received"""
-        print(f"Got message: {message.payload}")
+        print(f"Got message: {message.message_type}")
+        print(f"Data: {message.data}")
 
 async def main():
     agent = MyAgent("my_agent")
@@ -319,29 +357,39 @@ if __name__ == "__main__":
 
 ### Message Handling Patterns
 
+Use decorator-based handlers for type-safe message handling:
+
 ```python
 import asyncio
+from pydantic import BaseModel
 from mas import Agent, AgentMessage
 
+class ChatRequest(BaseModel):
+    text: str
+    user_id: str
+
 class ChatAgent(Agent):
-    async def on_message(self, message: AgentMessage):
-        # Pattern matching on payload
-        match message.payload.get("action"):
-            case "chat":
-                await self.handle_chat(message)
-            case "summarize":
-                await self.handle_summarize(message)
-            case _:
-                await self.send(message.sender_id, {"error": "unknown action"})
+    @Agent.on("chat.message", model=ChatRequest)
+    async def handle_chat(self, message: AgentMessage, payload: ChatRequest):
+        """Handle chat messages with typed payload"""
+        response = f"You said: {payload.text}"
+        await message.reply("chat.response", {"response": response})
     
-    async def handle_chat(self, message: AgentMessage):
-        response = f"You said: {message.payload['text']}"
-        await self.send(message.sender_id, {"response": response})
+    @Agent.on("summarize.request")
+    async def handle_summarize(self, message: AgentMessage, payload: None):
+        """Handle summarize requests"""
+        text = message.data.get("text", "")
+        summary = self.summarize(text)
+        await message.reply("summarize.response", {"summary": summary})
+    
+    async def on_message(self, message: AgentMessage):
+        """Fallback for unhandled message types"""
+        await self.send(message.sender_id, "error.message", {"error": "unknown message type"})
 
 async def main():
     agent = ChatAgent("chat_agent")
     await agent.start()
-    # Agent now handles messages based on action type
+    # Agent now handles messages based on message type
     await asyncio.sleep(60)  # Run for 1 minute
     await agent.stop()
 
@@ -373,7 +421,7 @@ async def main():
 
     # Agents can now discover and message each other
     nlp_agents = await agents[1].discover(capabilities=["nlp"])
-    await agents[1].send("agent_1", {"task": "analyze text"})
+    await agents[1].send("agent_1", "task.message", {"task": "analyze text"})
 
     # Let agents run
     await asyncio.sleep(10)

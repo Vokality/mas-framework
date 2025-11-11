@@ -2,35 +2,49 @@
 
 import json
 import logging
-from typing import Any
-from redis.asyncio import Redis
+from collections.abc import MutableMapping
+from typing import Any, Mapping, TypeVar, Generic, cast
+
 from pydantic import BaseModel
+
+from .redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 
 
-class StateManager:
+StateType = TypeVar("StateType", bound=BaseModel | MutableMapping[str, Any])
+
+
+class StateManager(Generic[StateType]):
     """Manages agent state with Redis persistence."""
 
     def __init__(
-        self, agent_id: str, redis: Redis, state_model: type[BaseModel] | None = None
-    ):
+        self,
+        agent_id: str,
+        redis: AsyncRedisProtocol,
+        state_model: type[StateType] | None = None,
+    ) -> None:
         """
         Initialize state manager.
 
         Args:
             agent_id: Agent identifier
             redis: Redis client instance
-            state_model: Optional Pydantic model for typed state
+            state_model: Optional Pydantic model for typed state.
+                When None, state is managed as dict[str, Any].
         """
         self.agent_id = agent_id
         self.redis = redis
-        self._state_model = state_model or dict
-        self._state: Any = None
+        self._state_model: type[StateType] | None = state_model
+        self._state: StateType | None = None
 
     @property
-    def state(self) -> Any:
+    def state(self) -> StateType:
         """Get current state."""
+        if self._state is None:
+            raise RuntimeError(
+                "State requested before initialization. Call load() before accessing state."
+            )
         return self._state
 
     async def load(self) -> None:
@@ -39,8 +53,9 @@ class StateManager:
         data = await self.redis.hgetall(key)  # type: ignore
 
         if data:
-            if self._state_model is dict:
-                self._state = data
+            if self._state_model is None:
+                # Dict state (values stored as strings)
+                self._state = cast(StateType, data)
             else:
                 # Pydantic model - convert string values to proper types
                 try:
@@ -53,30 +68,33 @@ class StateManager:
                     self._state = self._state_model()
         else:
             # Initialize with defaults
-            if self._state_model is dict:
-                self._state = {}
+            if self._state_model is None:
+                self._state = cast(StateType, {})
             else:
                 self._state = self._state_model()
 
-    async def update(self, updates: dict) -> None:
+    async def update(self, updates: Mapping[str, Any]) -> None:
         """
         Update state and persist to Redis.
 
         Args:
             updates: Dictionary of state updates
         """
-        if isinstance(self._state, BaseModel):
+        current_state = self.state
+
+        if isinstance(current_state, BaseModel):
             # Pydantic model
             for key, value in updates.items():
-                setattr(self._state, key, value)
-            state_dict = self._state.model_dump()
+                setattr(current_state, key, value)
+            state_dict = current_state.model_dump()
         else:
             # Dict
-            self._state.update(updates)
-            state_dict = self._state
+            dict_state = cast(MutableMapping[str, Any], current_state)
+            dict_state.update(updates)
+            state_dict = dict(dict_state)
 
         # Convert all values to strings for Redis
-        redis_data = {}
+        redis_data: dict[str, str] = {}
         for key, value in state_dict.items():
             if isinstance(value, (dict, list)):
                 redis_data[key] = json.dumps(value)
@@ -85,15 +103,15 @@ class StateManager:
 
         # Persist to Redis
         key = f"agent.state:{self.agent_id}"
-        await self.redis.hset(key, mapping=redis_data)  # type: ignore
+        await self.redis.hset(key, mapping=redis_data)
 
     async def reset(self) -> None:
         """Reset state to defaults."""
-        if self._state_model is dict:
-            self._state = {}
+        if self._state_model is None:
+            self._state = cast(StateType, {})
         else:
             self._state = self._state_model()
 
         # Clear from Redis
         key = f"agent.state:{self.agent_id}"
-        await self.redis.delete(key)  # type: ignore
+        await self.redis.delete(key)

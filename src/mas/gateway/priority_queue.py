@@ -15,11 +15,12 @@ Architecture:
 
 import time
 from enum import IntEnum
-from typing import Optional
-from redis.asyncio import Redis
-from pydantic import BaseModel
+from typing import Any, Optional
 
 import logging
+from pydantic import BaseModel
+
+from ..redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class QueuedMessage(BaseModel):
     message_id: str
     sender_id: str
     target_id: str
-    payload: dict
+    payload: dict[str, Any]
     priority: MessagePriority
     enqueued_at: float  # Unix timestamp
     ttl_seconds: float
@@ -106,7 +107,7 @@ class PriorityQueueModule:
 
     def __init__(
         self,
-        redis: Redis,
+        redis: AsyncRedisProtocol,
         config: Optional[PriorityQueueConfig] = None,
     ):
         """
@@ -116,7 +117,7 @@ class PriorityQueueModule:
             redis: Redis connection
             config: Priority queue configuration
         """
-        self.redis = redis
+        self.redis: AsyncRedisProtocol = redis
         self.config = config or PriorityQueueConfig()
         self._dequeue_counter = 0  # For weighted round-robin
 
@@ -133,7 +134,7 @@ class PriorityQueueModule:
         message_id: str,
         sender_id: str,
         target_id: str,
-        payload: dict,
+        payload: dict[str, Any],
         priority: MessagePriority = MessagePriority.NORMAL,
         ttl_seconds: Optional[float] = None,
     ) -> EnqueueResult:
@@ -226,7 +227,7 @@ class PriorityQueueModule:
         Returns:
             List of dequeued messages (may be empty)
         """
-        messages = []
+        messages: list[QueuedMessage] = []
         current_time = time.time()
 
         for _ in range(max_messages):
@@ -405,14 +406,14 @@ class PriorityQueueModule:
         processing_rate = 100.0  # messages per second
         return queue_position / processing_rate
 
-    async def get_queue_stats(self, target_id: str) -> dict:
+    async def get_queue_stats(self, target_id: str) -> dict[str, int]:
         """
         Get queue statistics for target.
 
         Returns:
             Dictionary with queue sizes per priority level
         """
-        stats = {}
+        stats: dict[str, int] = {}
 
         for priority in MessagePriority:
             queue_key = self._get_queue_key(priority, target_id)
@@ -438,7 +439,9 @@ class PriorityQueueModule:
         """
         cleared = 0
 
-        priorities = [priority] if priority else list(MessagePriority)
+        priorities: list[MessagePriority] = (
+            [priority] if priority else list(MessagePriority)
+        )
 
         for p in priorities:
             queue_key = self._get_queue_key(p, target_id)
@@ -466,7 +469,7 @@ class PriorityQueueModule:
 
         return cleared
 
-    async def get_message_position(self, message_id: str) -> Optional[dict]:
+    async def get_message_position(self, message_id: str) -> Optional[dict[str, Any]]:
         """
         Get current position of message in queue.
 

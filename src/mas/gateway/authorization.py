@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Optional
-from mas.redis_types import AsyncRedisProtocol
+from ..redis_types import AsyncRedisProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -475,7 +475,7 @@ class AuthorizationModule:
             List of role dictionaries with name and description
         """
         # Find all role keys
-        role_keys = []
+        role_keys: list[str] = []
         cursor = 0
         while True:
             cursor, keys = await self.redis.scan(cursor, match="role:*", count=100)
@@ -484,7 +484,7 @@ class AuthorizationModule:
             if cursor == 0:
                 break
 
-        roles = []
+        roles: list[dict[str, str]] = []
         for role_key in role_keys:
             role_data = await self.redis.hgetall(role_key)
             if role_data:
