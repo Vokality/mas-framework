@@ -577,12 +577,48 @@ class Agent(Generic[StateType]):
         ) -> Callable[..., Awaitable[None]]:
             if not callable(fn):
                 raise TypeError("handler must be callable")
-            registry = dict(getattr(cls, "_handlers", {}))
-            registry[message_type] = Agent._HandlerSpec(fn=fn, model=model)
-            setattr(cls, "_handlers", registry)
+
+            # Get the class that owns this method by inspecting __qualname__
+            # Format: "ClassName.method_name"
+            qualname_parts = fn.__qualname__.split(".")
+            if len(qualname_parts) >= 2:
+                # Mark the function for later registration
+                if not hasattr(fn, "_agent_handlers"):
+                    setattr(fn, "_agent_handlers", [])
+                handler_list: list[tuple[str, type[BaseModel] | None]] = getattr(
+                    fn, "_agent_handlers"
+                )
+                handler_list.append((message_type, model))
+            else:
+                # Fallback to old behavior for non-method functions
+                registry = dict(getattr(cls, "_handlers", {}))
+                registry[message_type] = Agent._HandlerSpec(fn=fn, model=model)
+                setattr(cls, "_handlers", registry)
             return fn
 
         return decorator
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Ensure each subclass gets its own handler registry."""
+        super().__init_subclass__(**kwargs)
+
+        # Create a new handlers dict for this subclass
+        cls._handlers = {}  # type: ignore[misc]
+
+        # Register all decorated methods from this class and parent classes
+        for name in dir(cls):
+            try:
+                attr = getattr(cls, name)
+                if hasattr(attr, "_agent_handlers"):
+                    handler_list: list[tuple[str, type[BaseModel] | None]] = getattr(
+                        attr, "_agent_handlers"
+                    )
+                    for message_type, model in handler_list:
+                        cls._handlers[message_type] = Agent._HandlerSpec(  # type: ignore[misc]
+                            fn=attr, model=model
+                        )
+            except AttributeError:
+                pass
 
     async def _dispatch_typed(self, msg: AgentMessage) -> bool:
         """
