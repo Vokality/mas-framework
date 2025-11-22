@@ -13,3 +13,4 @@ app
 .pytest_cache/
 .claude/
 .beads/
+examples/
