@@ -74,8 +74,8 @@ dev = [
     "pytest-timeout>=2.3.1",
     "openai>=2.6.1",
     "pydantic-ai>=1.10.0",
-    "basedpyright>=1.33.0",
     "types-redis>=4.6.0.20241004",
     "textual>=6.6.0",
     "textual-dev>=1.8.0",
+    "ty>=0.0.8",
 ]
