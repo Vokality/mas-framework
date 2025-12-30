@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
+import os
+import time
 import uuid
 from dataclasses import dataclass
 from types import FunctionType
 from typing import (
+    TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
@@ -16,21 +21,16 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
-    TYPE_CHECKING,
     cast,
 )
 
 from pydantic import BaseModel
 
-from .registry import AgentRegistry, AgentRecord
-from .state import StateManager, StateType
 from .protocol import EnvelopeMessage, MessageMeta
 from .redis_client import create_redis_client
 from .redis_types import AsyncRedisProtocol, PubSubProtocol
-import os
-import time
-import hmac
-import hashlib
+from .registry import AgentRecord, AgentRegistry
+from .state import StateManager, StateType
 
 if TYPE_CHECKING:
     from .gateway import GatewayService
