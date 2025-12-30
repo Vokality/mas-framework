@@ -14,13 +14,15 @@ async def redis():
     Redis connection fixture.
 
     Provides a Redis connection that is cleaned up after each test.
-    Flushes the database after each test to ensure isolation.
+    Flushes the database before and after each test to ensure isolation.
     """
     r = Redis.from_url("redis://localhost:6379", decode_responses=True)
+    # Ensure a clean DB at the start of each test.
+    await r.flushdb()
     yield r
     # Cleanup
     await r.flushdb()
-    await r.aclose()
+    await r.aclose()  # type: ignore[unresolved-attribute]
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +45,7 @@ async def cleanup_agent_keys():
     if keys_to_delete:
         await redis.delete(*keys_to_delete)
 
-    await redis.aclose()
+    await redis.aclose()  # type: ignore[unresolved-attribute]
     yield
 
 

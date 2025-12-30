@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
+from types import FunctionType
 from typing import (
     Any,
     Awaitable,
@@ -578,7 +579,16 @@ class Agent(Generic[StateType]):
             if not callable(fn):
                 raise TypeError("handler must be callable")
 
-            # Get the class that owns this method by inspecting __qualname__
+            # We rely on function-specific attributes below (e.g. `__qualname__` and
+            # setting `_agent_handlers`). Unusual callables can still be registered,
+            # but they bypass the deferred class-method registration path.
+            if not isinstance(fn, FunctionType):
+                registry = dict(getattr(cls, "_handlers", {}))
+                registry[message_type] = Agent._HandlerSpec(fn=fn, model=model)
+                setattr(cls, "_handlers", registry)
+                return fn
+
+            # Get the class that owns this method by inspecting __qualname__.
             # Format: "ClassName.method_name"
             qualname_parts = fn.__qualname__.split(".")
             if len(qualname_parts) >= 2:

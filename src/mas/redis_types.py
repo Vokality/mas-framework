@@ -11,10 +11,11 @@ from typing import (
     Any,
     AsyncIterator,
     Awaitable,
+    Literal,
     MutableMapping,
     Protocol,
+    Set,
     overload,
-    Literal,
 )
 
 
@@ -55,7 +56,7 @@ class AsyncRedisProtocol(Protocol):
     # Sets
     def sadd(self, key: str, *members: str) -> Awaitable[int]: ...
     def srem(self, key: str, *members: str) -> Awaitable[int]: ...
-    def smembers(self, key: str) -> Awaitable[set[str]]: ...
+    def smembers(self, key: str) -> Awaitable[Set[str]]: ...
     def sismember(self, key: str, member: str) -> Awaitable[bool]: ...
 
     # Sorted sets
