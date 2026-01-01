@@ -6,6 +6,7 @@ from .registry import AgentRegistry, AgentRecord
 from .state import StateManager, StateType
 from .protocol import EnvelopeMessage as Message, MessageType, MessageMeta
 from .__version__ import __version__
+from .runner import AgentRunner, RunnerSettings, load_runner_settings
 
 __all__ = [
     "Agent",
@@ -18,5 +19,8 @@ __all__ = [
     "Message",
     "MessageType",
     "MessageMeta",
+    "AgentRunner",
+    "RunnerSettings",
+    "load_runner_settings",
     "__version__",
 ]

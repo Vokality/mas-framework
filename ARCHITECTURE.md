@@ -1008,16 +1008,14 @@ Additional keys used by gateway:
 | `message_nonces:{id}` | String | Nonce replay protection |
 | `priority_queue:{target}:{priority}` | Sorted Set | Priority queues |
 
-### When to Use the Gateway
+### Gateway Use Cases
 
-**Use Gateway**:
+**Typical use cases**:
 - Regulated industry (finance, healthcare, government)
 - Handling sensitive data (PII, PHI, PCI)
 - Compliance requirements (SOC2, HIPAA, GDPR)
 - Multi-tenant with strict isolation
 - Zero-trust security architecture required
-
-P2P is not supported.
 
 ### Gateway Performance
 

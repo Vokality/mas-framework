@@ -1,0 +1,13 @@
+agents:
+  - agent_id: worker_agent
+    class_path: my_app.agents.worker:WorkerAgent
+    instances: 3
+    init_kwargs:
+      capabilities:
+        - worker
+      redis_url: redis://localhost:6379
+      batch_size: 10
+start_service: true
+service_redis_url: redis://localhost:6379
+start_gateway: true
+gateway_config_file: gateway.yaml

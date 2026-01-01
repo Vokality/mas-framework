@@ -92,8 +92,6 @@ class Agent(Generic[StateType]):
         capabilities: list[str] | None = None,
         redis_url: str = "redis://localhost:6379",
         state_model: type[StateType] | None = None,
-        use_gateway: bool = False,
-        gateway_url: Optional[str] = None,
     ):
         """
         Initialize agent.
@@ -104,8 +102,6 @@ class Agent(Generic[StateType]):
             redis_url: Redis connection URL
             state_model: Optional Pydantic model for typed state.
                         If provided, self.state will be strongly typed.
-            use_gateway: Whether to route messages through gateway
-            gateway_url: Gateway service URL (if different from redis_url)
 
         Note:
             Each Agent instance automatically generates a unique instance_id.
@@ -116,8 +112,6 @@ class Agent(Generic[StateType]):
         self.instance_id = uuid.uuid4().hex[:8]  # Unique per instance
         self.capabilities = capabilities or []
         self.redis_url = redis_url
-        self.use_gateway = use_gateway
-        self.gateway_url = gateway_url or redis_url
 
         # Internal state
         self._redis: Optional[AsyncRedisProtocol] = None
@@ -133,7 +127,7 @@ class Agent(Generic[StateType]):
         self._state_manager: Optional[StateManager[StateType]] = None
         self._state_model: type[StateType] | None = state_model
 
-        # Gateway client (if use_gateway=True)
+        # Gateway client (optional, managed externally)
         self._gateway: Optional["GatewayService"] = None
 
         # Request-response tracking
