@@ -79,7 +79,13 @@ class AgentRegistry:
             await self.redis.incr(instance_count_key)
             # Reactivate if previously inactive
             if existing_data.get("status") == "INACTIVE":
-                await self.redis.hset(agent_key, mapping={"status": "ACTIVE"})
+                await self.redis.hset(
+                    agent_key,
+                    mapping={
+                        "status": "ACTIVE",
+                        "registered_at": str(time.time()),
+                    },
+                )
             return existing_data["token"]
 
         # First instance - create new registration

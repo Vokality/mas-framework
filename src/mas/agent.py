@@ -163,6 +163,8 @@ class Agent(Generic[StateType]):
         self._token = await self._registry.register(
             self.id, self.instance_id, self.capabilities, metadata=self.get_metadata()
         )
+        # Seed heartbeat immediately to avoid inactive status on fast restarts
+        await self._registry.update_heartbeat(self.id, self.instance_id)
 
         # Initialize state manager
         self._state_manager = StateManager(

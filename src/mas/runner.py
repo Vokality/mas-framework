@@ -7,8 +7,9 @@ import importlib
 import logging
 import os
 import signal
+import sys
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Annotated, Any, Literal, Optional, Union, cast
 
 import yaml
 from pydantic import BaseModel, Field
@@ -38,6 +39,56 @@ class AgentSpec(BaseModel):
     )
 
 
+class AllowBidirectionalSpec(BaseModel):
+    """Bidirectional permission for two agents."""
+
+    type: Literal["allow_bidirectional"]
+    agents: list[str] = Field(min_length=2, max_length=2)
+
+
+class AllowNetworkSpec(BaseModel):
+    """Full mesh or chained network permissions."""
+
+    type: Literal["allow_network"]
+    agents: list[str] = Field(min_length=2)
+    bidirectional: bool = True
+
+
+class AllowBroadcastSpec(BaseModel):
+    """One-way broadcast permissions."""
+
+    type: Literal["allow_broadcast"]
+    sender: str
+    receivers: list[str] = Field(min_length=1)
+
+
+class AllowWildcardSpec(BaseModel):
+    """Wildcard permission for a single agent."""
+
+    type: Literal["allow_wildcard"]
+    agent_id: str
+
+
+class AllowSpec(BaseModel):
+    """One-way permissions from a sender to targets."""
+
+    type: Literal["allow"]
+    sender: str
+    targets: list[str] = Field(min_length=1)
+
+
+PermissionSpec = Annotated[
+    Union[
+        AllowBidirectionalSpec,
+        AllowNetworkSpec,
+        AllowBroadcastSpec,
+        AllowWildcardSpec,
+        AllowSpec,
+    ],
+    Field(discriminator="type"),
+]
+
+
 class RunnerSettings(BaseSettings):
     """
     Runner configuration.
@@ -64,6 +115,9 @@ class RunnerSettings(BaseSettings):
     )
     gateway_config_file: Optional[str] = Field(
         default=None, description="Path to gateway YAML config file"
+    )
+    permissions: list[PermissionSpec] = Field(
+        default_factory=list, description="Authorization rules to apply"
     )
     agents: list[AgentSpec] = Field(
         default_factory=list, description="Agent definitions to run"
@@ -131,6 +185,14 @@ class AgentRunner:
         self._service: MASService | None = None
         self._gateway: GatewayService | None = None
         self._shutdown_event = asyncio.Event()
+        self._ensure_import_base()
+
+    def _ensure_import_base(self) -> None:
+        if not self._settings.config_file:
+            return
+        base = str(Path(self._settings.config_file).resolve().parent)
+        if base not in sys.path:
+            sys.path.insert(0, base)
 
     async def run(self) -> None:
         """Start agents and wait for shutdown."""
@@ -147,6 +209,7 @@ class AgentRunner:
         try:
             await self._start_service()
             await self._start_gateway()
+            await self._apply_permissions()
             await self._start_agents()
             logger.info(
                 "Runner started",
@@ -218,6 +281,29 @@ class AgentRunner:
 
         await self._gateway.stop()
         self._gateway = None
+
+    async def _apply_permissions(self) -> None:
+        if not self._gateway or not self._settings.permissions:
+            return
+
+        auth = self._gateway.auth_manager()
+        pending_apply = False
+
+        for spec in self._settings.permissions:
+            if isinstance(spec, AllowBidirectionalSpec):
+                await auth.allow_bidirectional(spec.agents[0], spec.agents[1])
+            elif isinstance(spec, AllowNetworkSpec):
+                await auth.allow_network(spec.agents, bidirectional=spec.bidirectional)
+            elif isinstance(spec, AllowBroadcastSpec):
+                await auth.allow_broadcast(spec.sender, spec.receivers)
+            elif isinstance(spec, AllowWildcardSpec):
+                await auth.allow_wildcard(spec.agent_id)
+            elif isinstance(spec, AllowSpec):
+                auth.allow(spec.sender, spec.targets)
+                pending_apply = True
+
+        if pending_apply:
+            await auth.apply()
 
     async def _stop_service(self) -> None:
         if self._service is None:
