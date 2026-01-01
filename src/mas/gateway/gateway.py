@@ -583,7 +583,20 @@ class GatewayService:
             )
         else:
             # Stream-based delivery (at-least-once)
-            target_stream = f"{self.settings.agent_stream_prefix}{message.target_id}"
+            # For replies with sender_instance_id, route directly to the specific instance
+            # to ensure request-response works correctly with multi-instance agents
+            if message.meta.is_reply and message.meta.sender_instance_id:
+                # Route to instance-specific stream for reply delivery
+                target_stream = (
+                    f"{self.settings.agent_stream_prefix}"
+                    f"{message.target_id}:{message.meta.sender_instance_id}"
+                )
+            else:
+                # Regular message - route to shared stream (load balanced across instances)
+                target_stream = (
+                    f"{self.settings.agent_stream_prefix}{message.target_id}"
+                )
+
             await self._redis.xadd(
                 target_stream,
                 {
@@ -596,6 +609,8 @@ class GatewayService:
                 extra={
                     "message_id": message.message_id,
                     "target_stream": target_stream,
+                    "is_instance_specific": message.meta.is_reply
+                    and bool(message.meta.sender_instance_id),
                 },
             )
 

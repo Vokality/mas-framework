@@ -560,9 +560,11 @@ class TestRegistryRegression:
         from mas.registry import AgentRegistry
 
         registry = AgentRegistry(redis)
+        instance_id = "test1234"
 
         token = await registry.register(
             "regression_agent",
+            instance_id,
             capabilities=["cap1", "cap2"],
             metadata={"key": "value"},
         )
@@ -576,22 +578,23 @@ class TestRegistryRegression:
         assert "cap1" in agent["capabilities"]
         assert "cap2" in agent["capabilities"]
 
-        await registry.deregister("regression_agent")
+        await registry.deregister("regression_agent", instance_id)
 
     async def test_deregister_removes_agent(self, redis):
-        """Deregistration removes agent entry."""
+        """Deregistration removes agent entry (when last instance leaves)."""
         from mas.registry import AgentRegistry
 
         registry = AgentRegistry(redis)
+        instance_id = "test1234"
 
-        await registry.register("dereg_agent", capabilities=[])
+        await registry.register("dereg_agent", instance_id, capabilities=[])
 
         # Verify exists
         agent = await registry.get_agent("dereg_agent")
         assert agent is not None
 
-        # Deregister
-        await registry.deregister("dereg_agent")
+        # Deregister (last instance)
+        await registry.deregister("dereg_agent", instance_id)
 
         # Verify removed
         agent = await registry.get_agent("dereg_agent")
@@ -602,14 +605,15 @@ class TestRegistryRegression:
         from mas.registry import AgentRegistry
 
         registry = AgentRegistry(redis)
+        instance_id = "test1234"
 
-        await registry.register("state_agent", capabilities=[])
+        await registry.register("state_agent", instance_id, capabilities=[])
 
         # Create some state
         await redis.hset("agent.state:state_agent", mapping={"data": "preserved"})
 
         # Deregister with default (keep_state=True)
-        await registry.deregister("state_agent")
+        await registry.deregister("state_agent", instance_id)
 
         # State should still exist
         state = await redis.hgetall("agent.state:state_agent")
@@ -623,12 +627,13 @@ class TestRegistryRegression:
         from mas.registry import AgentRegistry
 
         registry = AgentRegistry(redis)
+        instance_id = "test1234"
 
-        await registry.register("state_remove_agent", capabilities=[])
+        await registry.register("state_remove_agent", instance_id, capabilities=[])
         await redis.hset("agent.state:state_remove_agent", mapping={"data": "remove"})
 
         # Deregister with keep_state=False
-        await registry.deregister("state_remove_agent", keep_state=False)
+        await registry.deregister("state_remove_agent", instance_id, keep_state=False)
 
         # State should be removed
         state = await redis.hgetall("agent.state:state_remove_agent")
@@ -639,18 +644,19 @@ class TestRegistryRegression:
         from mas.registry import AgentRegistry
 
         registry = AgentRegistry(redis)
+        instance_id = "test1234"
 
-        await registry.register("heartbeat_agent", capabilities=[])
+        await registry.register("heartbeat_agent", instance_id, capabilities=[])
 
-        # Update heartbeat
-        await registry.update_heartbeat("heartbeat_agent", ttl=60)
+        # Update heartbeat (now requires instance_id)
+        await registry.update_heartbeat("heartbeat_agent", instance_id, ttl=60)
 
-        # Verify heartbeat key exists
-        ttl = await redis.ttl("agent:heartbeat_agent:heartbeat")
+        # Verify heartbeat key exists (new format includes instance_id)
+        ttl = await redis.ttl(f"agent:heartbeat_agent:heartbeat:{instance_id}")
         assert ttl > 0
         assert ttl <= 60
 
-        await registry.deregister("heartbeat_agent")
+        await registry.deregister("heartbeat_agent", instance_id)
 
 
 # -----------------------------------------------------------------------------

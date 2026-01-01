@@ -1,4 +1,4 @@
-"""Redis-based agent registry."""
+"""Redis-based agent registry with multi-instance support."""
 
 from __future__ import annotations
 
@@ -26,7 +26,15 @@ class AgentRecord(_AgentRecordRequired, total=False):
 
 
 class AgentRegistry:
-    """Manages agent registration in Redis."""
+    """
+    Manages agent registration in Redis with multi-instance support.
+
+    Multi-instance features:
+    - Idempotent registration: first instance registers, subsequent instances join
+    - Instance counting: tracks active instance count per agent
+    - Per-instance heartbeats: each instance maintains its own heartbeat
+    - Graceful deregistration: only removes agent when last instance leaves
+    """
 
     def __init__(self, redis: AsyncRedisProtocol):
         """
@@ -40,20 +48,41 @@ class AgentRegistry:
     async def register(
         self,
         agent_id: str,
+        instance_id: str,
         capabilities: list[str],
         metadata: Optional[dict[str, Any]] = None,
     ) -> str:
         """
-        Register an agent.
+        Register an agent instance.
+
+        This operation is idempotent for the agent. The first instance to register
+        creates the agent entry and generates a token. Subsequent instances
+        retrieve the existing token and increment the instance count.
 
         Args:
-            agent_id: Unique agent identifier
+            agent_id: Logical agent identifier (shared across instances)
+            instance_id: Unique instance identifier
             capabilities: List of agent capabilities
             metadata: Optional agent metadata
 
         Returns:
-            Authentication token for the agent
+            Authentication token for the agent (shared across all instances)
         """
+        agent_key = f"agent:{agent_id}"
+        instance_count_key = f"agent:{agent_id}:instance_count"
+
+        # Check if agent already exists
+        existing_data = await self.redis.hgetall(agent_key)
+
+        if existing_data and existing_data.get("token"):
+            # Agent exists - increment instance count and return existing token
+            await self.redis.incr(instance_count_key)
+            # Reactivate if previously inactive
+            if existing_data.get("status") == "INACTIVE":
+                await self.redis.hset(agent_key, mapping={"status": "ACTIVE"})
+            return existing_data["token"]
+
+        # First instance - create new registration
         token = self._generate_token()
 
         agent_data: dict[str, str] = {
@@ -65,29 +94,58 @@ class AgentRegistry:
             "registered_at": str(time.time()),
         }
 
-        await self.redis.hset(f"agent:{agent_id}", mapping=agent_data)
+        # Use pipeline for atomic registration
+        pipe = self.redis.pipeline()
+        pipe.hset(agent_key, mapping=agent_data)
+        pipe.incr(instance_count_key)  # Set to 1
+        await pipe.execute()
+
         return token
 
-    async def deregister(self, agent_id: str, keep_state: bool = True) -> None:
+    async def deregister(
+        self,
+        agent_id: str,
+        instance_id: str,
+        keep_state: bool = True,
+    ) -> None:
         """
-        Deregister an agent.
+        Deregister an agent instance.
 
-        Uses pipeline to batch delete operations into a single round-trip.
+        Decrements the instance count. Only removes the agent entry when
+        the last instance deregisters.
 
         Args:
-            agent_id: Agent identifier to deregister
+            agent_id: Logical agent identifier
+            instance_id: Instance identifier being deregistered
             keep_state: If True, preserves agent state in Redis (default: True)
         """
-        # Batch all deletes into a single pipeline
-        pipe = self.redis.pipeline()
-        pipe.delete(f"agent:{agent_id}")
-        pipe.delete(f"agent:{agent_id}:heartbeat")
+        instance_count_key = f"agent:{agent_id}:instance_count"
+        heartbeat_key = f"agent:{agent_id}:heartbeat:{instance_id}"
 
-        # Only delete state if explicitly requested
-        if not keep_state:
-            pipe.delete(f"agent.state:{agent_id}")
+        # Decrement instance count
+        new_count = await self.redis.decr(instance_count_key)
 
-        await pipe.execute()
+        # Always delete this instance's heartbeat
+        await self.redis.delete(heartbeat_key)
+
+        if new_count <= 0:
+            # Last instance - clean up agent registration
+            pipe = self.redis.pipeline()
+            pipe.delete(f"agent:{agent_id}")
+            pipe.delete(instance_count_key)
+
+            # Clean up any remaining heartbeat keys for this agent
+            # (in case of unclean shutdowns)
+            async for key in self.redis.scan_iter(
+                match=f"agent:{agent_id}:heartbeat:*"
+            ):
+                pipe.delete(key)
+
+            # Only delete state if explicitly requested
+            if not keep_state:
+                pipe.delete(f"agent.state:{agent_id}")
+
+            await pipe.execute()
 
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         """
@@ -111,6 +169,21 @@ class AgentRegistry:
             registered_at=float(data["registered_at"]),
         )
 
+    async def get_instance_count(self, agent_id: str) -> int:
+        """
+        Get the number of active instances for an agent.
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            Number of active instances (0 if agent not registered)
+        """
+        count = await self.redis.get(f"agent:{agent_id}:instance_count")
+        if count is None:
+            return 0
+        return int(count)
+
     async def discover(
         self, capabilities: list[str] | None = None
     ) -> list[AgentRecord]:
@@ -119,6 +192,9 @@ class AgentRegistry:
 
         Uses pipeline batching to fetch all agent data in a single round-trip,
         eliminating the N+1 query pattern.
+
+        Note: Returns logical agents, not instances. Callers don't need to know
+        about individual instances.
 
         Args:
             capabilities: Optional list of required capabilities.
@@ -132,7 +208,7 @@ class AgentRegistry:
         pattern = "agent:*"
 
         async for key in self.redis.scan_iter(match=pattern):
-            # Skip non-agent keys (like agent:id:heartbeat)
+            # Only include agent hashes, not heartbeat or instance_count keys
             if not key.startswith("agent:") or key.count(":") != 1:
                 continue
             keys.append(key)
@@ -169,15 +245,77 @@ class AgentRegistry:
 
         return agents
 
-    async def update_heartbeat(self, agent_id: str, ttl: int = 60) -> None:
+    async def update_heartbeat(
+        self,
+        agent_id: str,
+        instance_id: str,
+        ttl: int = 60,
+    ) -> None:
         """
-        Update agent heartbeat.
+        Update heartbeat for a specific agent instance.
+
+        Each instance maintains its own heartbeat key. The agent is considered
+        healthy if at least one instance has a valid heartbeat.
+
+        Args:
+            agent_id: Logical agent identifier
+            instance_id: Instance identifier
+            ttl: Time-to-live in seconds (default: 60)
+        """
+        heartbeat_key = f"agent:{agent_id}:heartbeat:{instance_id}"
+        await self.redis.setex(heartbeat_key, ttl, str(time.time()))
+
+    async def get_instance_heartbeats(self, agent_id: str) -> dict[str, float | None]:
+        """
+        Get heartbeat TTLs for all instances of an agent.
 
         Args:
             agent_id: Agent identifier
-            ttl: Time-to-live in seconds (default: 60)
+
+        Returns:
+            Dict mapping instance_id to TTL (None if expired/missing)
         """
-        await self.redis.setex(f"agent:{agent_id}:heartbeat", ttl, str(time.time()))
+        heartbeats: dict[str, float | None] = {}
+        pattern = f"agent:{agent_id}:heartbeat:*"
+
+        # Collect all heartbeat keys
+        keys: list[str] = []
+        async for key in self.redis.scan_iter(match=pattern):
+            keys.append(key)
+
+        if not keys:
+            return heartbeats
+
+        # Batch fetch TTLs
+        pipe = self.redis.pipeline()
+        for key in keys:
+            pipe.ttl(key)
+
+        ttls = await pipe.execute()
+
+        # Extract instance IDs and map to TTLs
+        prefix_len = len(f"agent:{agent_id}:heartbeat:")
+        for key, ttl in zip(keys, ttls, strict=True):
+            instance_id = key[prefix_len:]
+            # TTL of -2 means key doesn't exist, -1 means no expiry
+            heartbeats[instance_id] = ttl if ttl > 0 else None
+
+        return heartbeats
+
+    async def has_healthy_instance(self, agent_id: str) -> bool:
+        """
+        Check if an agent has at least one healthy instance.
+
+        An instance is healthy if its heartbeat key exists and has TTL > 0.
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            True if at least one instance has a valid heartbeat
+        """
+        heartbeats = await self.get_instance_heartbeats(agent_id)
+        return any(ttl is not None and ttl > 0 for ttl in heartbeats.values())
 
     def _generate_token(self) -> str:
         """Generate authentication token."""

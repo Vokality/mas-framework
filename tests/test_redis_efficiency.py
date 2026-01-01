@@ -248,6 +248,14 @@ class RedisCallCounter:
         self._track("setex")
         return await self._redis.setex(key, seconds, value)
 
+    async def incr(self, key: str) -> int:
+        self._track("incr")
+        return await self._redis.incr(key)
+
+    async def decr(self, key: str) -> int:
+        self._track("decr")
+        return await self._redis.decr(key)
+
     async def publish(self, channel: str, message: str) -> int:
         self._track("publish")
         return await self._redis.publish(channel, message)
@@ -912,7 +920,8 @@ class TestDeregisterEfficiency:
         """Optimized: Pipeline batches all delete calls."""
         from mas.registry import AgentRegistry
 
-        # Setup agent first
+        # Setup agent first (with multi-instance support)
+        instance_id = "testinst"
         await counter._redis.hset(
             "agent:dereg_test",
             mapping={
@@ -923,33 +932,38 @@ class TestDeregisterEfficiency:
                 "registered_at": "123",
             },
         )
-        await counter._redis.set("agent:dereg_test:heartbeat", "123")
+        # Set instance count to 1 (last instance)
+        await counter._redis.set("agent:dereg_test:instance_count", "1")
+        # New heartbeat format includes instance_id
+        await counter._redis.set(f"agent:dereg_test:heartbeat:{instance_id}", "123")
 
         counter.reset_counts()
         registry = AgentRegistry(counter)
 
-        await registry.deregister("dereg_test", keep_state=True)
+        await registry.deregister("dereg_test", instance_id, keep_state=True)
 
         print(f"\n{counter.get_summary()}")
 
-        # AFTER optimization: 1 pipeline_execute call
+        # Multi-instance deregister pattern:
+        # 1. DECR instance_count
+        # 2. DELETE instance heartbeat
+        # 3. Pipeline for cleanup (when last instance)
+        assert counter.call_counts["decr"] == 1, (
+            f"Expected 1 decr call, got {counter.call_counts.get('decr', 0)}"
+        )
+        assert counter.call_counts["delete"] == 1, (
+            f"Expected 1 delete call for heartbeat, got {counter.call_counts.get('delete', 0)}"
+        )
         assert counter.call_counts["pipeline_execute"] == 1, (
-            f"Expected 1 pipeline_execute call, got {counter.call_counts['pipeline_execute']}"
-        )
-        assert counter.total_calls == 1, (
-            f"Expected 1 total call, got {counter.total_calls}"
-        )
-        # Pipeline should contain 2 delete operations
-        assert len(counter.pipeline_ops) == 1, "Expected 1 pipeline batch"
-        assert counter.pipeline_ops[0].count("delete") == 2, (
-            f"Expected 2 delete ops in pipeline, got {counter.pipeline_ops[0]}"
+            f"Expected 1 pipeline_execute call, got {counter.call_counts.get('pipeline_execute', 0)}"
         )
 
     async def test_optimized_deregister_with_state(self, counter: RedisCallCounter):
         """Optimized: Deregister with state deletion uses single pipeline."""
         from mas.registry import AgentRegistry
 
-        # Setup agent and state
+        # Setup agent and state (with multi-instance support)
+        instance_id = "testinst"
         await counter._redis.hset(
             "agent:dereg_state_test",
             mapping={
@@ -960,7 +974,12 @@ class TestDeregisterEfficiency:
                 "registered_at": "123",
             },
         )
-        await counter._redis.set("agent:dereg_state_test:heartbeat", "123")
+        # Set instance count to 1 (last instance)
+        await counter._redis.set("agent:dereg_state_test:instance_count", "1")
+        # New heartbeat format includes instance_id
+        await counter._redis.set(
+            f"agent:dereg_state_test:heartbeat:{instance_id}", "123"
+        )
         await counter._redis.hset(
             "agent.state:dereg_state_test", mapping={"key": "value"}
         )
@@ -968,19 +987,20 @@ class TestDeregisterEfficiency:
         counter.reset_counts()
         registry = AgentRegistry(counter)
 
-        await registry.deregister("dereg_state_test", keep_state=False)
+        await registry.deregister("dereg_state_test", instance_id, keep_state=False)
 
         print(f"\n{counter.get_summary()}")
 
-        # AFTER optimization: 1 pipeline_execute call
+        # Multi-instance deregister pattern:
+        # 1. DECR instance_count
+        # 2. DELETE instance heartbeat
+        # 3. Pipeline for cleanup (when last instance, includes state deletion)
+        assert counter.call_counts["decr"] == 1, (
+            f"Expected 1 decr call, got {counter.call_counts.get('decr', 0)}"
+        )
+        assert counter.call_counts["delete"] == 1, (
+            f"Expected 1 delete call for heartbeat, got {counter.call_counts.get('delete', 0)}"
+        )
         assert counter.call_counts["pipeline_execute"] == 1, (
-            f"Expected 1 pipeline_execute call, got {counter.call_counts['pipeline_execute']}"
-        )
-        assert counter.total_calls == 1, (
-            f"Expected 1 total call, got {counter.total_calls}"
-        )
-        # Pipeline should contain 3 delete operations
-        assert len(counter.pipeline_ops) == 1, "Expected 1 pipeline batch"
-        assert counter.pipeline_ops[0].count("delete") == 3, (
-            f"Expected 3 delete ops in pipeline, got {counter.pipeline_ops[0]}"
+            f"Expected 1 pipeline_execute call, got {counter.call_counts.get('pipeline_execute', 0)}"
         )
