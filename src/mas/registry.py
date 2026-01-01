@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from typing import Any, List, Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 from .redis_types import AsyncRedisProtocol
 
@@ -72,16 +72,22 @@ class AgentRegistry:
         """
         Deregister an agent.
 
+        Uses pipeline to batch delete operations into a single round-trip.
+
         Args:
             agent_id: Agent identifier to deregister
             keep_state: If True, preserves agent state in Redis (default: True)
         """
-        await self.redis.delete(f"agent:{agent_id}")
-        await self.redis.delete(f"agent:{agent_id}:heartbeat")
+        # Batch all deletes into a single pipeline
+        pipe = self.redis.pipeline()
+        pipe.delete(f"agent:{agent_id}")
+        pipe.delete(f"agent:{agent_id}:heartbeat")
 
         # Only delete state if explicitly requested
         if not keep_state:
-            await self.redis.delete(f"agent.state:{agent_id}")
+            pipe.delete(f"agent.state:{agent_id}")
+
+        await pipe.execute()
 
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         """
@@ -111,6 +117,9 @@ class AgentRegistry:
         """
         Discover agents by capabilities.
 
+        Uses pipeline batching to fetch all agent data in a single round-trip,
+        eliminating the N+1 query pattern.
+
         Args:
             capabilities: Optional list of required capabilities.
                          If None, returns all active agents.
@@ -118,15 +127,29 @@ class AgentRegistry:
         Returns:
             List of agent data dicts
         """
-        agents: List[AgentRecord] = []
+        # Phase 1: Collect all matching keys
+        keys: list[str] = []
         pattern = "agent:*"
 
         async for key in self.redis.scan_iter(match=pattern):
             # Skip non-agent keys (like agent:id:heartbeat)
             if not key.startswith("agent:") or key.count(":") != 1:
                 continue
+            keys.append(key)
 
-            agent_data = await self.redis.hgetall(key)
+        if not keys:
+            return []
+
+        # Phase 2: Batch fetch all agent data using pipeline
+        pipe = self.redis.pipeline()
+        for key in keys:
+            pipe.hgetall(key)
+
+        results = await pipe.execute()
+
+        # Phase 3: Process results and filter
+        agents: list[AgentRecord] = []
+        for agent_data in results:
             if not agent_data or agent_data.get("status") != "ACTIVE":
                 continue
 

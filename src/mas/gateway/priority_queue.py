@@ -13,11 +13,11 @@ Architecture:
 - Supports message TTL and dead letter queue for expired messages
 """
 
+import logging
 import time
 from enum import IntEnum
 from typing import Any, Optional
 
-import logging
 from pydantic import BaseModel
 
 from ..redis_types import AsyncRedisProtocol
@@ -166,24 +166,18 @@ class PriorityQueueModule:
             ttl_seconds=ttl,
         )
 
-        # Store message metadata
+        # Store message metadata and add to queue using pipeline (3 calls -> 1)
         metadata_key = self._get_metadata_key(message_id)
-        await self.redis.setex(
-            metadata_key,
-            max(1, int(ttl)),  # Ensure at least 1 second
-            queued_msg.model_dump_json(),
-        )
-
-        # Add to priority queue (sorted set by timestamp)
         queue_key = self._get_queue_key(priority, target_id)
         score = enqueued_at  # Messages with same priority ordered by arrival time
 
-        await self.redis.zadd(queue_key, {message_id: score})
+        pipe = self.redis.pipeline()
+        pipe.setex(metadata_key, max(1, int(ttl)), queued_msg.model_dump_json())
+        pipe.zadd(queue_key, {message_id: score})
+        pipe.expire(queue_key, int(ttl * 2))
+        await pipe.execute()
 
-        # Set TTL on the queue itself to clean up empty queues
-        await self.redis.expire(queue_key, int(ttl * 2))
-
-        # Calculate queue position and estimated delay
+        # Calculate queue position and estimated delay (uses separate pipeline)
         queue_position = await self._estimate_queue_position(target_id, priority, score)
         estimated_delay = await self._estimate_delay(target_id, queue_position)
 
@@ -213,12 +207,16 @@ class PriorityQueueModule:
         """
         Dequeue messages for target using fair weighted round-robin.
 
+        Uses pipeline batching to check all priority queues in a single
+        round-trip, then dequeues from non-empty queues based on weighted
+        selection.
+
         Algorithm:
-        1. Use weighted round-robin to select priority level
-        2. Dequeue oldest message from selected priority
-        3. Check message TTL, skip if expired
-        4. Apply fairness boost if message waited too long
-        5. Return valid messages
+        1. Batch check all priority queue sizes (single pipeline call)
+        2. Use weighted round-robin to select from non-empty priorities
+        3. Dequeue oldest message from selected priority
+        4. Check message TTL, skip if expired
+        5. Apply fairness boost if message waited too long
 
         Args:
             target_id: Target agent ID
@@ -230,9 +228,18 @@ class PriorityQueueModule:
         messages: list[QueuedMessage] = []
         current_time = time.time()
 
+        # Batch check all priority queue sizes in a single pipeline call
+        non_empty_priorities = await self._get_non_empty_priorities(target_id)
+
+        if not non_empty_priorities:
+            return messages
+
         for _ in range(max_messages):
-            # Select priority level using weighted round-robin
-            priority = self._select_priority_fair()
+            if not non_empty_priorities:
+                break
+
+            # Select priority level using weighted round-robin from non-empty queues
+            priority = self._select_priority_fair_from(non_empty_priorities)
 
             # Try to dequeue from selected priority
             message = await self._dequeue_from_priority(
@@ -242,20 +249,24 @@ class PriorityQueueModule:
             if message:
                 messages.append(message)
             else:
-                # Try other priorities if selected priority is empty
+                # Queue became empty, remove from candidates and try next
+                non_empty_priorities.discard(priority)
+                if not non_empty_priorities:
+                    break
+
+                # Try highest priority non-empty queue
                 for fallback_priority in sorted(
-                    MessagePriority, key=lambda p: p.value, reverse=True
+                    non_empty_priorities, key=lambda p: p.value, reverse=True
                 ):
-                    if fallback_priority == priority:
-                        continue
                     message = await self._dequeue_from_priority(
                         target_id, fallback_priority, current_time
                     )
                     if message:
                         messages.append(message)
                         break
+                    else:
+                        non_empty_priorities.discard(fallback_priority)
 
-                # If no messages found in any queue, stop
                 if not message:
                     break
 
@@ -270,6 +281,73 @@ class PriorityQueueModule:
             )
 
         return messages
+
+    async def _get_non_empty_priorities(self, target_id: str) -> set[MessagePriority]:
+        """
+        Batch check all priority queues and return non-empty ones.
+
+        Uses pipeline to check all queues in a single round-trip.
+
+        Args:
+            target_id: Target agent ID
+
+        Returns:
+            Set of priorities that have messages
+        """
+        # Use pipeline to check all queue sizes in one round-trip
+        pipe = self.redis.pipeline()
+        priorities_order = list(MessagePriority)
+
+        for priority in priorities_order:
+            queue_key = self._get_queue_key(priority, target_id)
+            pipe.zcard(queue_key)
+
+        results = await pipe.execute()
+
+        # Build set of non-empty priorities
+        non_empty: set[MessagePriority] = set()
+        for priority, count in zip(priorities_order, results, strict=True):
+            if count > 0:
+                non_empty.add(priority)
+
+        return non_empty
+
+    def _select_priority_fair_from(
+        self, candidates: set[MessagePriority]
+    ) -> MessagePriority:
+        """
+        Select priority from candidates using weighted round-robin.
+
+        Args:
+            candidates: Set of non-empty priorities to choose from
+
+        Returns:
+            Selected priority
+        """
+        if not candidates:
+            return MessagePriority.NORMAL
+
+        if len(candidates) == 1:
+            return next(iter(candidates))
+
+        self._dequeue_counter += 1
+
+        # Calculate cumulative weights for candidates only
+        candidate_weights = [
+            (p, self.config.dequeue_weights[p])
+            for p in sorted(candidates, key=lambda p: p.value, reverse=True)
+        ]
+        total_weight = sum(w for _, w in candidate_weights)
+        position = self._dequeue_counter % total_weight
+
+        cumulative = 0
+        for priority, weight in candidate_weights:
+            cumulative += weight
+            if position < cumulative:
+                return priority
+
+        # Fallback to highest priority candidate
+        return max(candidates, key=lambda p: p.value)
 
     async def _dequeue_from_priority(
         self,
@@ -373,23 +451,29 @@ class PriorityQueueModule:
         """
         Estimate position in queue.
 
+        Uses pipeline to batch all queue size checks into a single round-trip.
+
         Considers:
         - Messages in higher priority queues (processed first)
         - Messages in same priority queue with lower score
         """
-        position = 0
+        # Use pipeline to batch all queue checks
+        pipe = self.redis.pipeline()
+        higher_priorities = [p for p in MessagePriority if p.value > priority.value]
 
-        # Count messages in higher priority queues
-        for p in MessagePriority:
-            if p.value > priority.value:
-                queue_key = self._get_queue_key(p, target_id)
-                count = await self.redis.zcard(queue_key)
-                position += count
+        # Queue zcard calls for higher priority queues
+        for p in higher_priorities:
+            queue_key = self._get_queue_key(p, target_id)
+            pipe.zcard(queue_key)
 
-        # Count messages in same priority queue with lower score
+        # Queue zcount for same priority queue
         queue_key = self._get_queue_key(priority, target_id)
-        count = await self.redis.zcount(queue_key, "-inf", score)
-        position += count
+        pipe.zcount(queue_key, "-inf", score)
+
+        results = await pipe.execute()
+
+        # Sum up position
+        position = sum(results)
 
         return max(1, position)  # At least position 1
 

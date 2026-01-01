@@ -136,61 +136,90 @@ class MASService:
                 logger.warning("Unknown message type", extra={"type": msg.get("type")})
 
     async def _monitor_health(self) -> None:
-        """Monitor agent health via heartbeats."""
+        """Monitor agent health via heartbeats.
+
+        Uses pipeline batching to reduce N+1 queries:
+        1. Single scan to collect all agent keys
+        2. Pipeline to batch-fetch heartbeat TTLs and agent data
+        3. Pipeline to batch-update stale agents
+        """
         while self._running:
             try:
                 if not self._redis:
                     await asyncio.sleep(30)
                     continue
 
-                # Find stale agents by existing heartbeat keys (expiring soon or invalid TTL)
-                async for key in self._redis.scan_iter(match="agent:*:heartbeat"):
-                    ttl = await self._redis.ttl(key)
-                    if ttl <= 0:  # -2 (missing) or -1 (no expiry) or invalid
-                        agent_id = key.split(":")[1]
+                # Phase 1: Collect all agent keys (single scan)
+                agent_keys: list[str] = []
+                async for key in self._redis.scan_iter(match="agent:*"):
+                    # Only include agent hashes, not heartbeat keys
+                    if key.count(":") == 1:
+                        agent_keys.append(key)
+
+                if not agent_keys:
+                    await asyncio.sleep(30)
+                    continue
+
+                # Phase 2: Batch fetch all TTLs and agent data using pipeline
+                pipe = self._redis.pipeline()
+                for agent_key in agent_keys:
+                    agent_id = agent_key.split(":")[1]
+                    hb_key = f"agent:{agent_id}:heartbeat"
+                    pipe.ttl(hb_key)  # Get heartbeat TTL
+                    pipe.hget(agent_key, "status")  # Get current status
+                    pipe.hget(agent_key, "registered_at")  # Get registration time
+
+                results = await pipe.execute()
+
+                # Phase 3: Process results and identify stale agents
+                current_time = time.time()
+                agents_to_deactivate: list[str] = []
+
+                for i, agent_key in enumerate(agent_keys):
+                    base_idx = i * 3
+                    ttl = results[base_idx]  # TTL result
+                    status = results[base_idx + 1]  # Status result
+                    reg_at_raw = results[base_idx + 2]  # registered_at result
+
+                    agent_id = agent_key.split(":")[1]
+
+                    # Skip if already inactive
+                    if status == "INACTIVE":
+                        continue
+
+                    # Check if heartbeat key is missing (TTL is -2) with grace period
+                    # This check MUST come before the TTL <= 0 check since -2 < 0
+                    if ttl == -2:  # Key doesn't exist
+                        reg_at: Optional[float] = None
+                        if isinstance(reg_at_raw, str):
+                            try:
+                                reg_at = float(reg_at_raw)
+                            except ValueError:
+                                reg_at = None
+
+                        if reg_at is not None:
+                            if (current_time - reg_at) > float(self.heartbeat_timeout):
+                                logger.warning(
+                                    "Agent heartbeat missing (grace period expired)",
+                                    extra={"agent_id": agent_id},
+                                )
+                                agents_to_deactivate.append(agent_key)
+                        continue
+
+                    # Check if heartbeat expired (TTL <= 0 means expired or no expiry)
+                    # At this point we know TTL is not -2, so the key exists
+                    if ttl is not None and ttl <= 0:
                         logger.warning(
                             "Agent heartbeat expired", extra={"agent_id": agent_id}
                         )
-                        # Mark as inactive if still present
-                        agent_key = f"agent:{agent_id}"
-                        exists = await self._redis.exists(agent_key)
-                        if exists:
-                            status = await self._redis.hget(agent_key, "status")
-                            if status != "INACTIVE":
-                                await self._redis.hset(
-                                    agent_key, mapping={"status": "INACTIVE"}
-                                )
+                        agents_to_deactivate.append(agent_key)
 
-                # Also detect agents with missing heartbeat keys entirely (with grace period)
-                async for agent_key in self._redis.scan_iter(match="agent:*"):
-                    # Skip non-agent hashes like heartbeat keys themselves
-                    if agent_key.count(":") != 1:
-                        continue
-
-                    hb_key = f"{agent_key}:heartbeat"
-                    if await self._redis.exists(hb_key):
-                        continue
-
-                    reg_at_raw = await self._redis.hget(agent_key, "registered_at")
-                    reg_at: Optional[float] = None
-                    if isinstance(reg_at_raw, str):
-                        try:
-                            reg_at = float(reg_at_raw)
-                        except ValueError:
-                            reg_at = None
-
-                    if reg_at is None:
-                        continue
-
-                    if (time.time() - reg_at) <= float(self.heartbeat_timeout):
-                        continue
-
-                    status = await self._redis.hget(agent_key, "status")
-                    if status != "INACTIVE":
-                        await self._redis.hset(
-                            agent_key,
-                            mapping={"status": "INACTIVE"},
-                        )
+                # Phase 4: Batch update stale agents using pipeline
+                if agents_to_deactivate:
+                    update_pipe = self._redis.pipeline()
+                    for agent_key in agents_to_deactivate:
+                        update_pipe.hset(agent_key, mapping={"status": "INACTIVE"})
+                    await update_pipe.execute()
 
                 await asyncio.sleep(30)  # Check every 30 seconds
             except Exception as e:

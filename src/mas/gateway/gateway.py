@@ -780,6 +780,4 @@ class GatewayService:
                     logger.error("Ingress consumer loop error", exc_info=e)
                     await asyncio.sleep(1.0)
 
-        import asyncio  # local import to avoid unused in type-checking contexts
-
         self._ingress_task = asyncio.create_task(_loop())

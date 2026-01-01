@@ -3,10 +3,67 @@
 import logging
 import time
 from typing import Optional
-from ..redis_types import AsyncRedisProtocol
+
 from pydantic import BaseModel
 
+from ..redis_types import AsyncRedisProtocol
+
 logger = logging.getLogger(__name__)
+
+
+# Lua script for atomic rate limit check
+# This reduces 10 Redis calls to 1 atomic operation
+_RATE_LIMIT_SCRIPT = """
+-- KEYS[1] = minute window key (ratelimit:{agent_id}:minute)
+-- KEYS[2] = hour window key (ratelimit:{agent_id}:hour)
+-- KEYS[3] = limits key (ratelimit:{agent_id}:limits)
+-- ARGV[1] = message_id
+-- ARGV[2] = current timestamp (float)
+-- ARGV[3] = default per_minute limit
+-- ARGV[4] = default per_hour limit
+
+local minute_key = KEYS[1]
+local hour_key = KEYS[2]
+local limits_key = KEYS[3]
+local message_id = ARGV[1]
+local now = tonumber(ARGV[2])
+local default_per_minute = tonumber(ARGV[3])
+local default_per_hour = tonumber(ARGV[4])
+
+-- Get custom limits or use defaults
+local per_minute = tonumber(redis.call('HGET', limits_key, 'per_minute')) or default_per_minute
+local per_hour = tonumber(redis.call('HGET', limits_key, 'per_hour')) or default_per_hour
+
+-- Check minute window
+local minute_start = now - 60
+redis.call('ZREMRANGEBYSCORE', minute_key, '-inf', minute_start)
+local minute_count = redis.call('ZCARD', minute_key)
+
+if minute_count >= per_minute then
+    -- Rate limited by minute
+    return {0, per_minute, 0, now + 60, 'minute'}
+end
+
+-- Check hour window
+local hour_start = now - 3600
+redis.call('ZREMRANGEBYSCORE', hour_key, '-inf', hour_start)
+local hour_count = redis.call('ZCARD', hour_key)
+
+if hour_count >= per_hour then
+    -- Rate limited by hour
+    return {0, per_hour, 0, now + 3600, 'hour'}
+end
+
+-- Allowed - add to both windows
+redis.call('ZADD', minute_key, now, message_id)
+redis.call('EXPIRE', minute_key, 60)
+redis.call('ZADD', hour_key, now, message_id)
+redis.call('EXPIRE', hour_key, 3600)
+
+-- Return success with minute window info (more restrictive)
+local remaining = per_minute - minute_count - 1
+return {1, per_minute, remaining, now + 60, 'minute'}
+"""
 
 
 class RateLimitResult(BaseModel):
@@ -59,6 +116,76 @@ class RateLimitModule:
         Uses sliding window algorithm with two windows:
         - 60 seconds (per-minute limit)
         - 3600 seconds (per-hour limit)
+
+        This method uses a Lua script to perform all operations atomically
+        in a single Redis round-trip, reducing calls from ~10 to 1.
+
+        Args:
+            agent_id: Agent identifier
+            message_id: Message identifier
+
+        Returns:
+            RateLimitResult with limit status
+        """
+        now = time.time()
+
+        minute_key = f"ratelimit:{agent_id}:minute"
+        hour_key = f"ratelimit:{agent_id}:hour"
+        limits_key = f"ratelimit:{agent_id}:limits"
+
+        # Execute Lua script atomically
+        result = await self.redis.eval(
+            _RATE_LIMIT_SCRIPT,
+            3,  # number of keys
+            minute_key,
+            hour_key,
+            limits_key,
+            message_id,
+            str(now),
+            str(self.default_per_minute),
+            str(self.default_per_hour),
+        )
+
+        # Parse result: [allowed, limit, remaining, reset_time, window]
+        allowed = bool(result[0])
+        limit = int(result[1])
+        remaining = int(result[2])
+        reset_time = float(result[3])
+        window = result[4] if len(result) > 4 else "minute"
+
+        if not allowed:
+            logger.warning(
+                f"Rate limit exceeded (per-{window})",
+                extra={
+                    "agent_id": agent_id,
+                    "limit": limit,
+                    "remaining": remaining,
+                },
+            )
+        else:
+            logger.debug(
+                "Rate limit check passed",
+                extra={
+                    "agent_id": agent_id,
+                    "remaining": remaining,
+                },
+            )
+
+        return RateLimitResult(
+            allowed=allowed,
+            limit=limit,
+            remaining=remaining,
+            reset_time=reset_time,
+        )
+
+    async def check_rate_limit_legacy(
+        self, agent_id: str, message_id: str
+    ) -> RateLimitResult:
+        """
+        Legacy rate limit check without Lua script.
+
+        Kept for compatibility with Redis servers that don't support Lua.
+        Uses multiple Redis calls (~10 per check).
 
         Args:
             agent_id: Agent identifier
