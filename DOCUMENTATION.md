@@ -1775,7 +1775,9 @@ class Agent:
         agent_id: str,
         capabilities: list[str] | None = None,
         redis_url: str = "redis://localhost:6379",
-        state_model: type[BaseModel] | None = None
+        state_model: type[BaseModel] | None = None,
+        reclaim_idle_ms: int = 30000,
+        reclaim_batch_size: int = 50
     )
 ```
 
@@ -1784,6 +1786,10 @@ class Agent:
 - `capabilities`: List of capability tags for discovery
 - `redis_url`: Redis connection URL
 - `state_model`: Optional Pydantic model for typed state
+- `reclaim_idle_ms`: Idle time in milliseconds before reclaiming pending messages
+- `reclaim_batch_size`: Max pending messages reclaimed per reclaim cycle
+
+Set `reclaim_idle_ms=0` to disable pending-message reclamation.
 
 **Properties:**
 - `id: str` - Agent identifier
