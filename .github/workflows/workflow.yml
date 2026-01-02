@@ -39,7 +39,7 @@ jobs:
           import re
           from pathlib import Path
           version_file = Path("src/mas/__version__.py").read_text(encoding="utf-8")
-          match = re.search(r'__version__\\s*=\\s*["\\\']([^"\\\']+)["\\\']', version_file)
+          match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', version_file)
           if not match:
             raise SystemExit("Unable to read __version__ from src/mas/__version__.py")
           print(match.group(1))
