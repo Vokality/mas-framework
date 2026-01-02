@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -192,6 +193,7 @@ class GatewayService:
         signature: Optional[str] = None,
         timestamp: Optional[float] = None,
         nonce: Optional[str] = None,
+        envelope_json: Optional[str] = None,
     ) -> GatewayResult:
         """
         Handle message through gateway validation pipeline.
@@ -315,6 +317,7 @@ class GatewayService:
                 signature=signature,
                 timestamp=timestamp,
                 nonce=nonce,
+                envelope_json=envelope_json,
             )
 
             if not sig_result.valid:
@@ -743,7 +746,7 @@ class GatewayService:
 
         async def _loop() -> None:
             assert self._redis is not None
-            consumer = "gw-1"
+            consumer = f"gw-{uuid.uuid4().hex[:8]}"
             while self._running:
                 try:
                     items = await self._redis.xreadgroup(
@@ -774,6 +777,7 @@ class GatewayService:
                                     signature=signature,
                                     timestamp=timestamp,
                                     nonce=nonce,
+                                    envelope_json=envelope_json or None,
                                 )
                                 if not result.success:
                                     # Write to DLQ with reason

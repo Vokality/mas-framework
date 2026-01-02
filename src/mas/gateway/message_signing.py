@@ -120,6 +120,7 @@ class MessageSigningModule:
         payload: dict[str, Any],
         timestamp: Optional[float] = None,
         nonce: Optional[str] = None,
+        envelope_json: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Sign a message with HMAC.
@@ -148,14 +149,21 @@ class MessageSigningModule:
             raise ValueError(f"No signing key found for agent {agent_id}")
 
         # Create signature payload
-        # Include all fields that should be protected from tampering
-        signature_data = {
-            "message_id": message_id,
-            "sender_id": agent_id,
-            "timestamp": timestamp,
-            "nonce": nonce,
-            "payload": payload,
-        }
+        # Prefer signing the full envelope to prevent tampering with routing/meta fields.
+        if envelope_json is not None:
+            signature_data = {
+                "envelope": envelope_json,
+                "timestamp": timestamp,
+                "nonce": nonce,
+            }
+        else:
+            signature_data = {
+                "message_id": message_id,
+                "sender_id": agent_id,
+                "timestamp": timestamp,
+                "nonce": nonce,
+                "payload": payload,
+            }
 
         # Convert to canonical string representation
         canonical_str = self._canonicalize(signature_data)
@@ -185,6 +193,7 @@ class MessageSigningModule:
         signature: str,
         timestamp: float,
         nonce: str,
+        envelope_json: Optional[str] = None,
     ) -> SignatureResult:
         """
         Verify message signature.
@@ -227,13 +236,20 @@ class MessageSigningModule:
             )
 
         # Reconstruct signature payload
-        signature_data = {
-            "message_id": message_id,
-            "sender_id": agent_id,
-            "timestamp": timestamp,
-            "nonce": nonce,
-            "payload": payload,
-        }
+        if envelope_json is not None:
+            signature_data = {
+                "envelope": envelope_json,
+                "timestamp": timestamp,
+                "nonce": nonce,
+            }
+        else:
+            signature_data = {
+                "message_id": message_id,
+                "sender_id": agent_id,
+                "timestamp": timestamp,
+                "nonce": nonce,
+                "payload": payload,
+            }
 
         # Create canonical representation
         canonical_str = self._canonicalize(signature_data)

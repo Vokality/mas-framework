@@ -91,6 +91,8 @@ class Agent(Generic[StateType]):
         capabilities: list[str] | None = None,
         redis_url: str = "redis://localhost:6379",
         state_model: type[StateType] | None = None,
+        reclaim_idle_ms: int = 30_000,
+        reclaim_batch_size: int = 50,
     ):
         """
         Initialize agent.
@@ -101,6 +103,8 @@ class Agent(Generic[StateType]):
             redis_url: Redis connection URL
             state_model: Optional Pydantic model for typed state.
                         If provided, self.state will be strongly typed.
+            reclaim_idle_ms: Idle time (ms) before reclaiming pending messages.
+            reclaim_batch_size: Max pending messages reclaimed per cycle.
 
         Note:
             Each Agent instance automatically generates a unique instance_id.
@@ -111,6 +115,8 @@ class Agent(Generic[StateType]):
         self.instance_id = uuid.uuid4().hex[:8]  # Unique per instance
         self.capabilities = capabilities or []
         self.redis_url = redis_url
+        self._reclaim_idle_ms = reclaim_idle_ms
+        self._reclaim_batch_size = reclaim_batch_size
 
         # Internal state
         self._redis: Optional[AsyncRedisProtocol] = None
@@ -339,7 +345,9 @@ class Agent(Generic[StateType]):
             raise RuntimeError("No token available for gateway authentication")
         signing_key = await self._get_signing_key()
         if not signing_key:
-            raise RuntimeError("No signing key available for agent; cannot sign message")
+            raise RuntimeError(
+                "No signing key available for agent; cannot sign message"
+            )
         ts = time.time()
         nonce = uuid.uuid4().hex
         envelope_json = message.model_dump_json()
@@ -352,11 +360,9 @@ class Agent(Generic[StateType]):
         }
 
         signature_data = {
-            "message_id": message.message_id,
-            "sender_id": message.sender_id,
+            "envelope": envelope_json,
             "timestamp": ts,
             "nonce": nonce,
-            "payload": message.payload,
         }
         canonical_str = self._canonicalize(signature_data)
         key_bytes = bytes.fromhex(signing_key)
@@ -578,7 +584,25 @@ class Agent(Generic[StateType]):
         instance_stream = f"agent.stream:{self.id}:{self.instance_id}"
 
         try:
+            claim_start_ids = {
+                shared_stream: "0-0",
+                instance_stream: "0-0",
+            }
+            last_reclaim = 0.0
+            reclaim_interval = max(1.0, self._reclaim_idle_ms / 1000.0)
+
             while self._running:
+                now = time.time()
+                if now - last_reclaim >= reclaim_interval:
+                    for stream_name in (shared_stream, instance_stream):
+                        claim_start_ids[stream_name] = await self._reclaim_pending(
+                            stream_name,
+                            shared_group,
+                            shared_consumer,
+                            claim_start_ids[stream_name],
+                        )
+                    last_reclaim = now
+
                 # Read from both streams simultaneously using same consumer group
                 items = await self._redis.xreadgroup(
                     shared_group,
@@ -592,49 +616,12 @@ class Agent(Generic[StateType]):
 
                 for stream_name, messages in items:
                     for entry_id, fields in messages:
-                        try:
-                            data_json = fields.get("envelope", "")
-                            if not data_json:
-                                await self._redis.xack(
-                                    stream_name, shared_group, entry_id
-                                )
-                                continue
-                            msg = AgentMessage.model_validate_json(data_json)
-                            msg.attach_agent(self)
-
-                            # Replies resolve pending requests
-                            if msg.meta.is_reply:
-                                correlation_id = msg.meta.correlation_id
-                                if (
-                                    correlation_id
-                                    and correlation_id in self._pending_requests
-                                ):
-                                    future = self._pending_requests.pop(correlation_id)
-                                    if not future.done():
-                                        future.set_result(msg)
-                                    await self._redis.xack(
-                                        stream_name, shared_group, entry_id
-                                    )
-                                    continue
-
-                            asyncio.create_task(
-                                self._handle_message_and_ack(
-                                    msg,
-                                    stream_name,
-                                    shared_group,
-                                    entry_id,
-                                )
-                            )
-                        except Exception as e:
-                            logger.error(
-                                "Failed to process stream message",
-                                exc_info=e,
-                                extra={
-                                    "agent_id": self.id,
-                                    "instance_id": self.instance_id,
-                                    "stream": stream_name,
-                                },
-                            )
+                        await self._process_stream_entry(
+                            stream_name,
+                            shared_group,
+                            entry_id,
+                            fields,
+                        )
         except asyncio.CancelledError:
             pass
 
@@ -653,6 +640,89 @@ class Agent(Generic[StateType]):
                     await self._redis.xack(stream_name, group, entry_id)
                 except Exception:
                     pass
+
+    async def _process_stream_entry(
+        self,
+        stream_name: str,
+        group: str,
+        entry_id: str,
+        fields: Mapping[str, str],
+    ) -> None:
+        if not self._redis:
+            return
+        try:
+            data_json = fields.get("envelope", "")
+            if not data_json:
+                await self._redis.xack(stream_name, group, entry_id)
+                return
+
+            msg = AgentMessage.model_validate_json(data_json)
+            msg.attach_agent(self)
+
+            # Replies resolve pending requests
+            if msg.meta.is_reply:
+                correlation_id = msg.meta.correlation_id
+                if correlation_id and correlation_id in self._pending_requests:
+                    future = self._pending_requests.pop(correlation_id)
+                    if not future.done():
+                        future.set_result(msg)
+                    await self._redis.xack(stream_name, group, entry_id)
+                    return
+
+            asyncio.create_task(
+                self._handle_message_and_ack(
+                    msg,
+                    stream_name,
+                    group,
+                    entry_id,
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to process stream message",
+                exc_info=e,
+                extra={
+                    "agent_id": self.id,
+                    "instance_id": self.instance_id,
+                    "stream": stream_name,
+                },
+            )
+
+    async def _reclaim_pending(
+        self,
+        stream_name: str,
+        group: str,
+        consumer: str,
+        start_id: str,
+    ) -> str:
+        if not self._redis or self._reclaim_idle_ms <= 0:
+            return start_id
+
+        try:
+            next_start_id, messages, _deleted_ids = await self._redis.xautoclaim(
+                stream_name,
+                group,
+                consumer,
+                self._reclaim_idle_ms,
+                start_id,
+                count=self._reclaim_batch_size,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to reclaim pending messages",
+                exc_info=e,
+                extra={
+                    "agent_id": self.id,
+                    "instance_id": self.instance_id,
+                    "stream": stream_name,
+                },
+            )
+            return start_id
+
+        for entry_id, fields in messages:
+            await self._process_stream_entry(stream_name, group, entry_id, fields)
+
+        return next_start_id
 
     async def _handle_message_with_error_handling(self, msg: AgentMessage) -> None:
         """

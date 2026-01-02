@@ -132,6 +132,16 @@ class AsyncRedisProtocol(Protocol):
         count: int | None = ...,
         block: int | None = ...,
     ) -> Awaitable[list[tuple[str, list[tuple[str, dict[str, str]]]]] | None]: ...
+    def xautoclaim(
+        self,
+        name: str,
+        groupname: str,
+        consumername: str,
+        min_idle_time: int,
+        start_id: str,
+        *,
+        count: int | None = ...,
+    ) -> Awaitable[tuple[str, list[tuple[str, dict[str, str]]], list[str]]]: ...
     def xack(self, name: str, groupname: str, *ids: str) -> Awaitable[int]: ...
 
     # Scripting

@@ -31,9 +31,7 @@ class AgentSpec(BaseModel):
         ...,
         description="Import path for the agent class (module:ClassName)",
     )
-    instances: int = Field(
-        default=1, ge=1, description="Number of instances to run"
-    )
+    instances: int = Field(default=1, ge=1, description="Number of instances to run")
     init_kwargs: dict[str, Any] = Field(
         default_factory=dict, description="Kwargs forwarded to agent constructor"
     )
@@ -87,6 +85,7 @@ PermissionSpec = Annotated[
     ],
     Field(discriminator="type"),
 ]
+
 
 class _RunnerSettingsInit(TypedDict, total=False):
     config_file: Optional[str]
@@ -156,7 +155,11 @@ class RunnerSettings(BaseSettings):
 
         if config_file:
             yaml_data = self._load_yaml(config_file)
-            merged_data: dict[str, Any] = {**yaml_data, **data, "config_file": config_file}
+            merged_data: dict[str, Any] = {
+                **yaml_data,
+                **data,
+                "config_file": config_file,
+            }
             super().__init__(**cast(_RunnerSettingsInit, merged_data))
         else:
             super().__init__(**cast(_RunnerSettingsInit, data))
@@ -206,9 +209,7 @@ class AgentRunner:
     async def run(self) -> None:
         """Start agents and wait for shutdown."""
         if not self._settings.agents:
-            raise RuntimeError(
-                "No agents configured. Provide agents.yaml or settings."
-            )
+            raise RuntimeError("No agents configured. Provide agents.yaml or settings.")
         if not self._settings.start_gateway:
             raise RuntimeError(
                 "Gateway service is required. start_gateway must be true."
