@@ -67,9 +67,9 @@ class TestFeaturesSettings:
         """Test default feature flags (production-ready defaults)."""
         settings = FeaturesSettings()
 
-        # All features enabled by default for production security
+        # Security features enabled by default; priority queue is opt-in
         assert settings.dlp is True
-        assert settings.priority_queue is True
+        assert settings.priority_queue is False
         assert settings.rbac is True
         assert settings.message_signing is True
         assert settings.circuit_breaker is True
@@ -185,7 +185,7 @@ class TestGatewaySettings:
         assert settings.redis.url == "redis://localhost:6379"
         assert settings.rate_limit.per_minute == 100
         assert settings.features.dlp is True
-        assert settings.features.priority_queue is True
+        assert settings.features.priority_queue is False
         assert settings.features.rbac is True
         assert settings.features.message_signing is True
         assert settings.features.circuit_breaker is True

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -192,6 +193,7 @@ class GatewayService:
         signature: Optional[str] = None,
         timestamp: Optional[float] = None,
         nonce: Optional[str] = None,
+        envelope_json: Optional[str] = None,
     ) -> GatewayResult:
         """
         Handle message through gateway validation pipeline.
@@ -315,6 +317,7 @@ class GatewayService:
                 signature=signature,
                 timestamp=timestamp,
                 nonce=nonce,
+                envelope_json=envelope_json,
             )
 
             if not sig_result.valid:
@@ -583,7 +586,20 @@ class GatewayService:
             )
         else:
             # Stream-based delivery (at-least-once)
-            target_stream = f"{self.settings.agent_stream_prefix}{message.target_id}"
+            # For replies with sender_instance_id, route directly to the specific instance
+            # to ensure request-response works correctly with multi-instance agents
+            if message.meta.is_reply and message.meta.sender_instance_id:
+                # Route to instance-specific stream for reply delivery
+                target_stream = (
+                    f"{self.settings.agent_stream_prefix}"
+                    f"{message.target_id}:{message.meta.sender_instance_id}"
+                )
+            else:
+                # Regular message - route to shared stream (load balanced across instances)
+                target_stream = (
+                    f"{self.settings.agent_stream_prefix}{message.target_id}"
+                )
+
             await self._redis.xadd(
                 target_stream,
                 {
@@ -596,6 +612,8 @@ class GatewayService:
                 extra={
                     "message_id": message.message_id,
                     "target_stream": target_stream,
+                    "is_instance_specific": message.meta.is_reply
+                    and bool(message.meta.sender_instance_id),
                 },
             )
 
@@ -728,7 +746,7 @@ class GatewayService:
 
         async def _loop() -> None:
             assert self._redis is not None
-            consumer = "gw-1"
+            consumer = f"gw-{uuid.uuid4().hex[:8]}"
             while self._running:
                 try:
                     items = await self._redis.xreadgroup(
@@ -759,6 +777,7 @@ class GatewayService:
                                     signature=signature,
                                     timestamp=timestamp,
                                     nonce=nonce,
+                                    envelope_json=envelope_json or None,
                                 )
                                 if not result.success:
                                     # Write to DLQ with reason
@@ -779,7 +798,5 @@ class GatewayService:
                 except Exception as e:
                     logger.error("Ingress consumer loop error", exc_info=e)
                     await asyncio.sleep(1.0)
-
-        import asyncio  # local import to avoid unused in type-checking contexts
 
         self._ingress_task = asyncio.create_task(_loop())

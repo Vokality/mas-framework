@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -51,10 +50,18 @@ class Agent(Generic[StateType]):
     Key features:
     - Self-contained (only needs Redis URL)
     - Gateway-mediated messaging (central routing and policy enforcement)
-    - Auto-persisted state to Redis
+    - Auto-persisted state to Redis (shared across instances)
     - Simple discovery by capabilities
-    - Automatic heartbeat monitoring
+    - Automatic heartbeat monitoring (per-instance)
     - Strongly-typed state via generics
+    - Multi-instance support for horizontal scaling
+
+    Multi-instance behavior:
+    - Each Agent instance gets a unique instance_id
+    - Multiple instances with the same agent_id share the workload
+    - Messages are load-balanced across instances via Redis consumer groups
+    - Request-response replies are routed to the originating instance
+    - State is shared across all instances of the same agent_id
 
     Usage with typed state and decorator-based handlers:
         class MyState(BaseModel):
@@ -69,6 +76,13 @@ class Agent(Generic[StateType]):
                 # self.state is strongly typed as MyState
                 self.state.counter += 1
                 await self.update_state({"counter": self.state.counter})
+
+    Horizontal scaling:
+        # Run multiple instances of the same agent for parallel processing
+        # Each instance automatically joins the consumer group
+        python my_agent.py &  # Instance 1
+        python my_agent.py &  # Instance 2
+        python my_agent.py &  # Instance 3
     """
 
     def __init__(
@@ -77,26 +91,32 @@ class Agent(Generic[StateType]):
         capabilities: list[str] | None = None,
         redis_url: str = "redis://localhost:6379",
         state_model: type[StateType] | None = None,
-        use_gateway: bool = False,
-        gateway_url: Optional[str] = None,
+        reclaim_idle_ms: int = 30_000,
+        reclaim_batch_size: int = 50,
     ):
         """
         Initialize agent.
 
         Args:
-            agent_id: Unique agent identifier
+            agent_id: Logical agent identifier (shared across instances for scaling)
             capabilities: List of agent capabilities for discovery
             redis_url: Redis connection URL
             state_model: Optional Pydantic model for typed state.
                         If provided, self.state will be strongly typed.
-            use_gateway: Whether to route messages through gateway
-            gateway_url: Gateway service URL (if different from redis_url)
+            reclaim_idle_ms: Idle time (ms) before reclaiming pending messages.
+            reclaim_batch_size: Max pending messages reclaimed per cycle.
+
+        Note:
+            Each Agent instance automatically generates a unique instance_id.
+            Multiple instances with the same agent_id will share workload via
+            Redis consumer groups.
         """
         self.id = agent_id
+        self.instance_id = uuid.uuid4().hex[:8]  # Unique per instance
         self.capabilities = capabilities or []
         self.redis_url = redis_url
-        self.use_gateway = use_gateway
-        self.gateway_url = gateway_url or redis_url
+        self._reclaim_idle_ms = reclaim_idle_ms
+        self._reclaim_batch_size = reclaim_batch_size
 
         # Internal state
         self._redis: Optional[AsyncRedisProtocol] = None
@@ -112,7 +132,7 @@ class Agent(Generic[StateType]):
         self._state_manager: Optional[StateManager[StateType]] = None
         self._state_model: type[StateType] | None = state_model
 
-        # Gateway client (if use_gateway=True)
+        # Gateway client (optional, managed externally)
         self._gateway: Optional["GatewayService"] = None
 
         # Request-response tracking
@@ -139,15 +159,17 @@ class Agent(Generic[StateType]):
         return self._token
 
     async def start(self) -> None:
-        """Start the agent."""
+        """Start the agent instance."""
         redis_client = create_redis_client(url=self.redis_url, decode_responses=True)
         self._redis = redis_client
         self._registry = AgentRegistry(redis_client)
 
-        # Register agent
+        # Register agent instance (idempotent - first instance creates, others join)
         self._token = await self._registry.register(
-            self.id, self.capabilities, metadata=self.get_metadata()
+            self.id, self.instance_id, self.capabilities, metadata=self.get_metadata()
         )
+        # Seed heartbeat immediately to avoid inactive status on fast restarts
+        await self._registry.update_heartbeat(self.id, self.instance_id)
 
         # Initialize state manager
         self._state_manager = StateManager(
@@ -156,10 +178,23 @@ class Agent(Generic[StateType]):
         await self._state_manager.load()
 
         # Ensure delivery stream consumer group exists and start consumer loop
+        # Shared stream for load-balanced message delivery
         delivery_stream = f"agent.stream:{self.id}"
         try:
             await redis_client.xgroup_create(
                 delivery_stream, "agents", id="$", mkstream=True
+            )
+        except Exception as e:
+            if "BUSYGROUP" not in str(e):
+                raise
+
+        # Instance-specific stream for replies to this instance's requests
+        # This ensures request-response works correctly with multi-instance agents
+        # Uses the same consumer group name as shared stream for xreadgroup compatibility
+        reply_stream = f"agent.stream:{self.id}:{self.instance_id}"
+        try:
+            await redis_client.xgroup_create(
+                reply_stream, "agents", id="$", mkstream=True
             )
         except Exception as e:
             if "BUSYGROUP" not in str(e):
@@ -171,19 +206,38 @@ class Agent(Generic[StateType]):
         self._tasks.append(asyncio.create_task(self._stream_loop()))
         self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
 
-        # Publish registration event
+        # Publish instance join event
+        instance_count = await self._registry.get_instance_count(self.id)
+        if instance_count == 1:
+            # First instance - publish REGISTER event
+            await redis_client.publish(
+                "mas.system",
+                json.dumps(
+                    {
+                        "type": "REGISTER",
+                        "agent_id": self.id,
+                        "capabilities": self.capabilities,
+                    }
+                ),
+            )
+
+        # Always publish INSTANCE_JOIN for observability
         await redis_client.publish(
             "mas.system",
             json.dumps(
                 {
-                    "type": "REGISTER",
+                    "type": "INSTANCE_JOIN",
                     "agent_id": self.id,
-                    "capabilities": self.capabilities,
+                    "instance_id": self.instance_id,
+                    "instance_count": instance_count,
                 }
             ),
         )
 
-        logger.info("Agent started", extra={"agent_id": self.id})
+        logger.info(
+            "Agent instance started",
+            extra={"agent_id": self.id, "instance_id": self.instance_id},
+        )
 
         # Signal that transport can begin (registration + subscriptions established)
         self._transport_ready.set()
@@ -192,23 +246,11 @@ class Agent(Generic[StateType]):
         await self.on_start()
 
     async def stop(self) -> None:
-        """Stop the agent."""
+        """Stop the agent instance."""
         self._running = False
 
         # Call user hook
         await self.on_stop()
-
-        # Publish deregistration event
-        if self._redis:
-            await self._redis.publish(
-                "mas.system",
-                json.dumps(
-                    {
-                        "type": "DEREGISTER",
-                        "agent_id": self.id,
-                    }
-                ),
-            )
 
         # Cancel tasks
         for task in self._tasks:
@@ -216,11 +258,38 @@ class Agent(Generic[StateType]):
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
-        # Cleanup
+        # Deregister instance and check if last
         if self._registry:
-            await self._registry.deregister(self.id)
+            # Get instance count before deregistering
+            instance_count_before = await self._registry.get_instance_count(self.id)
+            await self._registry.deregister(self.id, self.instance_id)
+            is_last_instance = instance_count_before <= 1
 
-        # No pubsub to close in streams mode
+            # Publish events
+            if self._redis:
+                # Always publish INSTANCE_LEAVE for observability
+                await self._redis.publish(
+                    "mas.system",
+                    json.dumps(
+                        {
+                            "type": "INSTANCE_LEAVE",
+                            "agent_id": self.id,
+                            "instance_id": self.instance_id,
+                        }
+                    ),
+                )
+
+                if is_last_instance:
+                    # Last instance - publish DEREGISTER event
+                    await self._redis.publish(
+                        "mas.system",
+                        json.dumps(
+                            {
+                                "type": "DEREGISTER",
+                                "agent_id": self.id,
+                            }
+                        ),
+                    )
 
         # Note: Don't stop gateway - it's shared across agents
         # Gateway lifecycle is managed externally
@@ -228,7 +297,10 @@ class Agent(Generic[StateType]):
         if self._redis:
             await self._redis.aclose()
 
-        logger.info("Agent stopped", extra={"agent_id": self.id})
+        logger.info(
+            "Agent instance stopped",
+            extra={"agent_id": self.id, "instance_id": self.instance_id},
+        )
 
     def set_gateway(self, gateway: "GatewayService") -> None:
         """
@@ -271,25 +343,36 @@ class Agent(Generic[StateType]):
             raise RuntimeError("Agent not started")
         if not self._token:
             raise RuntimeError("No token available for gateway authentication")
-        signing_key = os.getenv("SIGNING_KEY")
-        ts = str(int(time.time()))
-        nonce = str(uuid.uuid4())
+        signing_key = await self._get_signing_key()
+        if not signing_key:
+            raise RuntimeError(
+                "No signing key available for agent; cannot sign message"
+            )
+        ts = time.time()
+        nonce = uuid.uuid4().hex
         envelope_json = message.model_dump_json()
         fields: dict[str, str] = {
             "envelope": envelope_json,
             "agent_id": self.id,
             "token": self._token,
+            "timestamp": str(ts),
+            "nonce": nonce,
+        }
+
+        signature_data = {
+            "envelope": envelope_json,
             "timestamp": ts,
             "nonce": nonce,
         }
-        if signing_key:
-            mac = hmac.new(
-                signing_key.encode(),
-                f"{envelope_json}.{ts}.{nonce}".encode(),
-                hashlib.sha256,
-            ).hexdigest()
-            fields["signature"] = mac
-            fields["alg"] = "HMAC-SHA256"
+        canonical_str = self._canonicalize(signature_data)
+        key_bytes = bytes.fromhex(signing_key)
+        mac = hmac.new(
+            key_bytes,
+            canonical_str.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        fields["signature"] = mac
+        fields["alg"] = "HMAC-SHA256"
         await self._redis.xadd("mas.gateway.ingress", fields)
         logger.debug(
             "Message enqueued to gateway ingress",
@@ -362,7 +445,10 @@ class Agent(Generic[StateType]):
             message_type=message_type,
             data=payload,
             meta=MessageMeta(
-                correlation_id=correlation_id, expects_reply=True, is_reply=False
+                correlation_id=correlation_id,
+                expects_reply=True,
+                is_reply=False,
+                sender_instance_id=self.instance_id,
             ),
         )
         await self._send_envelope(message)
@@ -438,6 +524,14 @@ class Agent(Generic[StateType]):
 
         return await self._registry.discover(capabilities)
 
+    def _canonicalize(self, data: Mapping[str, Any]) -> str:
+        return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+    async def _get_signing_key(self) -> Optional[str]:
+        if not self._redis:
+            return None
+        return await self._redis.get(f"agent:{self.id}:signing_key")
+
     async def wait_transport_ready(self, timeout: float | None = None) -> None:
         """
         Wait until the framework signals that transport can begin.
@@ -470,58 +564,165 @@ class Agent(Generic[StateType]):
         await self._state_manager.reset()
 
     async def _stream_loop(self) -> None:
-        """Consume incoming messages from the agent's delivery stream."""
+        """
+        Consume incoming messages from both delivery streams.
+
+        Listens on two streams:
+        1. Shared stream (agent.stream:{id}) - load-balanced across all instances
+        2. Instance stream (agent.stream:{id}:{instance_id}) - replies to this instance
+        """
         if not self._redis:
             return
-        stream = f"agent.stream:{self.id}"
-        group = "agents"
-        consumer = f"{self.id}-1"
+
+        # Shared stream for load-balanced messages
+        shared_stream = f"agent.stream:{self.id}"
+        shared_group = "agents"
+        shared_consumer = f"{self.id}-{self.instance_id}"
+
+        # Instance-specific stream for replies
+        # Uses same group name "agents" for xreadgroup compatibility
+        instance_stream = f"agent.stream:{self.id}:{self.instance_id}"
+
         try:
+            claim_start_ids = {
+                shared_stream: "0-0",
+                instance_stream: "0-0",
+            }
+            last_reclaim = 0.0
+            reclaim_interval = max(1.0, self._reclaim_idle_ms / 1000.0)
+
             while self._running:
+                now = time.time()
+                if now - last_reclaim >= reclaim_interval:
+                    for stream_name in (shared_stream, instance_stream):
+                        claim_start_ids[stream_name] = await self._reclaim_pending(
+                            stream_name,
+                            shared_group,
+                            shared_consumer,
+                            claim_start_ids[stream_name],
+                        )
+                    last_reclaim = now
+
+                # Read from both streams simultaneously using same consumer group
                 items = await self._redis.xreadgroup(
-                    group,
-                    consumer,
-                    streams={stream: ">"},
+                    shared_group,
+                    shared_consumer,
+                    streams={shared_stream: ">", instance_stream: ">"},
                     count=50,
                     block=1000,
                 )
                 if not items:
                     continue
-                for _, messages in items:
+
+                for stream_name, messages in items:
                     for entry_id, fields in messages:
-                        try:
-                            data_json = fields.get("envelope", "")
-                            if not data_json:
-                                await self._redis.xack(stream, group, entry_id)
-                                continue
-                            msg = AgentMessage.model_validate_json(data_json)
-                            msg.attach_agent(self)
-
-                            # Replies resolve pending requests
-                            if msg.meta.is_reply:
-                                correlation_id = msg.meta.correlation_id
-                                if (
-                                    correlation_id
-                                    and correlation_id in self._pending_requests
-                                ):
-                                    future = self._pending_requests.pop(correlation_id)
-                                    if not future.done():
-                                        future.set_result(msg)
-                                    await self._redis.xack(stream, group, entry_id)
-                                    continue
-
-                            asyncio.create_task(
-                                self._handle_message_with_error_handling(msg)
-                            )
-                            await self._redis.xack(stream, group, entry_id)
-                        except Exception as e:
-                            logger.error(
-                                "Failed to process stream message",
-                                exc_info=e,
-                                extra={"agent_id": self.id},
-                            )
+                        await self._process_stream_entry(
+                            stream_name,
+                            shared_group,
+                            entry_id,
+                            fields,
+                        )
         except asyncio.CancelledError:
             pass
+
+    async def _handle_message_and_ack(
+        self,
+        msg: AgentMessage,
+        stream_name: str,
+        group: str,
+        entry_id: str,
+    ) -> None:
+        try:
+            await self._handle_message_with_error_handling(msg)
+        finally:
+            if self._redis:
+                try:
+                    await self._redis.xack(stream_name, group, entry_id)
+                except Exception:
+                    pass
+
+    async def _process_stream_entry(
+        self,
+        stream_name: str,
+        group: str,
+        entry_id: str,
+        fields: Mapping[str, str],
+    ) -> None:
+        if not self._redis:
+            return
+        try:
+            data_json = fields.get("envelope", "")
+            if not data_json:
+                await self._redis.xack(stream_name, group, entry_id)
+                return
+
+            msg = AgentMessage.model_validate_json(data_json)
+            msg.attach_agent(self)
+
+            # Replies resolve pending requests
+            if msg.meta.is_reply:
+                correlation_id = msg.meta.correlation_id
+                if correlation_id and correlation_id in self._pending_requests:
+                    future = self._pending_requests.pop(correlation_id)
+                    if not future.done():
+                        future.set_result(msg)
+                    await self._redis.xack(stream_name, group, entry_id)
+                    return
+
+            asyncio.create_task(
+                self._handle_message_and_ack(
+                    msg,
+                    stream_name,
+                    group,
+                    entry_id,
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to process stream message",
+                exc_info=e,
+                extra={
+                    "agent_id": self.id,
+                    "instance_id": self.instance_id,
+                    "stream": stream_name,
+                },
+            )
+
+    async def _reclaim_pending(
+        self,
+        stream_name: str,
+        group: str,
+        consumer: str,
+        start_id: str,
+    ) -> str:
+        if not self._redis or self._reclaim_idle_ms <= 0:
+            return start_id
+
+        try:
+            next_start_id, messages, _deleted_ids = await self._redis.xautoclaim(
+                stream_name,
+                group,
+                consumer,
+                self._reclaim_idle_ms,
+                start_id,
+                count=self._reclaim_batch_size,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to reclaim pending messages",
+                exc_info=e,
+                extra={
+                    "agent_id": self.id,
+                    "instance_id": self.instance_id,
+                    "stream": stream_name,
+                },
+            )
+            return start_id
+
+        for entry_id, fields in messages:
+            await self._process_stream_entry(stream_name, group, entry_id, fields)
+
+        return next_start_id
 
     async def _handle_message_with_error_handling(self, msg: AgentMessage) -> None:
         """
@@ -545,16 +746,20 @@ class Agent(Generic[StateType]):
             )
 
     async def _heartbeat_loop(self) -> None:
-        """Send periodic heartbeats."""
+        """Send periodic heartbeats for this instance."""
         try:
             while self._running:
                 if self._registry:
-                    await self._registry.update_heartbeat(self.id)
+                    await self._registry.update_heartbeat(self.id, self.instance_id)
                 await asyncio.sleep(30)  # Heartbeat every 30 seconds
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error("Heartbeat failed", exc_info=e, extra={"agent_id": self.id})
+            logger.error(
+                "Heartbeat failed",
+                exc_info=e,
+                extra={"agent_id": self.id, "instance_id": self.instance_id},
+            )
 
     # User-overridable hooks
     @dataclass(frozen=True, slots=True)
@@ -652,6 +857,10 @@ class Agent(Generic[StateType]):
     ) -> None:
         """
         Send a correlated reply to the original message.
+
+        If the original message has a sender_instance_id, the reply is routed
+        directly to that instance to ensure request-response works correctly
+        with multi-instance agents.
         """
         if not original.meta.correlation_id:
             raise RuntimeError("Original message missing correlation_id")
@@ -666,6 +875,8 @@ class Agent(Generic[StateType]):
                 correlation_id=original.meta.correlation_id,
                 expects_reply=False,
                 is_reply=True,
+                # Preserve the original sender's instance ID for routing
+                sender_instance_id=original.meta.sender_instance_id,
             ),
         )
         await self._send_envelope(reply)

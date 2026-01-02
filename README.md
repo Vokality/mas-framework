@@ -143,18 +143,15 @@ if __name__ == "__main__":
 
 Messages are routed through a centralized gateway for security and compliance:
 
-Messages routed through centralized gateway for security and compliance:
-
 ```python
 import asyncio
 from mas import Agent
 
 async def main():
-    # Enable gateway mode
-    agent = Agent("my_agent", use_gateway=True)
+    agent = Agent("my_agent")
     await agent.start()
     
-    # Messages now routed through gateway
+    # Messages are routed through the gateway
     # Gateway provides: auth, authz, rate limiting, DLP, audit
     await agent.send("target_agent", "test.message", {"data": "hello"})
     
@@ -175,8 +172,6 @@ if __name__ == "__main__":
 - **At-least-once delivery** - Uses Redis Streams for reliability
 
 See [GATEWAY.md](GATEWAY.md) for complete gateway documentation.
-
-Gateway mode is the default and recommended for production deployments.
 
 ## Features
 
@@ -484,20 +479,35 @@ Performance benchmarks are planned for future releases.
 
 - **[Architecture Guide](ARCHITECTURE.md)** - Architecture, design decisions, and implementation details
 - **[Gateway Guide](GATEWAY.md)** - Enterprise gateway pattern with security, audit, and compliance features
-- **[API Reference](#messaging-modes)** - Feature documentation and usage examples
+- **[API Reference](#messaging)** - Feature documentation and usage examples
+
+## Getting Started (Recommended)
+
+The definitive way to run MAS is the built-in runner. It starts the MAS service
+and gateway, then brings up all configured agents automatically.
+
+1) Define agents in `agents.yaml` (required)
+2) Run MAS
+
+```bash
+uv run python -m mas
+```
+
+The runner searches upward from the current working directory to find
+the nearest `agents.yaml`.
+
+The runner starts the MAS service and gateway before agents and stops them last.
 
 ### Quick Architecture Overview
 
 **Core Components:**
-- **MAS Service** - Agent registry and health monitor (optional)
+- **MAS Service** - Agent registry and health monitor
 - **Agent** - Base class for implementing agents
-- **Gateway Service** - Optional security/audit layer for enterprise deployments
+- **Gateway Service** - Central security and audit layer
 - **Registry** - Agent discovery by capabilities
 - **State Manager** - State persistence to Redis
 
 **Message Flow:**
-
-Gateway Mode:
 ```
 Agent A → Gateway Service → Redis Streams → Agent B
           (validation)       (reliable delivery)
@@ -507,7 +517,7 @@ Agent A → Gateway Service → Redis Streams → Agent B
 - `agent:{id}` - Agent metadata
 - `agent:{id}:heartbeat` - Health monitoring (60s TTL)
 - `agent.state:{id}` - Persisted agent state
-- `agent.stream:{id}` - Message stream (gateway mode)
+- `agent.stream:{id}` - Message stream
 - `mas.system` - System events (pub/sub)
 
 For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -527,9 +537,9 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 - ✅ Heartbeat monitoring
 
 ### In Development
-- [ ] Priority queue for gateway mode
+- [ ] Priority queue for delivery
 - [ ] Enhanced metrics and observability
-- [ ] Performance benchmarks for both modes
+- [ ] Performance benchmarks
 - [ ] Prometheus metrics integration
 - [ ] Management dashboard
 

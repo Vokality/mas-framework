@@ -1,9 +1,11 @@
 """Tests for Audit Query API."""
 
-import json
 import asyncio
-import pytest
+import json
 import time
+
+import pytest
+
 from mas.gateway.audit import AuditModule
 
 # Use anyio for async test support
@@ -359,7 +361,8 @@ class TestAuditComplianceReport:
 
     async def test_export_compliance_report_csv(self, audit_module):
         """Test generating compliance report in CSV format."""
-        start_time = time.time()
+        # Use buffer to avoid timing edge cases where messages fall outside range
+        start_time = time.time() - 0.1
 
         # Log some messages
         for i in range(3):
@@ -367,7 +370,7 @@ class TestAuditComplianceReport:
                 f"msg-{i}", "agent-a", "agent-b", "ALLOWED", 10.0, {}
             )
 
-        end_time = time.time()
+        end_time = time.time() + 0.1
 
         # Generate report
         report = await audit_module.export_compliance_report(
@@ -381,7 +384,8 @@ class TestAuditComplianceReport:
 
     async def test_export_compliance_report_json(self, audit_module):
         """Test generating compliance report in JSON format."""
-        start_time = time.time()
+        # Use buffer to avoid timing edge cases where messages fall outside range
+        start_time = time.time() - 0.1
 
         # Log some messages
         for i in range(3):
@@ -389,7 +393,7 @@ class TestAuditComplianceReport:
                 f"msg-{i}", "agent-a", "agent-b", "ALLOWED", 10.0, {}
             )
 
-        end_time = time.time()
+        end_time = time.time() + 0.1
 
         # Generate report
         report = await audit_module.export_compliance_report(

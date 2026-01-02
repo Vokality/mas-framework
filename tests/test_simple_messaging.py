@@ -1,4 +1,4 @@
-"""Test simplified peer-to-peer messaging."""
+"""Tests for basic gateway messaging."""
 
 import asyncio
 from typing import override
@@ -27,8 +27,8 @@ class ReceiverAgent(Agent):
 
 
 @pytest.mark.asyncio
-async def test_peer_to_peer_messaging(mas_service):
-    """Test direct peer-to-peer messaging between agents."""
+async def test_gateway_messaging(mas_service):
+    """Test messaging between agents through the gateway."""
     # Start gateway (streams, signing disabled for tests)
     settings = GatewaySettings(
         features=FeaturesSettings(

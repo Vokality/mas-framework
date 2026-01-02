@@ -49,8 +49,8 @@ A multi-agent system consists of multiple autonomous software agents that:
 - **Distributed AI Systems**: Multiple AI agents collaborating on complex tasks
 - **Microservices Coordination**: Services discovering and messaging each other
 - **Workflow Orchestration**: Agents coordinating multi-step processes
-- **Healthcare Systems**: HIPAA-compliant agent communication (gateway mode)
-- **Financial Services**: SOC2/PCI-compliant agent interactions (gateway mode)
+- **Healthcare Systems**: HIPAA-compliant agent communication through the gateway
+- **Financial Services**: SOC2/PCI-compliant agent interactions through the gateway
 - **Educational Platforms**: Tutoring systems with multiple specialized agents
 
 ---
@@ -649,11 +649,10 @@ async def main():
     gateway = GatewayService()  # Uses default redis://localhost:6379
     await gateway.start()
     
-    # 2. Create agent with gateway mode enabled
+    # 2. Create agent (gateway routing is standard)
     agent = Agent(
         "my_agent",
         capabilities=["worker"],
-        use_gateway=True  # Enable gateway mode
     )
     
     # 3. Connect agent to gateway
@@ -723,7 +722,7 @@ Agents authenticate using tokens:
 
 ```python
 # Tokens are automatically generated on registration
-agent = Agent("my_agent", use_gateway=True)
+agent = Agent("my_agent")
 await agent.start()  # Token stored in agent._token
 
 # Agent token is automatically included in messages
@@ -1226,10 +1225,9 @@ def process_file(self, path: str):
 Route sensitive operations through gateway:
 
 ```python
-# Create agents with gateway mode for sensitive data
+# Create agents for sensitive data
 payment_agent = Agent(
     "payment_processor",
-    use_gateway=True,  # Enable security features
     capabilities=["payment"]
 )
 ```
@@ -1283,15 +1281,49 @@ brew services start redis
 docker run -d -p 6379:6379 redis:latest
 ```
 
-Start your agents:
+Start MAS (recommended):
+
+The definitive way to run MAS is the built-in runner. It starts the MAS service,
+then brings up all configured agents automatically.
+
+### Agent Runner (Config-Driven)
+
+Define agent instances in `agents.yaml` (required) and start them with the
+built-in runner. MAS routes all messages through the gateway.
+by default.
+
+`agents.yaml`:
+
+```yaml
+agents:
+  - agent_id: worker_agent
+    class_path: my_app.agents.worker:WorkerAgent
+    instances: 3
+    init_kwargs:
+      capabilities: ["worker"]
+      redis_url: redis://localhost:6379
+      batch_size: 10
+start_service: true
+service_redis_url: redis://localhost:6379
+start_gateway: true
+gateway_config_file: gateway.yaml
+```
+
+`start_gateway` must remain `true`.
+
+Run MAS (auto-loads `agents.yaml` if present):
 
 ```bash
-# Single agent
-uv run python my_agent.py
+uv run python -m mas
+```
 
-# Multiple agents
-uv run python agent_a.py &
-uv run python agent_b.py &
+The runner searches upward from the current working directory to find the
+nearest `agents.yaml` file.
+
+Override the config file:
+
+```bash
+MAS_RUNNER_CONFIG_FILE=./agents.yaml uv run python -m mas
 ```
 
 ### Production Deployment
@@ -1391,7 +1423,6 @@ import os
 agent = Agent(
     agent_id=os.getenv("AGENT_ID", "default_agent"),
     redis_url=os.getenv("REDIS_URL", "redis://localhost:6379"),
-    use_gateway=os.getenv("USE_GATEWAY", "false").lower() == "true"
 )
 ```
 
@@ -1745,8 +1776,8 @@ class Agent:
         capabilities: list[str] | None = None,
         redis_url: str = "redis://localhost:6379",
         state_model: type[BaseModel] | None = None,
-        use_gateway: bool = False,
-        gateway_url: str | None = None
+        reclaim_idle_ms: int = 30000,
+        reclaim_batch_size: int = 50
     )
 ```
 
@@ -1755,14 +1786,16 @@ class Agent:
 - `capabilities`: List of capability tags for discovery
 - `redis_url`: Redis connection URL
 - `state_model`: Optional Pydantic model for typed state
-- `use_gateway`: Enable gateway mode (default: False)
-- `gateway_url`: Gateway service URL (if different from redis_url)
+- `reclaim_idle_ms`: Idle time in milliseconds before reclaiming pending messages
+- `reclaim_batch_size`: Max pending messages reclaimed per reclaim cycle
+
+Set `reclaim_idle_ms=0` to disable pending-message reclamation.
 
 **Properties:**
 - `id: str` - Agent identifier
 - `capabilities: list[str]` - Agent capabilities
 - `state: dict | BaseModel` - Current agent state
-- `token: str | None` - Authentication token (gateway mode)
+- `token: str | None` - Authentication token
 
 **Methods:**
 
@@ -1870,7 +1903,7 @@ await agent.reset_state()
 ```
 
 #### `set_gateway(gateway: GatewayService) -> None`
-Set gateway instance for message routing (required for gateway mode).
+Set gateway instance for message routing (optional, managed externally).
 
 ```python
 gateway = GatewayService()  # Uses default redis://localhost:6379

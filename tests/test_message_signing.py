@@ -302,7 +302,7 @@ class TestReplayProtection:
 class TestCanonicalRepresentation:
     """Test canonical data representation."""
 
-    def test_canonicalize_deterministic(self, signing_module):
+    async def test_canonicalize_deterministic(self, signing_module):
         """Test that canonicalization is deterministic."""
         data1 = {"b": 2, "a": 1, "c": 3}
         data2 = {"c": 3, "a": 1, "b": 2}
@@ -313,7 +313,7 @@ class TestCanonicalRepresentation:
         # Same data in different order should produce same canonical form
         assert canon1 == canon2
 
-    def test_canonicalize_nested(self, signing_module):
+    async def test_canonicalize_nested(self, signing_module):
         """Test canonicalization of nested data."""
         data = {
             "outer": {"b": 2, "a": 1},

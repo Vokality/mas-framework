@@ -3,7 +3,43 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
 jobs:
+  bump:
+    name: bump-version
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Bump version
+        run: |
+          uvx hatch version ${{ inputs.bump }}
+      - name: Commit and tag
+        run: |
+          git config user.name "rhymiz"
+          git config user.email "lemuelboyce@gmail.com"
+          VERSION="$(python -c "from mas.__version__ import __version__; print(__version__)")"
+          git add src/mas/__version__.py
+          git commit -m "chore(release): v$VERSION"
+          git tag "v$VERSION"
+          git push --follow-tags
   publish:
     name: python
     runs-on: ubuntu-latest

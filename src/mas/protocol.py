@@ -4,9 +4,8 @@ Protocol types for strongly-typed agent messaging.
 
 from __future__ import annotations
 
-
 import time
-from typing import Any, Optional, TypeAlias, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
 from pydantic import BaseModel, Field, PrivateAttr
 
@@ -26,6 +25,9 @@ class MessageMeta(BaseModel):
     correlation_id: Optional[str] = None
     expects_reply: bool = False
     is_reply: bool = False
+    # Instance ID of the sender for routing replies back to the correct instance
+    # in multi-instance agent deployments
+    sender_instance_id: Optional[str] = None
 
 
 class EnvelopeMessage(BaseModel):

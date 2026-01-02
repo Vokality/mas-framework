@@ -99,9 +99,9 @@ class FeaturesSettings(BaseSettings):
     """
     Feature flags configuration.
 
-    Production-ready defaults (all security features enabled):
+    Production-ready defaults (security features enabled, queues opt-in):
     - DLP: True (data loss prevention)
-    - Priority Queue: True (message prioritization)
+    - Priority Queue: False (message prioritization is opt-in)
     - RBAC: True (role-based access control)
     - Message Signing: True (integrity verification)
     - Circuit Breaker: True (reliability)
@@ -113,7 +113,7 @@ class FeaturesSettings(BaseSettings):
     """
 
     dlp: bool = Field(default=True, description="Enable DLP scanning")
-    priority_queue: bool = Field(default=True, description="Enable priority queues")
+    priority_queue: bool = Field(default=False, description="Enable priority queues")
     rbac: bool = Field(default=True, description="Enable RBAC authorization (Phase 2)")
     message_signing: bool = Field(
         default=True, description="Enable message signing (Phase 2)"

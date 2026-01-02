@@ -3,14 +3,12 @@
 ## Table of Contents
 - [Overview](#overview)
 - [Design Rationale](#design-rationale)
-- [Architecture Comparison](#architecture-comparison)
 - [Core Components](#core-components)
 - [Message Flow](#message-flow)
 - [Security Model](#security-model)
 - [Audit & Compliance](#audit--compliance)
 - [Performance Characteristics](#performance-characteristics)
 - [Deployment Architecture](#deployment-architecture)
-- [Migration Strategy](#migration-strategy)
 - [Implementation Roadmap](#implementation-roadmap)
 
 ## Overview
@@ -31,18 +29,6 @@ This architectural approach provides:
 - **Operational control**: Circuit breakers, rate limiting, priority queues
 - **Compliance ready**: SOC2, HIPAA, GDPR, PCI-DSS compatible
 
-### Trade-offs vs Pure P2P
-
-| Aspect | Pure P2P | Gateway Pattern |
-|--------|----------|-----------------|
-| **Latency** | <5ms (P50) | 10-20ms (P50) |
-| **Throughput** | 10,000+ msg/s | 5,000 msg/s (single), 20,000+ (clustered) |
-| **Audit Trail** | Optional, async | Complete, guaranteed |
-| **Security** | Client-side | Server-side enforcement |
-| **Reliability** | At-most-once | At-least-once |
-| **Compliance** | Limited | Full support |
-| **Operational Control** | Distributed | Centralized |
-
 ## Design Rationale
 
 ### Why Enterprises Need Gateway Pattern
@@ -56,9 +42,7 @@ Regulations require:
 - **PCI-DSS**: Credit card data must be detected and blocked
 - **FINRA**: Financial communications must be retained 7+ years
 
-**Pure P2P limitation**: Cannot guarantee all messages are audited if agents bypass logging.
-
-**Gateway solution**: Single enforcement point ensures 100% audit coverage.
+Single enforcement point ensures 100% audit coverage.
 
 **2. Zero-Trust Security**
 
@@ -68,9 +52,7 @@ Enterprise security mandates:
 - Principle of least privilege
 - Defense in depth
 
-**Pure P2P limitation**: Compromised agent can send arbitrary messages.
-
-**Gateway solution**: Centralized authentication, authorization, and validation.
+Centralized authentication, authorization, and validation.
 
 **3. Operational Requirements**
 
@@ -81,126 +63,7 @@ Enterprise operations need:
 - Traffic shaping and priority queues
 - Gradual rollouts and canary deployments
 
-**Pure P2P limitation**: Distributed control plane, harder to monitor and react.
-
-**Gateway solution**: Single control plane with operational levers.
-
-### When to Use Gateway Pattern
-
-**Use Gateway if**:
-- ✅ Regulated industry (finance, healthcare, government)
-- ✅ Handling sensitive data (PII, PHI, PCI)
-- ✅ SOC2/ISO27001/HIPAA compliance required
-- ✅ Multi-tenant with strict isolation
-- ✅ Need complete audit trail for legal/regulatory
-- ✅ Security team requires zero-trust architecture
-
-**Use Pure P2P if**:
-- ✅ Internal tools, trusted environment
-- ✅ Performance is critical (high-frequency trading, gaming)
-- ✅ No regulatory requirements
-- ✅ Startup/rapid iteration phase
-
-### Hybrid Approach
-
-For organizations transitioning or with mixed requirements:
-- **P2P for internal agents** (trusted, high-performance)
-- **Gateway for external agents** (untrusted, audited)
-- **Gateway for sensitive operations** (payment, PHI access)
-
-## Architecture Comparison
-
-### Pure P2P Architecture (Current)
-
-```
-┌─────────┐                                    ┌─────────┐
-│ Agent A │────────────────────────────────────│ Agent B │
-└─────────┘         Redis Pub/Sub              └─────────┘
-     │              (direct channel)                 │
-     │                                               │
-     └───────────────────┐     ┌───────────────────┘
-                         ↓     ↓
-                    ┌────────────────┐
-                    │  MAS Service   │
-                    │  (optional)    │
-                    │  - Registry    │
-                    │  - Discovery   │
-                    │  - Health      │
-                    └────────────────┘
-```
-
-**Characteristics**:
-- Direct agent-to-agent communication
-- No message inspection or validation
-- Optional async audit logging
-- High throughput, low latency
-- Client-side security enforcement
-
-### Gateway Architecture (Enterprise)
-
-```
-┌─────────┐                                    ┌─────────┐
-│ Agent A │                                    │ Agent B │
-└────┬────┘                                    └────▲────┘
-     │                                              │
-     │ 1. Send message                              │ 5. Consume
-     │    (with token)                              │    (with ACK)
-     ↓                                              │
-┌─────────────────────────────────────────────────────────┐
-│                    Gateway Service                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Auth/Authz   │→ │ DLP Scanner  │→ │ Rate Limiter │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│                           ↓                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Audit Logger │  │ Circuit      │  │ Priority     │  │
-│  │ (Streams)    │  │ Breaker      │  │ Queue        │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└──────────────────────────┬──────────────────────────────┘
-                           │ 2. Validate
-                           │ 3. Audit log
-                           │ 4. Publish
-                           ↓
-                    ┌──────────────┐
-                    │ Redis Streams│
-                    │ agent.stream:│
-                    │   {target_id}│
-                    └──────────────┘
-```
-
-**Characteristics**:
-- Centralized validation and control
-- Complete message inspection and audit
-- Server-side security enforcement
-- Reliable delivery (at-least-once)
-- Operational control levers
-
-### Hybrid Architecture (Recommended for Migration)
-
-```
-                    ┌──────────────────┐
-                    │  Gateway Service │
-                    │  (with feature   │
-                    │   flags)         │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-        External/         Internal/      Sensitive
-        Untrusted         Trusted        Operations
-              │              │              │
-              ↓              ↓              ↓
-      ┌────────────┐  ┌────────────┐  ┌────────────┐
-      │ Gateway    │  │ Pure P2P   │  │ Gateway    │
-      │ (full)     │  │ (fast)     │  │ (audit)    │
-      └────────────┘  └────────────┘  └────────────┘
-```
-
-**Route by**:
-- Agent trust level (internal vs external)
-- Message sensitivity (public vs PHI/PCI)
-- Operation type (read vs write)
-- Compliance requirements (audit vs no-audit)
+Single control plane with operational levers.
 
 ## Core Components
 
@@ -1252,102 +1115,6 @@ spec:
 - Capacity (CPU, memory, storage)
 - Business KPIs (message volume, active agents)
 
-## Migration Strategy
-
-### Phase 1: Preparation (Month 1-2)
-
-**Objectives**:
-- Build gateway service
-- Implement core features (auth, audit)
-- Deploy in shadow mode (observe, don't block)
-
-**Tasks**:
-1. Develop gateway service (auth, authz, audit modules)
-2. Set up infrastructure (K8s, Redis, monitoring)
-3. Deploy gateway in "observe" mode
-4. Agents send to both P2P and gateway
-5. Compare behavior, tune configurations
-6. Validate audit log completeness
-
-**Success Criteria**:
-- Gateway handles 100% of message volume in shadow mode
-- <5% error rate in gateway
-- Audit logs match P2P messages (99%+ coverage)
-
-### Phase 2: Soft Launch (Month 3-4)
-
-**Objectives**:
-- Route non-critical traffic through gateway
-- Enable enforcement for test agents
-- Validate security features
-
-**Tasks**:
-1. Select pilot agents (internal, low-risk)
-2. Route pilot traffic through gateway (enforce mode)
-3. Enable DLP, rate limiting, circuit breakers
-4. Monitor for issues (latency, errors)
-5. Collect feedback from pilot users
-6. Tune configurations based on feedback
-
-**Success Criteria**:
-- Pilot agents operate normally through gateway
-- P95 latency <30ms
-- No false-positive DLP violations
-- Zero incidents from pilot agents
-
-### Phase 3: Gradual Rollout (Month 5-6)
-
-**Objectives**:
-- Migrate all agents to gateway
-- Deprecate direct P2P
-- Achieve full enforcement
-
-**Rollout Strategy**:
-- Week 1: 10% of agents
-- Week 2: 25% of agents
-- Week 3: 50% of agents
-- Week 4: 75% of agents
-- Week 5: 90% of agents
-- Week 6: 100% of agents
-
-**Feature Flags**:
-- Gateway routing (per-agent toggle)
-- Enforcement mode (observe vs enforce)
-- DLP scanning (enabled/disabled)
-- Rate limiting (thresholds per agent)
-
-**Rollback Plan**:
-- If error rate > 1%: Pause rollout
-- If P99 latency > 100ms: Rollback 50%
-- If critical incident: Full rollback to P2P
-
-**Success Criteria**:
-- 100% of agents using gateway
-- P2P channels deprecated
-- Audit coverage 100%
-- SLA met (99.9% uptime)
-
-### Phase 4: Optimization (Month 7+)
-
-**Objectives**:
-- Optimize performance
-- Add advanced features
-- Achieve compliance certifications
-
-**Tasks**:
-1. Performance tuning (caching, batching)
-2. Add RBAC support (beyond ACL)
-3. Implement message signing
-4. Add anomaly detection
-5. Obtain SOC2 audit
-6. Document for compliance
-
-**Success Criteria**:
-- P95 latency <20ms
-- Throughput 10,000+ msg/s (single gateway)
-- SOC2 Type II certified
-- HIPAA/GDPR compliance documented
-
 ## Implementation Roadmap
 
 ### MVP (Minimum Viable Product) - 3 Months
@@ -1424,11 +1191,11 @@ The Gateway Pattern transforms the MAS Framework into an enterprise-ready platfo
 4. **Control**: Rate limiting, priority queues, monitoring
 5. **Scalability**: Horizontal scaling, proven at scale
 
-**Trade-offs**:
-- 2-4x latency increase (5ms → 10-20ms)
-- 50-70% throughput reduction (single gateway)
-- Increased infrastructure cost (3-4x)
-- Additional operational complexity
+**Operational Considerations**:
+- Added latency from validation and audit processing
+- Throughput depends on gateway scaling and Redis capacity
+- Increased infrastructure footprint for security controls
+- Additional operational complexity (monitoring, policies, keys)
 
 **When to Adopt**:
 - Regulated industries requiring compliance
@@ -1437,12 +1204,5 @@ The Gateway Pattern transforms the MAS Framework into an enterprise-ready platfo
 - Organizations prioritizing security over raw performance
 
 **Recommended Approach**:
-Start with Pure P2P for rapid iteration, migrate to Gateway when:
-- Product-market fit achieved
-- Enterprise customers require compliance
-- Security incidents motivate investment
-- Traffic volume justifies infrastructure cost
-
-The Gateway Pattern is not a replacement for P2P—it's an evolution for enterprise requirements.
-
-
+Adopt the gateway architecture from the start to ensure consistent security,
+auditability, and operational control across all environments.
