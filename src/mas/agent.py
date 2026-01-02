@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -338,25 +337,36 @@ class Agent(Generic[StateType]):
             raise RuntimeError("Agent not started")
         if not self._token:
             raise RuntimeError("No token available for gateway authentication")
-        signing_key = os.getenv("SIGNING_KEY")
-        ts = str(int(time.time()))
-        nonce = str(uuid.uuid4())
+        signing_key = await self._get_signing_key()
+        if not signing_key:
+            raise RuntimeError("No signing key available for agent; cannot sign message")
+        ts = time.time()
+        nonce = uuid.uuid4().hex
         envelope_json = message.model_dump_json()
         fields: dict[str, str] = {
             "envelope": envelope_json,
             "agent_id": self.id,
             "token": self._token,
-            "timestamp": ts,
+            "timestamp": str(ts),
             "nonce": nonce,
         }
-        if signing_key:
-            mac = hmac.new(
-                signing_key.encode(),
-                f"{envelope_json}.{ts}.{nonce}".encode(),
-                hashlib.sha256,
-            ).hexdigest()
-            fields["signature"] = mac
-            fields["alg"] = "HMAC-SHA256"
+
+        signature_data = {
+            "message_id": message.message_id,
+            "sender_id": message.sender_id,
+            "timestamp": ts,
+            "nonce": nonce,
+            "payload": message.payload,
+        }
+        canonical_str = self._canonicalize(signature_data)
+        key_bytes = bytes.fromhex(signing_key)
+        mac = hmac.new(
+            key_bytes,
+            canonical_str.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        fields["signature"] = mac
+        fields["alg"] = "HMAC-SHA256"
         await self._redis.xadd("mas.gateway.ingress", fields)
         logger.debug(
             "Message enqueued to gateway ingress",
@@ -508,6 +518,14 @@ class Agent(Generic[StateType]):
 
         return await self._registry.discover(capabilities)
 
+    def _canonicalize(self, data: Mapping[str, Any]) -> str:
+        return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+    async def _get_signing_key(self) -> Optional[str]:
+        if not self._redis:
+            return None
+        return await self._redis.get(f"agent:{self.id}:signing_key")
+
     async def wait_transport_ready(self, timeout: float | None = None) -> None:
         """
         Wait until the framework signals that transport can begin.
@@ -600,9 +618,13 @@ class Agent(Generic[StateType]):
                                     continue
 
                             asyncio.create_task(
-                                self._handle_message_with_error_handling(msg)
+                                self._handle_message_and_ack(
+                                    msg,
+                                    stream_name,
+                                    shared_group,
+                                    entry_id,
+                                )
                             )
-                            await self._redis.xack(stream_name, shared_group, entry_id)
                         except Exception as e:
                             logger.error(
                                 "Failed to process stream message",
@@ -615,6 +637,22 @@ class Agent(Generic[StateType]):
                             )
         except asyncio.CancelledError:
             pass
+
+    async def _handle_message_and_ack(
+        self,
+        msg: AgentMessage,
+        stream_name: str,
+        group: str,
+        entry_id: str,
+    ) -> None:
+        try:
+            await self._handle_message_with_error_handling(msg)
+        finally:
+            if self._redis:
+                try:
+                    await self._redis.xack(stream_name, group, entry_id)
+                except Exception:
+                    pass
 
     async def _handle_message_with_error_handling(self, msg: AgentMessage) -> None:
         """

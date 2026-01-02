@@ -9,7 +9,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional, Union, cast
+from typing import Annotated, Any, Literal, Optional, TypedDict, Union, cast
 
 import yaml
 from pydantic import BaseModel, Field
@@ -88,6 +88,15 @@ PermissionSpec = Annotated[
     Field(discriminator="type"),
 ]
 
+class _RunnerSettingsInit(TypedDict, total=False):
+    config_file: Optional[str]
+    start_service: bool
+    service_redis_url: str
+    start_gateway: bool
+    gateway_config_file: Optional[str]
+    permissions: list[PermissionSpec]
+    agents: list[AgentSpec]
+
 
 class RunnerSettings(BaseSettings):
     """
@@ -147,10 +156,10 @@ class RunnerSettings(BaseSettings):
 
         if config_file:
             yaml_data = self._load_yaml(config_file)
-            merged_data = {**yaml_data, **data, "config_file": config_file}
-            super().__init__(**merged_data)
+            merged_data: dict[str, Any] = {**yaml_data, **data, "config_file": config_file}
+            super().__init__(**cast(_RunnerSettingsInit, merged_data))
         else:
-            super().__init__(**data)
+            super().__init__(**cast(_RunnerSettingsInit, data))
 
     @staticmethod
     def _default_config_file() -> Optional[str]:

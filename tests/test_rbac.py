@@ -112,22 +112,22 @@ class TestAgentRoleAssignment:
 class TestPermissionMatching:
     """Test permission pattern matching."""
 
-    def test_exact_match(self, authz_rbac):
+    async def test_exact_match(self, authz_rbac):
         """Test exact permission match."""
         assert authz_rbac._matches_permission("send:agent-1", "send:agent-1")
 
-    def test_wildcard_all(self, authz_rbac):
+    async def test_wildcard_all(self, authz_rbac):
         """Test * wildcard matches everything."""
         assert authz_rbac._matches_permission("send:agent-1", "*")
         assert authz_rbac._matches_permission("read:anything", "*")
 
-    def test_wildcard_action(self, authz_rbac):
+    async def test_wildcard_action(self, authz_rbac):
         """Test action:* wildcard."""
         assert authz_rbac._matches_permission("send:agent-1", "send:*")
         assert authz_rbac._matches_permission("send:agent-2", "send:*")
         assert not authz_rbac._matches_permission("read:agent-1", "send:*")
 
-    def test_wildcard_pattern(self, authz_rbac):
+    async def test_wildcard_pattern(self, authz_rbac):
         """Test pattern wildcards like agent.*"""
         # agent.* means "agent." followed by anything
         assert authz_rbac._matches_permission("send:agent.1", "send:agent.*")
@@ -136,7 +136,7 @@ class TestPermissionMatching:
         assert not authz_rbac._matches_permission("send:user.1", "send:agent.*")
         assert not authz_rbac._matches_permission("send:agent-1", "send:agent.*")
 
-    def test_no_match(self, authz_rbac):
+    async def test_no_match(self, authz_rbac):
         """Test permission doesn't match."""
         assert not authz_rbac._matches_permission("send:agent-1", "read:agent-1")
         assert not authz_rbac._matches_permission("send:agent-1", "send:agent-2")

@@ -1096,10 +1096,10 @@ per_minute: int = 100  # Messages per minute per agent
 per_hour: int = 1000   # Messages per hour per agent
 ```
 
-**FeaturesSettings** (secure-by-default):
+**FeaturesSettings** (secure-by-default, queues opt-in):
 ```python
 dlp: bool = True               # Data Loss Prevention scanning
-priority_queue: bool = True    # Message priority routing
+priority_queue: bool = False   # Message priority routing
 rbac: bool = True             # Role-Based Access Control
 message_signing: bool = True  # HMAC message signatures
 circuit_breaker: bool = True  # Circuit breaker for reliability
@@ -1173,7 +1173,7 @@ rate_limit:
 
 features:
   dlp: true
-  priority_queue: true
+  priority_queue: false
   rbac: true
   message_signing: true
   circuit_breaker: true

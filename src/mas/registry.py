@@ -86,6 +86,7 @@ class AgentRegistry:
                         "registered_at": str(time.time()),
                     },
                 )
+            await self._ensure_signing_key(agent_id)
             return existing_data["token"]
 
         # First instance - create new registration
@@ -100,10 +101,14 @@ class AgentRegistry:
             "registered_at": str(time.time()),
         }
 
+        signing_key = self._generate_signing_key()
+        signing_key_field = f"agent:{agent_id}:signing_key"
+
         # Use pipeline for atomic registration
         pipe = self.redis.pipeline()
         pipe.hset(agent_key, mapping=agent_data)
         pipe.incr(instance_count_key)  # Set to 1
+        pipe.set(signing_key_field, signing_key)
         await pipe.execute()
 
         return token
@@ -323,6 +328,17 @@ class AgentRegistry:
         heartbeats = await self.get_instance_heartbeats(agent_id)
         return any(ttl is not None and ttl > 0 for ttl in heartbeats.values())
 
+    async def _ensure_signing_key(self, agent_id: str) -> None:
+        key_field = f"agent:{agent_id}:signing_key"
+        existing = await self.redis.get(key_field)
+        if existing:
+            return
+        await self.redis.set(key_field, self._generate_signing_key())
+
     def _generate_token(self) -> str:
         """Generate authentication token."""
         return secrets.token_urlsafe(32)
+
+    def _generate_signing_key(self) -> str:
+        """Generate per-agent signing key (hex encoded)."""
+        return secrets.token_bytes(32).hex()
