@@ -51,6 +51,7 @@ jobs:
           git push --follow-tags
   publish:
     name: python
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
