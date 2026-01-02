@@ -35,13 +35,23 @@ jobs:
         run: |
           git config user.name "rhymiz"
           git config user.email "lemuelboyce@gmail.com"
-          VERSION="$(python -c "from mas.__version__ import __version__; print(__version__)")"
+          VERSION="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          version_file = Path("src/mas/__version__.py").read_text(encoding="utf-8")
+          match = re.search(r'__version__\\s*=\\s*["\\\']([^"\\\']+)["\\\']', version_file)
+          if not match:
+            raise SystemExit("Unable to read __version__ from src/mas/__version__.py")
+          print(match.group(1))
+          PY
+          )"
           git add src/mas/__version__.py
           git commit -m "chore(release): v$VERSION"
           git tag "v$VERSION"
           git push --follow-tags
   publish:
     name: python
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
