@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package mas.v1;
+
+service MasService {
+  rpc Transport(stream ClientEvent) returns (stream ServerEvent);
+
+  rpc Send(SendRequest) returns (SendResponse);
+  rpc Request(RequestRequest) returns (RequestResponse);
+  rpc Reply(ReplyRequest) returns (ReplyResponse);
+
+  rpc Discover(DiscoverRequest) returns (DiscoverResponse);
+
+  rpc GetState(GetStateRequest) returns (GetStateResponse);
+  rpc UpdateState(UpdateStateRequest) returns (UpdateStateResponse);
+  rpc ResetState(ResetStateRequest) returns (ResetStateResponse);
+}
+
+message ClientEvent {
+  oneof event {
+    Hello hello = 1;
+    Ack ack = 2;
+    Nack nack = 3;
+    Heartbeat heartbeat = 4;
+  }
+}
+
+message ServerEvent {
+  oneof event {
+    Welcome welcome = 1;
+    Delivery delivery = 2;
+    ServerError error = 3;
+  }
+}
+
+message Hello {
+  // Stable identifier for this agent process.
+  // Must be unique per agent_id.
+  string instance_id = 1;
+}
+
+message Welcome {
+  string agent_id = 1;
+  string instance_id = 2;
+}
+
+message Delivery {
+  string delivery_id = 1;
+  string envelope_json = 2;
+}
+
+message Ack {
+  string delivery_id = 1;
+}
+
+message Nack {
+  string delivery_id = 1;
+  string reason = 2;
+  bool retryable = 3;
+}
+
+message Heartbeat {}
+
+message ServerError {
+  string code = 1;
+  string message = 2;
+}
+
+message SendRequest {
+  string target_id = 1;
+  string message_type = 2;
+  string data_json = 3;
+  string instance_id = 4;
+}
+
+message SendResponse {
+  string message_id = 1;
+}
+
+message RequestRequest {
+  string target_id = 1;
+  string message_type = 2;
+  string data_json = 3;
+  // Optional client-side timeout hint; server may ignore.
+  int32 timeout_ms = 4;
+  string instance_id = 5;
+}
+
+message RequestResponse {
+  string message_id = 1;
+  string correlation_id = 2;
+}
+
+message ReplyRequest {
+  string correlation_id = 1;
+  string message_type = 2;
+  string data_json = 3;
+  string instance_id = 4;
+}
+
+message ReplyResponse {
+  string message_id = 1;
+}
+
+message DiscoverRequest {
+  repeated string capabilities = 1;
+}
+
+message AgentRecord {
+  string agent_id = 1;
+  repeated string capabilities = 2;
+  string metadata_json = 3;
+  string status = 4;
+}
+
+message DiscoverResponse {
+  repeated AgentRecord agents = 1;
+}
+
+message GetStateRequest {}
+
+message GetStateResponse {
+  map<string, string> state = 1;
+}
+
+message UpdateStateRequest {
+  map<string, string> updates = 1;
+}
+
+message UpdateStateResponse {}
+
+message ResetStateRequest {}
+
+message ResetStateResponse {}

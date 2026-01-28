@@ -9,8 +9,6 @@ from enum import Enum
 from typing import Any, cast
 from pydantic import BaseModel
 
-from .metrics import MetricsCollector
-
 logger = logging.getLogger(__name__)
 
 
@@ -88,7 +86,7 @@ class DLPModule:
 
     Usage:
         dlp = DLPModule()
-        result = await dlp.scan(message.payload)
+        result = await dlp.scan(message.data)
         if not result.clean and result.action == ActionPolicy.BLOCK:
             # Reject message
     """
@@ -215,9 +213,7 @@ class DLPModule:
         # Detect violations
         violations = await self._detect_violations(payload_text)
 
-        # Record scan duration metric
         scan_duration = time.time() - scan_start
-        MetricsCollector.record_dlp_scan_duration(scan_duration)
 
         if not violations:
             return ScanResult(
@@ -240,6 +236,7 @@ class DLPModule:
             extra={
                 "violations": len(violations),
                 "action": action,
+                "duration_seconds": round(scan_duration, 6),
                 "violation_types": [v.violation_type for v in violations],
             },
         )

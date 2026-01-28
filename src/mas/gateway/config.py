@@ -28,17 +28,6 @@ class CircuitBreakerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GATEWAY_CIRCUIT_BREAKER_")
 
 
-class MessageSigningSettings(BaseSettings):
-    """Message signing configuration settings."""
-
-    max_timestamp_drift: int = Field(
-        default=300, ge=0, description="Max timestamp drift in seconds"
-    )
-    nonce_ttl: int = Field(default=300, ge=0, description="Nonce TTL in seconds")
-
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_MESSAGE_SIGNING_")
-
-
 class RateLimitSettings(BaseSettings):
     """Rate limiting configuration settings."""
 
@@ -69,23 +58,16 @@ class FeaturesSettings(BaseSettings):
     """
     Feature flags configuration.
 
-    Production-ready defaults (security features enabled):
-    - DLP: True (data loss prevention)
-    - RBAC: True (role-based access control)
-    - Message Signing: True (integrity verification)
-    - Circuit Breaker: True (reliability)
+    Secure-by-default feature flags for message enforcement.
 
-    For development/testing, you may want to disable features:
-    - Set GATEWAY_FEATURES__RBAC=false for simple ACL-only mode
-    - Set GATEWAY_FEATURES__MESSAGE_SIGNING=false to skip signing
-    - Set GATEWAY_FEATURES__DLP=false for faster testing
+    Defaults are strict and simple:
+    - DLP: enabled
+    - RBAC: disabled (ACL only unless explicitly enabled)
+    - Circuit Breaker: enabled
     """
 
     dlp: bool = Field(default=True, description="Enable DLP scanning")
-    rbac: bool = Field(default=True, description="Enable RBAC authorization (Phase 2)")
-    message_signing: bool = Field(
-        default=True, description="Enable message signing (Phase 2)"
-    )
+    rbac: bool = Field(default=False, description="Enable RBAC authorization")
     circuit_breaker: bool = Field(default=True, description="Enable circuit breakers")
 
     model_config = SettingsConfigDict(env_prefix="GATEWAY_FEATURES_")
@@ -134,44 +116,6 @@ class GatewaySettings(BaseSettings):
     features: FeaturesSettings = Field(default_factory=FeaturesSettings)
     circuit_breaker: CircuitBreakerSettings = Field(
         default_factory=CircuitBreakerSettings
-    )
-    message_signing: MessageSigningSettings = Field(
-        default_factory=MessageSigningSettings
-    )
-    # Ingress/delivery/ACL settings for streams-based gateway mode
-    ingress_stream: str = Field(
-        default="mas.gateway.ingress", description="Inbound stream for agent messages"
-    )
-    ingress_group: str = Field(
-        default="gateway", description="Consumer group name for ingress processing"
-    )
-    dlq_stream: str = Field(
-        default="mas.gateway.dlq", description="DLQ stream for rejected/failed messages"
-    )
-    agent_stream_prefix: str = Field(
-        default="agent.stream:",
-        description="Prefix for per-agent delivery streams (agent.stream:{id})",
-    )
-    delivery_max_attempts: int = Field(
-        default=5,
-        ge=1,
-        description="Max delivery attempts before moving to delivery DLQ",
-    )
-    delivery_backoff_ms: int = Field(
-        default=200, ge=0, description="Base backoff for reclaims in milliseconds"
-    )
-    delivery_reclaim_idle_ms: int = Field(
-        default=30_000,
-        ge=100,
-        description="Idle time before reclaiming pending deliveries (ms)",
-    )
-    acl_provision_on_register: bool = Field(
-        default=False,
-        description="Provision Redis ACLs per agent at registration (requires Redis 6+)",
-    )
-    acl_teardown_on_stop: bool = Field(
-        default=False,
-        description="Tear down provisioned Redis ACL users on gateway stop",
     )
 
     model_config = SettingsConfigDict(
@@ -271,7 +215,6 @@ class GatewaySettings(BaseSettings):
             "Features:",
             f"  DLP: {'✓' if self.features.dlp else '✗'}",
             f"  RBAC: {'✓' if self.features.rbac else '✗'}",
-            f"  Message Signing: {'✓' if self.features.message_signing else '✗'}",
             f"  Circuit Breaker: {'✓' if self.features.circuit_breaker else '✗'}",
         ]
 
@@ -282,16 +225,6 @@ class GatewaySettings(BaseSettings):
                     "Circuit Breaker:",
                     f"  Failure Threshold: {self.circuit_breaker.failure_threshold}",
                     f"  Timeout: {self.circuit_breaker.timeout_seconds}s",
-                ]
-            )
-
-        if self.features.message_signing:
-            lines.extend(
-                [
-                    "",
-                    "Message Signing:",
-                    f"  Max Timestamp Drift: {self.message_signing.max_timestamp_drift}s",
-                    f"  Nonce TTL: {self.message_signing.nonce_ttl}s",
                 ]
             )
 

@@ -1,8 +1,5 @@
-# Gateway Service Configuration Example
-# Copy this file to gateway.yaml and customize for your environment
-#
-# NOTE: All features are enabled by default for production security.
-# For development/testing, you may want to disable some features for speed.
+# MAS server security policy configuration example.
+# Copy this file to gateway.yaml and customize for your environment.
 
 redis:
   url: redis://localhost:6379
@@ -16,8 +13,7 @@ rate_limit:
 # Feature flags (production-ready defaults - all enabled)
 features:
   dlp: true                # Data Loss Prevention scanning
-  rbac: true              # Role-Based Access Control (Phase 2)
-  message_signing: true   # HMAC message signatures (Phase 2)
+  rbac: false             # Role-Based Access Control (optional)
   circuit_breaker: true   # Circuit breaker for reliability
 
 circuit_breaker:
@@ -25,7 +21,3 @@ circuit_breaker:
   success_threshold: 2
   timeout_seconds: 60
   window_seconds: 300
-
-message_signing:
-  max_timestamp_drift: 300
-  nonce_ttl: 300

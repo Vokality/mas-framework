@@ -8,7 +8,6 @@ from typing import Any, Mapping, Optional, Tuple
 from pydantic import BaseModel
 
 from ..redis_types import AsyncRedisProtocol
-from .metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +126,6 @@ class CircuitBreakerModule:
             if opened_at and (current_time - opened_at) >= self.config.timeout_seconds:
                 state = CircuitState.HALF_OPEN
                 success_count = 0
-                MetricsCollector.record_circuit_breaker_trip(target_id, "HALF_OPEN")
                 await self._update_state(target_id, state, failure_count, success_count)
                 logger.info(
                     f"Circuit breaker HALF_OPEN for {target_id} after timeout",
@@ -180,7 +178,6 @@ class CircuitBreakerModule:
                 state = CircuitState.CLOSED
                 failure_count = 0
                 success_count = 0
-                MetricsCollector.record_circuit_breaker_trip(target_id, "CLOSED")
                 logger.info(
                     f"Circuit breaker CLOSED for {target_id} after {self.config.success_threshold} successes",
                     extra={"target_id": target_id, "state": state},
@@ -251,7 +248,6 @@ class CircuitBreakerModule:
             if opened_at and (current_time - opened_at) >= self.config.timeout_seconds:
                 state = CircuitState.HALF_OPEN
                 success_count = 0
-                MetricsCollector.record_circuit_breaker_trip(target_id, "HALF_OPEN")
 
         allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
 
@@ -274,7 +270,6 @@ class CircuitBreakerModule:
                 state = CircuitState.CLOSED
                 failure_count = 0
                 success_count = 0
-                MetricsCollector.record_circuit_breaker_trip(target_id, "CLOSED")
             await self._update_state(target_id, state, failure_count, success_count)
         elif state == CircuitState.CLOSED and failure_count > 0:
             failure_count = 0
@@ -340,7 +335,6 @@ class CircuitBreakerModule:
                 ):
                     state = CircuitState.HALF_OPEN
                     success_count = 0
-                    MetricsCollector.record_circuit_breaker_trip(target_id, "HALF_OPEN")
 
         allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
 
@@ -371,7 +365,6 @@ class CircuitBreakerModule:
         ):
             state = CircuitState.OPEN
             opened_at = current_time
-            MetricsCollector.record_circuit_breaker_trip(target_id, "OPEN")
             logger.warning(
                 f"Circuit breaker OPEN for {target_id} after {failure_count} failures",
                 extra={
@@ -384,7 +377,6 @@ class CircuitBreakerModule:
         elif state == CircuitState.HALF_OPEN:
             state = CircuitState.OPEN
             opened_at = current_time
-            MetricsCollector.record_circuit_breaker_trip(target_id, "OPEN")
             logger.warning(
                 f"Circuit breaker back to OPEN for {target_id} (half-open test failed)",
                 extra={"target_id": target_id, "state": state, "reason": reason},
@@ -464,7 +456,6 @@ class CircuitBreakerModule:
         ):
             state = CircuitState.OPEN
             opened_at = current_time
-            MetricsCollector.record_circuit_breaker_trip(target_id, "OPEN")
             logger.warning(
                 f"Circuit breaker OPEN for {target_id} after {failure_count} failures",
                 extra={
@@ -478,7 +469,6 @@ class CircuitBreakerModule:
             # Failure in half-open means back to open
             state = CircuitState.OPEN
             opened_at = current_time
-            MetricsCollector.record_circuit_breaker_trip(target_id, "OPEN")
             logger.warning(
                 f"Circuit breaker back to OPEN for {target_id} (half-open test failed)",
                 extra={"target_id": target_id, "state": state, "reason": reason},

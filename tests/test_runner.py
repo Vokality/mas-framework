@@ -27,28 +27,22 @@ class NotAnAgent:
     """Dummy class for validation tests."""
 
 
-class FakeService:
-    """Stub MAS service for runner lifecycle tests."""
+class FakeServer:
+    """Stub MAS server for runner lifecycle tests."""
 
-    def __init__(self, redis_url: str) -> None:
-        self.redis_url = redis_url
-        self.started = False
-        self.stopped = False
-
-    async def start(self) -> None:
-        self.started = True
-
-    async def stop(self) -> None:
-        self.stopped = True
-
-
-class FakeGateway:
-    """Stub gateway service for runner lifecycle tests."""
-
-    def __init__(self, settings) -> None:
+    def __init__(self, *, settings, gateway) -> None:
         self.settings = settings
+        self.gateway = gateway
         self.started = False
         self.stopped = False
+
+    @property
+    def authz(self):
+        raise RuntimeError("not needed for this test")
+
+    @property
+    def bound_addr(self) -> str:
+        return "127.0.0.1:50051"
 
     async def start(self) -> None:
         self.started = True
@@ -61,10 +55,15 @@ def _write_agents_yaml(path: Path) -> None:
     path.write_text(
         "\n".join(
             [
+                "tls_ca_path: tests/certs/ca.pem",
+                "tls_server_cert_path: tests/certs/server.pem",
+                "tls_server_key_path: tests/certs/server.key",
                 "agents:",
                 "  - agent_id: test_agent",
                 "    class_path: tests.test_runner:NoopAgent",
                 "    instances: 1",
+                "    tls_cert_path: tests/certs/sender.pem",
+                "    tls_key_path: tests/certs/sender.key",
             ]
         )
         + "\n",
@@ -116,8 +115,13 @@ async def test_runner_start_respects_instances() -> None:
                 agent_id="noop",
                 class_path="tests.test_runner:NoopAgent",
                 instances=2,
+                tls_cert_path="tests/certs/sender.pem",
+                tls_key_path="tests/certs/sender.key",
             )
-        ]
+        ],
+        tls_ca_path="tests/certs/ca.pem",
+        tls_server_cert_path="tests/certs/server.pem",
+        tls_server_key_path="tests/certs/server.key",
     )
     runner = AgentRunner(settings)
 
@@ -135,9 +139,14 @@ async def test_runner_rejects_reserved_kwargs() -> None:
             AgentSpec(
                 agent_id="noop",
                 class_path="tests.test_runner:NoopAgent",
+                tls_cert_path="tests/certs/sender.pem",
+                tls_key_path="tests/certs/sender.key",
                 init_kwargs={"agent_id": "override"},
             )
-        ]
+        ],
+        tls_ca_path="tests/certs/ca.pem",
+        tls_server_cert_path="tests/certs/server.pem",
+        tls_server_key_path="tests/certs/server.key",
     )
     runner = AgentRunner(settings)
 
@@ -146,79 +155,26 @@ async def test_runner_rejects_reserved_kwargs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runner_starts_and_stops_service(monkeypatch) -> None:
-    monkeypatch.setattr("mas.runner.MASService", FakeService)
-    monkeypatch.setattr("mas.runner.GatewayService", FakeGateway)
+async def test_runner_starts_and_stops_server(monkeypatch) -> None:
+    monkeypatch.setattr("mas.runner.MASServer", FakeServer)
     settings = load_runner_settings(
         agents=[
             AgentSpec(
                 agent_id="noop",
                 class_path="tests.test_runner:NoopAgent",
+                tls_cert_path="tests/certs/sender.pem",
+                tls_key_path="tests/certs/sender.key",
             )
         ],
-        service_redis_url="redis://example:6379",
+        tls_ca_path="tests/certs/ca.pem",
+        tls_server_cert_path="tests/certs/server.pem",
+        tls_server_key_path="tests/certs/server.key",
     )
     runner = AgentRunner(settings)
 
-    await runner._start_service()
-    assert runner._service is not None
-    assert runner._service.redis_url == "redis://example:6379"
-    assert runner._service.started is True
+    await runner._start_server()
+    assert runner._server is not None
+    assert runner._server.started is True
 
-    await runner._stop_service()
-    assert runner._service is None
-
-
-@pytest.mark.asyncio
-async def test_runner_starts_and_stops_gateway(monkeypatch) -> None:
-    monkeypatch.setattr("mas.runner.GatewayService", FakeGateway)
-    settings = load_runner_settings(
-        agents=[
-            AgentSpec(
-                agent_id="noop",
-                class_path="tests.test_runner:NoopAgent",
-            )
-        ]
-    )
-    runner = AgentRunner(settings)
-
-    await runner._start_gateway()
-    assert runner._gateway is not None
-    assert runner._gateway.started is True
-
-    await runner._stop_gateway()
-    assert runner._gateway is None
-
-
-@pytest.mark.asyncio
-async def test_runner_rejects_use_gateway_kwarg() -> None:
-    settings = load_runner_settings(
-        agents=[
-            AgentSpec(
-                agent_id="noop",
-                class_path="tests.test_runner:NoopAgent",
-                init_kwargs={"use_gateway": True},
-            )
-        ]
-    )
-    runner = AgentRunner(settings)
-
-    with pytest.raises(ValueError, match="use_gateway is not supported"):
-        await runner._start_agents()
-
-
-@pytest.mark.asyncio
-async def test_runner_requires_gateway_service() -> None:
-    settings = load_runner_settings(
-        agents=[
-            AgentSpec(
-                agent_id="noop",
-                class_path="tests.test_runner:NoopAgent",
-            )
-        ],
-        start_gateway=False,
-    )
-    runner = AgentRunner(settings)
-
-    with pytest.raises(RuntimeError, match="start_gateway must be true"):
-        await runner.run()
+    await runner._stop_server()
+    assert runner._server is None

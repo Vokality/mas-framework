@@ -15,10 +15,10 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .agent import Agent
-from .gateway import GatewayService
-from .gateway.config import GatewaySettings, load_settings as load_gateway_settings
-from .service import MASService
+from .agent import Agent, TlsClientConfig
+from .gateway.config import GatewaySettings
+from .gateway.config import load_settings as load_gateway_settings
+from .server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,14 @@ class AgentSpec(BaseModel):
         description="Import path for the agent class (module:ClassName)",
     )
     instances: int = Field(default=1, ge=1, description="Number of instances to run")
+    capabilities: list[str] = Field(
+        default_factory=list, description="Capabilities advertised by this agent"
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Metadata advertised by this agent"
+    )
+    tls_cert_path: str = Field(..., description="Client certificate PEM path")
+    tls_key_path: str = Field(..., description="Client private key PEM path")
     init_kwargs: dict[str, Any] = Field(
         default_factory=dict, description="Kwargs forwarded to agent constructor"
     )
@@ -89,9 +97,11 @@ PermissionSpec = Annotated[
 
 class _RunnerSettingsInit(TypedDict, total=False):
     config_file: Optional[str]
-    start_service: bool
-    service_redis_url: str
-    start_gateway: bool
+    redis_url: str
+    server_listen_addr: str
+    tls_ca_path: str
+    tls_server_cert_path: str
+    tls_server_key_path: str
     gateway_config_file: Optional[str]
     permissions: list[PermissionSpec]
     agents: list[AgentSpec]
@@ -111,24 +121,27 @@ class RunnerSettings(BaseSettings):
     config_file: Optional[str] = Field(
         default=None, description="Path to YAML config file"
     )
-    start_service: bool = Field(
-        default=True, description="Start MAS service alongside agents"
-    )
-    service_redis_url: str = Field(
+    redis_url: str = Field(
         default="redis://localhost:6379",
-        description="Redis URL for MAS service",
+        description="Redis URL for MAS server",
     )
-    start_gateway: bool = Field(
-        default=True, description="Start gateway service for all agents"
+    server_listen_addr: str = Field(
+        default="127.0.0.1:50051",
+        description="gRPC listen address for MAS server",
     )
+    tls_ca_path: str = Field(..., description="CA PEM used to verify peer certs")
+    tls_server_cert_path: str = Field(..., description="Server certificate PEM")
+    tls_server_key_path: str = Field(..., description="Server private key PEM")
     gateway_config_file: Optional[str] = Field(
         default=None, description="Path to gateway YAML config file"
     )
     permissions: list[PermissionSpec] = Field(
-        default_factory=list, description="Authorization rules to apply"
+        default_factory=list,
+        description="Authorization rules to apply",
     )
     agents: list[AgentSpec] = Field(
-        default_factory=list, description="Agent definitions to run"
+        default_factory=list,
+        description="Agent definitions to run",
     )
 
     model_config = SettingsConfigDict(
@@ -161,8 +174,38 @@ class RunnerSettings(BaseSettings):
                 "config_file": config_file,
             }
             super().__init__(**cast(_RunnerSettingsInit, merged_data))
+            self._resolve_config_paths()
         else:
             super().__init__(**cast(_RunnerSettingsInit, data))
+
+    def _resolve_config_paths(self) -> None:
+        if not self.config_file:
+            return
+
+        base = Path(self.config_file).resolve().parent
+
+        def resolve_path(value: str) -> str:
+            path = Path(value)
+            if path.is_absolute():
+                return value
+            return str((base / path).resolve())
+
+        self.tls_ca_path = resolve_path(self.tls_ca_path)
+        self.tls_server_cert_path = resolve_path(self.tls_server_cert_path)
+        self.tls_server_key_path = resolve_path(self.tls_server_key_path)
+
+        if self.gateway_config_file:
+            self.gateway_config_file = resolve_path(self.gateway_config_file)
+
+        self.agents = [
+            spec.model_copy(
+                update={
+                    "tls_cert_path": resolve_path(spec.tls_cert_path),
+                    "tls_key_path": resolve_path(spec.tls_key_path),
+                }
+            )
+            for spec in self.agents
+        ]
 
     @staticmethod
     def _default_config_file() -> Optional[str]:
@@ -194,8 +237,7 @@ class AgentRunner:
     def __init__(self, settings: RunnerSettings) -> None:
         self._settings = settings
         self._agents: list[Agent[Any]] = []
-        self._service: MASService | None = None
-        self._gateway: GatewayService | None = None
+        self._server: MASServer | None = None
         self._shutdown_event = asyncio.Event()
         self._ensure_import_base()
 
@@ -210,15 +252,10 @@ class AgentRunner:
         """Start agents and wait for shutdown."""
         if not self._settings.agents:
             raise RuntimeError("No agents configured. Provide agents.yaml or settings.")
-        if not self._settings.start_gateway:
-            raise RuntimeError(
-                "Gateway service is required. start_gateway must be true."
-            )
 
         self._setup_signals()
         try:
-            await self._start_service()
-            await self._start_gateway()
+            await self._start_server()
             await self._apply_permissions()
             await self._start_agents()
             logger.info(
@@ -228,8 +265,7 @@ class AgentRunner:
             await self._shutdown_event.wait()
         finally:
             await self._stop_agents()
-            await self._stop_gateway()
-            await self._stop_service()
+            await self._stop_server()
 
     def request_shutdown(self) -> None:
         """Signal the runner to shutdown."""
@@ -238,42 +274,62 @@ class AgentRunner:
             self._shutdown_event.set()
 
     async def _start_agents(self) -> None:
+        server_addr = (
+            self._server.bound_addr
+            if self._server is not None
+            else self._settings.server_listen_addr
+        )
         for spec in self._settings.agents:
             agent_cls = self._load_agent_class(spec.class_path)
-            reserved_keys = {"agent_id"}
+            reserved_keys = {"agent_id", "server_addr", "tls"}
             conflicting = reserved_keys.intersection(spec.init_kwargs.keys())
             if conflicting:
                 raise ValueError(
                     "init_kwargs contains reserved keys: "
                     + ", ".join(sorted(conflicting))
                 )
-            if "use_gateway" in spec.init_kwargs:
-                raise ValueError(
-                    "use_gateway is not supported. MAS always routes via the gateway."
-                )
+
+            tls = TlsClientConfig(
+                root_ca_path=self._settings.tls_ca_path,
+                client_cert_path=spec.tls_cert_path,
+                client_key_path=spec.tls_key_path,
+            )
             for _ in range(spec.instances):
-                agent = agent_cls(spec.agent_id, **spec.init_kwargs)
+                agent = agent_cls(
+                    spec.agent_id,
+                    server_addr=server_addr,
+                    tls=tls,
+                    **spec.init_kwargs,
+                )
                 self._agents.append(agent)
 
         for agent in self._agents:
             await agent.start()
 
-    async def _start_service(self) -> None:
-        if not self._settings.start_service:
-            return
+    async def _start_server(self) -> None:
+        gateway_settings = self._load_gateway_settings()
+        agents: dict[str, AgentDefinition] = {}
+        for spec in self._settings.agents:
+            agents[spec.agent_id] = AgentDefinition(
+                agent_id=spec.agent_id,
+                capabilities=list(spec.capabilities),
+                metadata=dict(spec.metadata),
+            )
 
-        service = MASService(redis_url=self._settings.service_redis_url)
-        await service.start()
-        self._service = service
+        server_settings = MASServerSettings(
+            redis_url=self._settings.redis_url,
+            listen_addr=self._settings.server_listen_addr,
+            tls=TlsConfig(
+                server_cert_path=self._settings.tls_server_cert_path,
+                server_key_path=self._settings.tls_server_key_path,
+                client_ca_path=self._settings.tls_ca_path,
+            ),
+            agents=agents,
+        )
 
-    async def _start_gateway(self) -> None:
-        if not self._settings.start_gateway:
-            return
-
-        settings = self._load_gateway_settings()
-        gateway = GatewayService(settings=settings)
-        await gateway.start()
-        self._gateway = gateway
+        server = MASServer(settings=server_settings, gateway=gateway_settings)
+        await server.start()
+        self._server = server
 
     async def _stop_agents(self) -> None:
         if not self._agents:
@@ -285,42 +341,39 @@ class AgentRunner:
         )
         self._agents.clear()
 
-    async def _stop_gateway(self) -> None:
-        if self._gateway is None:
+    async def _stop_server(self) -> None:
+        if self._server is None:
             return
 
-        await self._gateway.stop()
-        self._gateway = None
+        await self._server.stop()
+        self._server = None
 
     async def _apply_permissions(self) -> None:
-        if not self._gateway or not self._settings.permissions:
+        if not self._server or not self._settings.permissions:
             return
 
-        auth = self._gateway.auth_manager()
-        pending_apply = False
+        authz = self._server.authz
 
         for spec in self._settings.permissions:
             if isinstance(spec, AllowBidirectionalSpec):
-                await auth.allow_bidirectional(spec.agents[0], spec.agents[1])
+                await authz.add_permission(spec.agents[0], spec.agents[1])
+                await authz.add_permission(spec.agents[1], spec.agents[0])
             elif isinstance(spec, AllowNetworkSpec):
-                await auth.allow_network(spec.agents, bidirectional=spec.bidirectional)
+                if spec.bidirectional:
+                    for sender in spec.agents:
+                        targets = [a for a in spec.agents if a != sender]
+                        if targets:
+                            await authz.set_permissions(sender, allowed_targets=targets)
+                else:
+                    for i in range(len(spec.agents) - 1):
+                        await authz.add_permission(spec.agents[i], spec.agents[i + 1])
             elif isinstance(spec, AllowBroadcastSpec):
-                await auth.allow_broadcast(spec.sender, spec.receivers)
+                await authz.set_permissions(spec.sender, allowed_targets=spec.receivers)
             elif isinstance(spec, AllowWildcardSpec):
-                await auth.allow_wildcard(spec.agent_id)
+                await authz.set_permissions(spec.agent_id, allowed_targets=["*"])
             elif isinstance(spec, AllowSpec):
-                auth.allow(spec.sender, spec.targets)
-                pending_apply = True
-
-        if pending_apply:
-            await auth.apply()
-
-    async def _stop_service(self) -> None:
-        if self._service is None:
-            return
-
-        await self._service.stop()
-        self._service = None
+                for target in spec.targets:
+                    await authz.add_permission(spec.sender, target)
 
     def _setup_signals(self) -> None:
         loop = asyncio.get_running_loop()

@@ -12,7 +12,6 @@ from mas.gateway.config import (
     RateLimitSettings,
     FeaturesSettings,
     CircuitBreakerSettings,
-    MessageSigningSettings,
     load_settings,
 )
 
@@ -63,13 +62,11 @@ class TestFeaturesSettings:
     """Test feature flags configuration."""
 
     def test_default_features(self):
-        """Test default feature flags (production-ready defaults)."""
+        """Test default feature flags."""
         settings = FeaturesSettings()
 
-        # Security features enabled by default
         assert settings.dlp is True
-        assert settings.rbac is True
-        assert settings.message_signing is True
+        assert settings.rbac is False
         assert settings.circuit_breaker is True
 
     def test_enable_all_features(self):
@@ -77,7 +74,6 @@ class TestFeaturesSettings:
         settings = FeaturesSettings(
             dlp=True,
             rbac=True,
-            message_signing=True,
             circuit_breaker=True,
         )
 
@@ -85,7 +81,6 @@ class TestFeaturesSettings:
             [
                 settings.dlp,
                 settings.rbac,
-                settings.message_signing,
                 settings.circuit_breaker,
             ]
         )
@@ -118,36 +113,17 @@ class TestCircuitBreakerSettings:
         assert settings.window_seconds == 600.0
 
 
-class TestMessageSigningSettings:
-    """Test message signing configuration."""
-
-    def test_default_message_signing(self):
-        """Test default message signing settings."""
-        settings = MessageSigningSettings()
-
-        assert settings.max_timestamp_drift == 300
-        assert settings.nonce_ttl == 300
-
-    def test_custom_message_signing(self):
-        """Test custom message signing settings."""
-        settings = MessageSigningSettings(max_timestamp_drift=600, nonce_ttl=600)
-
-        assert settings.max_timestamp_drift == 600
-        assert settings.nonce_ttl == 600
-
-
 class TestGatewaySettings:
     """Test main gateway configuration."""
 
     def test_default_gateway_settings(self):
-        """Test default gateway settings (production-ready)."""
+        """Test default gateway settings."""
         settings = GatewaySettings()
 
         assert settings.redis.url == "redis://localhost:6379"
         assert settings.rate_limit.per_minute == 100
         assert settings.features.dlp is True
-        assert settings.features.rbac is True
-        assert settings.features.message_signing is True
+        assert settings.features.rbac is False
         assert settings.features.circuit_breaker is True
 
     def test_custom_gateway_settings(self):
@@ -318,7 +294,6 @@ class TestSettingsSummary:
             features=FeaturesSettings(
                 dlp=True,
                 rbac=True,
-                message_signing=True,
                 circuit_breaker=True,
             )
         )
@@ -326,5 +301,4 @@ class TestSettingsSummary:
 
         assert "DLP: ✓" in summary
         assert "RBAC: ✓" in summary
-        assert "Message Signing: ✓" in summary
         assert "Circuit Breaker: ✓" in summary

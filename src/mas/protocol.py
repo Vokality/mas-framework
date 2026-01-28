@@ -53,26 +53,6 @@ class EnvelopeMessage(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    # Back-compat convenience for gateway modules that expect 'payload'
-    @property
-    def payload(self) -> dict[str, Any]:
-        return self.data
-
-    @payload.setter
-    def payload(self, value: dict[str, Any]) -> None:
-        self.data = value
-
-    # Backward compatibility properties
-    @property
-    def expects_reply(self) -> bool:
-        """Check if this message expects a reply."""
-        return self.meta.expects_reply
-
-    @property
-    def is_reply(self) -> bool:
-        """Check if this message is a reply to a previous request."""
-        return self.meta.is_reply
-
     def attach_agent(self, agent: "Agent[Any]") -> None:
         self._agent = agent
 

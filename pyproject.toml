@@ -10,10 +10,10 @@ keywords = ["multi-agent", "AI", "agent", "framework"]
 description = "A Multi-Agent System Framework"
 requires-python = ">=3.13"
 dependencies = [
-    "prometheus-client>=0.23.1",
-    "psutil>=6.1.1",
     "pydantic>=2.12.3",
     "pydantic-settings>=2.0.0",
+    "grpcio>=1.76.0",
+    "protobuf>=6.33.4",
     "redis[hiredis]>=5.2.1",
     "pyyaml>=6.0",
 ]
@@ -30,9 +30,10 @@ classifiers = [
 
 [tool.ruff]
 line-length = 88
+exclude = ["src/mas/_proto"]
 
 [tool.ty.src]
-exclude = ["./tests/", "./examples/"]
+exclude = ["./tests/", "./examples/", "./src/mas/_proto/"]
 
 [tool.ty.rules]
 
@@ -75,6 +76,8 @@ dev = [
     "openai>=2.6.1",
     "pydantic-ai>=1.10.0",
     "types-redis>=4.6.0.20241004",
+    "grpcio-tools>=1.76.0",
+    "types-protobuf>=6.32.1.20251210",
     "textual>=6.6.0",
     "textual-dev>=1.8.0",
     "ty>=0.0.8",

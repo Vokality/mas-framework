@@ -1,60 +1,37 @@
-"""Gateway Pattern implementation for MAS Framework."""
+"""Security and policy modules used by the MAS server."""
 
-from .authentication import AuthenticationModule, AuthResult
+from .audit import AuditEntry, AuditModule
 from .authorization import AuthorizationModule
-from .audit import AuditModule, AuditEntry
-from .rate_limit import RateLimitModule, RateLimitResult
-from .dlp import DLPModule, ScanResult, Violation, ViolationType, ActionPolicy
-from .circuit_breaker import (
-    CircuitBreakerModule,
-    CircuitState,
-    CircuitStatus,
-    CircuitBreakerConfig,
-)
-from .metrics import MetricsCollector, get_metrics, get_content_type
-from .message_signing import MessageSigningModule, SignatureResult
+from .circuit_breaker import CircuitBreakerConfig, CircuitBreakerModule, CircuitState
 from .config import (
-    GatewaySettings,
-    RedisSettings,
-    RateLimitSettings,
-    FeaturesSettings,
     CircuitBreakerSettings,
-    MessageSigningSettings,
+    FeaturesSettings,
+    GatewaySettings,
+    RateLimitSettings,
+    RedisSettings,
     load_settings,
 )
-from .gateway import GatewayService, GatewayResult
-from .auth_manager import AuthorizationManager
+from .dlp import ActionPolicy, DLPModule, ScanResult, Violation, ViolationType
+from .rate_limit import RateLimitModule, RateLimitResult
 
 __all__ = [
-    "AuthenticationModule",
-    "AuthResult",
-    "AuthorizationModule",
-    "AuditModule",
     "AuditEntry",
+    "AuditModule",
+    "AuthorizationModule",
+    "CircuitBreakerConfig",
+    "CircuitBreakerModule",
+    "CircuitBreakerSettings",
+    "CircuitState",
+    "DLPModule",
+    "FeaturesSettings",
+    "GatewaySettings",
     "RateLimitModule",
     "RateLimitResult",
-    "DLPModule",
+    "RateLimitSettings",
+    "RedisSettings",
     "ScanResult",
     "Violation",
     "ViolationType",
     "ActionPolicy",
-    "CircuitBreakerModule",
-    "CircuitState",
-    "CircuitStatus",
-    "CircuitBreakerConfig",
-    "MetricsCollector",
-    "get_metrics",
-    "get_content_type",
-    "MessageSigningModule",
-    "SignatureResult",
-    "GatewaySettings",
-    "RedisSettings",
-    "RateLimitSettings",
-    "FeaturesSettings",
-    "CircuitBreakerSettings",
-    "MessageSigningSettings",
     "load_settings",
-    "GatewayService",
-    "GatewayResult",
-    "AuthorizationManager",
 ]

@@ -1,13 +1,34 @@
-agents:
-  - agent_id: worker_agent
-    class_path: my_app.agents.worker:WorkerAgent
-    instances: 3
-    init_kwargs:
-      capabilities:
-        - worker
-      redis_url: redis://localhost:6379
-      batch_size: 10
-start_service: true
-service_redis_url: redis://localhost:6379
-start_gateway: true
+redis_url: redis://localhost:6379
+server_listen_addr: 127.0.0.1:50051
+
+# mTLS (required)
+tls_ca_path: certs/ca.pem
+tls_server_cert_path: certs/server.pem
+tls_server_key_path: certs/server.key
+
+# Optional: security feature flags / limits
 gateway_config_file: gateway.yaml
+
+# Deny-by-default: explicitly allow agent-to-agent traffic.
+permissions:
+  - type: allow_bidirectional
+    agents: [agent_a, agent_b]
+
+agents:
+  - agent_id: agent_a
+    class_path: my_app.agents:AgentA
+    instances: 1
+    capabilities: [sender]
+    metadata: {}
+    tls_cert_path: certs/agent_a.pem
+    tls_key_path: certs/agent_a.key
+    init_kwargs: {}
+
+  - agent_id: agent_b
+    class_path: my_app.agents:AgentB
+    instances: 2
+    capabilities: [worker]
+    metadata: {}
+    tls_cert_path: certs/agent_b.pem
+    tls_key_path: certs/agent_b.key
+    init_kwargs: {}

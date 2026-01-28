@@ -1,24 +1,23 @@
-"""MAS Framework - Simplified Multi-Agent System."""
+"""MAS Framework - secure multi-agent runtime (gRPC + mTLS)."""
 
-from .agent import Agent, AgentMessage
-from .service import MASService
-from .registry import AgentRegistry, AgentRecord
-from .state import StateManager, StateType
+from .agent import Agent, AgentMessage, TlsClientConfig
+from .runner import AgentRunner, RunnerSettings, load_runner_settings
+from .server import MASServer, MASServerSettings, TlsConfig
+from .state import StateType
 from .protocol import EnvelopeMessage as Message, MessageType, MessageMeta
 from .__version__ import __version__
-from .runner import AgentRunner, RunnerSettings, load_runner_settings
 
 __all__ = [
     "Agent",
     "AgentMessage",
-    "MASService",
-    "AgentRegistry",
-    "AgentRecord",
-    "StateManager",
     "StateType",
     "Message",
     "MessageType",
     "MessageMeta",
+    "TlsClientConfig",
+    "MASServer",
+    "MASServerSettings",
+    "TlsConfig",
     "AgentRunner",
     "RunnerSettings",
     "load_runner_settings",

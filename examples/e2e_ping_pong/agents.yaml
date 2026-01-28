@@ -1,0 +1,33 @@
+redis_url: redis://localhost:6379
+
+# Bind to an ephemeral port to avoid collisions.
+server_listen_addr: 127.0.0.1:0
+
+# mTLS (required)
+tls_ca_path: certs/ca.pem
+tls_server_cert_path: certs/server.pem
+tls_server_key_path: certs/server.key
+
+# Deny-by-default: explicitly allow agent-to-agent traffic.
+permissions:
+  - type: allow_bidirectional
+    agents: [ping, pong]
+
+agents:
+  - agent_id: pong
+    class_path: agents:PongAgent
+    instances: 1
+    capabilities: [responder]
+    metadata: {}
+    tls_cert_path: certs/pong.pem
+    tls_key_path: certs/pong.key
+    init_kwargs: {}
+
+  - agent_id: ping
+    class_path: agents:PingAgent
+    instances: 1
+    capabilities: [sender]
+    metadata: {}
+    tls_cert_path: certs/ping.pem
+    tls_key_path: certs/ping.key
+    init_kwargs: {}

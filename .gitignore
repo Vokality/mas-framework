@@ -13,4 +13,7 @@ app
 .pytest_cache/
 .claude/
 .beads/
-examples/
+# Example artifacts
+examples/**/certs/
+examples/**/certs/**
+examples/**/*.log
