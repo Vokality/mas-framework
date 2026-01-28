@@ -14,7 +14,6 @@ from mas.gateway.metrics import (
     gateway_circuit_breaker_trips_total,
     gateway_active_requests,
     gateway_circuit_breaker_state,
-    gateway_queue_depth,
 )
 
 # Use anyio for async test support
@@ -142,22 +141,9 @@ class TestMetricsCollector:
         MetricsCollector.decrement_active_requests()
         assert gateway_active_requests._value._value == initial_value
 
-    async def test_set_queue_depth(self):
-        """Test setting queue depth gauge."""
-        MetricsCollector.set_queue_depth("agent-a", "CRITICAL", 10)
-
-        value = gateway_queue_depth.labels(
-            target_id="agent-a", priority="CRITICAL"
-        )._value._value
-        assert value == 10
-
     async def test_set_gateway_info(self):
         """Test setting gateway info."""
-        MetricsCollector.set_gateway_info(
-            version="0.1.14",
-            dlp_enabled=True,
-            priority_queue_enabled=False,
-        )
+        MetricsCollector.set_gateway_info(version="0.1.14", dlp_enabled=True)
 
         # Info metric should be set (we can't easily assert on it, just verify no error)
         assert True

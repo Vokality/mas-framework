@@ -23,7 +23,10 @@ class AuditEntry(BaseModel):
     message_id: str
     timestamp: float = Field(default_factory=time.time)
     sender_id: str
+    sender_instance_id: Optional[str] = None
     target_id: str
+    message_type: Optional[str] = None
+    correlation_id: Optional[str] = None
     decision: str  # ALLOWED, DENIED, RATE_LIMITED, DLP_BLOCKED, etc.
     latency_ms: float
     payload_hash: str
@@ -68,6 +71,10 @@ class AuditModule:
         latency_ms: float,
         payload: AuditRecord,
         violations: Optional[list[str]] = None,
+        *,
+        message_type: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        sender_instance_id: Optional[str] = None,
     ) -> str:
         """
         Log message to audit stream.
@@ -99,7 +106,10 @@ class AuditModule:
             message_id=message_id,
             timestamp=time.time(),
             sender_id=sender_id,
+            sender_instance_id=sender_instance_id,
             target_id=target_id,
+            message_type=message_type,
+            correlation_id=correlation_id,
             decision=decision,
             latency_ms=latency_ms,
             payload_hash=payload_hash,
@@ -441,7 +451,10 @@ class AuditModule:
             "message_id",
             "timestamp",
             "sender_id",
+            "sender_instance_id",
             "target_id",
+            "message_type",
+            "correlation_id",
             "decision",
             "latency_ms",
             "payload_hash",

@@ -68,7 +68,6 @@ async def test_basic_request_response(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -107,7 +106,6 @@ async def test_concurrent_requests(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -170,7 +168,6 @@ async def test_request_timeout(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -225,7 +222,6 @@ async def test_reply_without_request(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -259,7 +255,6 @@ async def test_request_response_preserves_data(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,

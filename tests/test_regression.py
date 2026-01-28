@@ -7,7 +7,6 @@ Usage:
     uv run pytest tests/test_regression.py -v
 """
 
-import asyncio
 import json
 import time
 
@@ -313,108 +312,6 @@ class TestAuditRegression:
 
         events = await audit.query_security_events()
         assert len(events) >= 1
-
-
-# -----------------------------------------------------------------------------
-# Priority Queue Regression Tests
-# -----------------------------------------------------------------------------
-
-
-class TestPriorityQueueRegression:
-    """Ensure priority queue behavior is preserved after optimization."""
-
-    async def test_enqueue_dequeue_preserves_data(self, redis):
-        """Enqueued data is preserved on dequeue."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        pq = PriorityQueueModule(redis)
-
-        await pq.enqueue(
-            message_id="preserve_msg",
-            sender_id="preserve_sender",
-            target_id="preserve_target",
-            payload={"key": "value", "number": 42},
-            priority=MessagePriority.NORMAL,
-        )
-
-        messages = await pq.dequeue("preserve_target", max_messages=1)
-
-        assert len(messages) == 1
-        msg = messages[0]
-        assert msg.message_id == "preserve_msg"
-        assert msg.sender_id == "preserve_sender"
-        assert msg.target_id == "preserve_target"
-        assert msg.payload == {"key": "value", "number": 42}
-
-    async def test_priority_ordering(self, redis):
-        """Higher priority messages are dequeued first."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        pq = PriorityQueueModule(redis)
-        target = "priority_order_target"
-
-        # Enqueue in reverse priority order
-        await pq.enqueue("msg_low", "s", target, {"p": "low"}, MessagePriority.LOW)
-        await pq.enqueue(
-            "msg_critical", "s", target, {"p": "critical"}, MessagePriority.CRITICAL
-        )
-        await pq.enqueue(
-            "msg_normal", "s", target, {"p": "normal"}, MessagePriority.NORMAL
-        )
-
-        # Dequeue all
-        messages = await pq.dequeue(target, max_messages=3)
-
-        # Critical should be first
-        assert messages[0].message_id == "msg_critical"
-        assert messages[1].message_id == "msg_normal"
-        assert messages[2].message_id == "msg_low"
-
-        await pq.clear_queue(target)
-
-    async def test_fifo_within_priority(self, redis):
-        """Messages with same priority are FIFO ordered."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        pq = PriorityQueueModule(redis)
-        target = "fifo_target"
-
-        # Enqueue in order
-        for i in range(3):
-            await pq.enqueue(
-                f"fifo_msg_{i}", "s", target, {"i": i}, MessagePriority.NORMAL
-            )
-            await asyncio.sleep(0.01)  # Ensure different timestamps
-
-        messages = await pq.dequeue(target, max_messages=3)
-
-        # Should be in FIFO order
-        assert messages[0].payload["i"] == 0
-        assert messages[1].payload["i"] == 1
-        assert messages[2].payload["i"] == 2
-
-        await pq.clear_queue(target)
-
-    async def test_separate_queues_per_target(self, redis):
-        """Each target has independent queues."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        pq = PriorityQueueModule(redis)
-
-        await pq.enqueue("msg_a", "s", "target_a", {"t": "a"}, MessagePriority.NORMAL)
-        await pq.enqueue("msg_b", "s", "target_b", {"t": "b"}, MessagePriority.NORMAL)
-
-        messages_a = await pq.dequeue("target_a", max_messages=1)
-        messages_b = await pq.dequeue("target_b", max_messages=1)
-
-        assert len(messages_a) == 1
-        assert messages_a[0].payload["t"] == "a"
-
-        assert len(messages_b) == 1
-        assert messages_b[0].payload["t"] == "b"
-
-        await pq.clear_queue("target_a")
-        await pq.clear_queue("target_b")
 
 
 # -----------------------------------------------------------------------------

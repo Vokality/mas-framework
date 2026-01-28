@@ -653,82 +653,6 @@ class TestAuditEfficiency:
 
 
 # -----------------------------------------------------------------------------
-# Priority Queue Efficiency Tests
-# -----------------------------------------------------------------------------
-
-
-class TestPriorityQueueEfficiency:
-    """
-    Verify priority queue Redis call counts.
-
-    BEFORE optimization:
-    - Enqueue: setex + zadd + expire + zcount + zcard = ~6 calls
-    - Dequeue: iterates through priorities, up to 20 calls
-
-    AFTER optimization (pipeline batching):
-    - Enqueue: 1 pipeline (setex + zadd + expire) + 1 pipeline (position) = 2 calls
-    - Dequeue: 1 pipeline (check all queues) + dequeue ops = ~3-4 calls
-    """
-
-    async def test_optimized_enqueue(self, counter: RedisCallCounter):
-        """Optimized: Enqueue uses pipeline for batched operations."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        pq = PriorityQueueModule(counter)
-
-        result = await pq.enqueue(
-            message_id="msg_1",
-            sender_id="agent_a",
-            target_id="test_target",
-            payload={"test": "data"},
-            priority=MessagePriority.NORMAL,
-        )
-
-        print(f"\n{counter.get_summary()}")
-        print(f"Enqueue result: success={result.success}")
-
-        # AFTER optimization: 2 pipeline_execute calls
-        # - First pipeline: setex + zadd + expire (enqueue)
-        # - Second pipeline: zcard + zcount (position estimation)
-        assert counter.call_counts["pipeline_execute"] == 2, (
-            f"Expected 2 pipeline_execute calls, got {counter.call_counts['pipeline_execute']}"
-        )
-        assert counter.total_calls == 2, (
-            f"Expected 2 total calls (pipelines), got {counter.total_calls}"
-        )
-
-    async def test_optimized_dequeue_single_priority(self, counter: RedisCallCounter):
-        """Optimized: Dequeue uses pipeline to check all queues first."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        # Use real redis for setup, then switch to counter
-        pq_setup = PriorityQueueModule(counter._redis)
-        await pq_setup.enqueue(
-            message_id="msg_1",
-            sender_id="agent_a",
-            target_id="dequeue_test",
-            payload={"test": "data"},
-            priority=MessagePriority.NORMAL,
-        )
-
-        # Reset counter and dequeue
-        counter.reset_counts()
-        pq = PriorityQueueModule(counter)
-
-        messages = await pq.dequeue("dequeue_test", max_messages=1)
-
-        print(f"\n{counter.get_summary()}")
-        print(f"Dequeued {len(messages)} messages")
-
-        # AFTER optimization: should use pipeline for initial queue check
-        assert counter.call_counts["pipeline_execute"] >= 1, (
-            f"Expected at least 1 pipeline_execute call, got {counter.call_counts['pipeline_execute']}"
-        )
-        # Total calls should be much lower than before (was up to 25)
-        assert counter.total_calls <= 6, f"Too many calls: {counter.total_calls}"
-
-
-# -----------------------------------------------------------------------------
 # Circuit Breaker Efficiency Tests
 # -----------------------------------------------------------------------------
 
@@ -947,12 +871,13 @@ class TestDeregisterEfficiency:
         # Multi-instance deregister pattern:
         # 1. DECR instance_count
         # 2. DELETE instance heartbeat
+        # 3. DELETE instance token hash
         # 3. Pipeline for cleanup (when last instance)
         assert counter.call_counts["decr"] == 1, (
             f"Expected 1 decr call, got {counter.call_counts.get('decr', 0)}"
         )
-        assert counter.call_counts["delete"] == 1, (
-            f"Expected 1 delete call for heartbeat, got {counter.call_counts.get('delete', 0)}"
+        assert counter.call_counts["delete"] == 2, (
+            f"Expected 2 delete calls (heartbeat + token_hash), got {counter.call_counts.get('delete', 0)}"
         )
         assert counter.call_counts["pipeline_execute"] == 1, (
             f"Expected 1 pipeline_execute call, got {counter.call_counts.get('pipeline_execute', 0)}"
@@ -994,12 +919,13 @@ class TestDeregisterEfficiency:
         # Multi-instance deregister pattern:
         # 1. DECR instance_count
         # 2. DELETE instance heartbeat
-        # 3. Pipeline for cleanup (when last instance, includes state deletion)
+        # 3. DELETE instance token hash
+        # 4. Pipeline for cleanup (when last instance, includes state deletion)
         assert counter.call_counts["decr"] == 1, (
             f"Expected 1 decr call, got {counter.call_counts.get('decr', 0)}"
         )
-        assert counter.call_counts["delete"] == 1, (
-            f"Expected 1 delete call for heartbeat, got {counter.call_counts.get('delete', 0)}"
+        assert counter.call_counts["delete"] == 2, (
+            f"Expected 2 delete calls (heartbeat + token_hash), got {counter.call_counts.get('delete', 0)}"
         )
         assert counter.call_counts["pipeline_execute"] == 1, (
             f"Expected 1 pipeline_execute call, got {counter.call_counts.get('pipeline_execute', 0)}"

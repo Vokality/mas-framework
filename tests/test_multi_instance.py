@@ -1,6 +1,7 @@
 """Tests for multi-instance agent support."""
 
 import asyncio
+import hashlib
 from typing import override
 
 import pytest
@@ -94,7 +95,11 @@ class TestInstanceRegistration:
             agent_data = await redis.hgetall("agent:new_agent")
             assert agent_data["id"] == "new_agent"
             assert agent_data["status"] == "ACTIVE"
-            assert "token" in agent_data
+
+            token_hash = await redis.get(
+                f"agent:new_agent:token_hash:{agent.instance_id}"
+            )
+            assert token_hash == hashlib.sha256(agent.token.encode()).hexdigest()
 
             # Verify instance count
             count = await redis.get("agent:new_agent:instance_count")
@@ -116,8 +121,17 @@ class TestInstanceRegistration:
             await agent2.start()
 
             try:
-                # Both should have the same token
-                assert agent2.token == original_token
+                # Tokens are per-instance (different across instances)
+                assert agent2.token != original_token
+
+                token_hash_1 = await redis.get(
+                    f"agent:shared_agent:token_hash:{agent1.instance_id}"
+                )
+                token_hash_2 = await redis.get(
+                    f"agent:shared_agent:token_hash:{agent2.instance_id}"
+                )
+                assert token_hash_1 == hashlib.sha256(agent1.token.encode()).hexdigest()
+                assert token_hash_2 == hashlib.sha256(agent2.token.encode()).hexdigest()
 
                 # Registration time should be unchanged
                 current_reg_time = await redis.hget(
@@ -260,7 +274,6 @@ class TestLoadBalancing:
         settings = GatewaySettings(
             features=FeaturesSettings(
                 dlp=False,
-                priority_queue=False,
                 rbac=False,
                 message_signing=False,
                 circuit_breaker=False,
@@ -314,7 +327,6 @@ class TestRequestResponseRouting:
         settings = GatewaySettings(
             features=FeaturesSettings(
                 dlp=False,
-                priority_queue=False,
                 rbac=False,
                 message_signing=False,
                 circuit_breaker=False,
@@ -373,7 +385,6 @@ class TestRequestResponseRouting:
         settings = GatewaySettings(
             features=FeaturesSettings(
                 dlp=False,
-                priority_queue=False,
                 rbac=False,
                 message_signing=False,
                 circuit_breaker=False,

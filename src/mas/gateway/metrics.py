@@ -145,13 +145,6 @@ gateway_circuit_breaker_state = Gauge(
     ["target_id"],  # Labels: target agent ID
 )
 
-# Priority queue depth
-gateway_queue_depth = Gauge(
-    "gateway_queue_depth",
-    "Number of messages in priority queue",
-    ["target_id", "priority"],  # Labels: target agent, priority level
-)
-
 # Audit stream length
 gateway_audit_stream_length = Gauge(
     "gateway_audit_stream_length",
@@ -289,18 +282,6 @@ class MetricsCollector:
         )
 
     @staticmethod
-    def set_queue_depth(target_id: str, priority: str, depth: int) -> None:
-        """
-        Set priority queue depth gauge.
-
-        Args:
-            target_id: Target agent ID
-            priority: Priority level (CRITICAL, HIGH, NORMAL, LOW, BULK)
-            depth: Queue depth
-        """
-        gateway_queue_depth.labels(target_id=target_id, priority=priority).set(depth)
-
-    @staticmethod
     def set_audit_stream_length(stream_type: str, length: int) -> None:
         """
         Set audit stream length gauge.
@@ -322,22 +303,18 @@ class MetricsCollector:
         gateway_active_requests.dec()
 
     @staticmethod
-    def set_gateway_info(
-        version: str, dlp_enabled: bool, priority_queue_enabled: bool
-    ) -> None:
+    def set_gateway_info(version: str, dlp_enabled: bool) -> None:
         """
         Set gateway information.
 
         Args:
             version: Gateway version
             dlp_enabled: Whether DLP is enabled
-            priority_queue_enabled: Whether priority queue is enabled
         """
         gateway_info.info(
             {
                 "version": version,
                 "dlp_enabled": str(dlp_enabled),
-                "priority_queue_enabled": str(priority_queue_enabled),
             }
         )
 

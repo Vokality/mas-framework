@@ -2094,7 +2094,6 @@ class GatewaySettings:
     rate_limit: RateLimitSettings
     features: FeaturesSettings
     circuit_breaker: CircuitBreakerSettings
-    priority_queue: PriorityQueueSettings
     message_signing: MessageSigningSettings
 ```
 

@@ -11,14 +11,6 @@ from .circuit_breaker import (
     CircuitStatus,
     CircuitBreakerConfig,
 )
-from .priority_queue import (
-    PriorityQueueModule,
-    MessagePriority,
-    QueuedMessage,
-    EnqueueResult,
-    DequeueResult,
-    PriorityQueueConfig,
-)
 from .metrics import MetricsCollector, get_metrics, get_content_type
 from .message_signing import MessageSigningModule, SignatureResult
 from .config import (
@@ -27,7 +19,6 @@ from .config import (
     RateLimitSettings,
     FeaturesSettings,
     CircuitBreakerSettings,
-    PriorityQueueSettings,
     MessageSigningSettings,
     load_settings,
 )
@@ -51,12 +42,6 @@ __all__ = [
     "CircuitState",
     "CircuitStatus",
     "CircuitBreakerConfig",
-    "PriorityQueueModule",
-    "MessagePriority",
-    "QueuedMessage",
-    "EnqueueResult",
-    "DequeueResult",
-    "PriorityQueueConfig",
     "MetricsCollector",
     "get_metrics",
     "get_content_type",
@@ -67,7 +52,6 @@ __all__ = [
     "RateLimitSettings",
     "FeaturesSettings",
     "CircuitBreakerSettings",
-    "PriorityQueueSettings",
     "MessageSigningSettings",
     "load_settings",
     "GatewayService",

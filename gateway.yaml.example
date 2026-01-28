@@ -16,7 +16,6 @@ rate_limit:
 # Feature flags (production-ready defaults - all enabled)
 features:
   dlp: true                # Data Loss Prevention scanning
-  priority_queue: true     # Message priority routing
   rbac: true              # Role-Based Access Control (Phase 2)
   message_signing: true   # HMAC message signatures (Phase 2)
   circuit_breaker: true   # Circuit breaker for reliability
@@ -26,14 +25,6 @@ circuit_breaker:
   success_threshold: 2
   timeout_seconds: 60
   window_seconds: 300
-
-priority_queue:
-  default_ttl: 300
-  critical_weight: 10
-  high_weight: 5
-  normal_weight: 2
-  low_weight: 1
-  bulk_weight: 0
 
 message_signing:
   max_timestamp_drift: 300

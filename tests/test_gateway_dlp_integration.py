@@ -1,11 +1,12 @@
 """Tests for DLP integration with Gateway Service."""
 
 import pytest
-import time
+import hashlib
 
 from mas.agent import AgentMessage
 from mas.gateway import GatewayService
 from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings
+from mas.protocol import MessageMeta
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
@@ -18,7 +19,6 @@ async def gateway_with_dlp(redis):
         rate_limit=RateLimitSettings(per_minute=100, per_hour=1000),
         features=FeaturesSettings(
             dlp=True,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -37,7 +37,6 @@ async def gateway_without_dlp(redis):
         rate_limit=RateLimitSettings(per_minute=100, per_hour=1000),
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -49,24 +48,14 @@ async def gateway_without_dlp(redis):
     await gateway.stop()
 
 
-async def setup_agents(redis, agent_a_id, agent_b_id, token_a):
+async def setup_agents(redis, agent_a_id, agent_b_id, token_a, instance_id: str):
     """Helper to set up test agents."""
-    await redis.hset(
-        f"agent:{agent_a_id}",
-        mapping={
-            "token": token_a,
-            "status": "ACTIVE",
-            "token_expires": str(time.time() + 3600),
-        },
+    await redis.hset(f"agent:{agent_a_id}", mapping={"status": "ACTIVE"})
+    await redis.set(
+        f"agent:{agent_a_id}:token_hash:{instance_id}",
+        hashlib.sha256(token_a.encode()).hexdigest(),
     )
-    await redis.hset(
-        f"agent:{agent_b_id}",
-        mapping={
-            "token": "token_b_123",
-            "status": "ACTIVE",
-            "token_expires": str(time.time() + 3600),
-        },
-    )
+    await redis.hset(f"agent:{agent_b_id}", mapping={"status": "ACTIVE"})
 
 
 class TestGatewayDLPIntegration:
@@ -78,8 +67,9 @@ class TestGatewayDLPIntegration:
         agent_a_id = "test_agent_a"
         agent_b_id = "test_agent_b"
         token_a = "token_a_123"
+        instance_id = "inst_1234"
 
-        await setup_agents(redis, agent_a_id, agent_b_id, token_a)
+        await setup_agents(redis, agent_a_id, agent_b_id, token_a, instance_id)
         await gateway_with_dlp.authz.set_permissions(agent_a_id, [agent_b_id])
 
         # Create message with credit card (should be blocked)
@@ -88,6 +78,7 @@ class TestGatewayDLPIntegration:
             target_id=agent_b_id,
             message_type="test.message",
             data={"card": "4532-0151-2345-6789", "message": "Payment info"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -101,8 +92,9 @@ class TestGatewayDLPIntegration:
         agent_a_id = "test_agent_a"
         agent_b_id = "test_agent_b"
         token_a = "token_a_123"
+        instance_id = "inst_1234"
 
-        await setup_agents(redis, agent_a_id, agent_b_id, token_a)
+        await setup_agents(redis, agent_a_id, agent_b_id, token_a, instance_id)
         await gateway_with_dlp.authz.set_permissions(agent_a_id, [agent_b_id])
 
         # Create message with AWS key
@@ -111,6 +103,7 @@ class TestGatewayDLPIntegration:
             target_id=agent_b_id,
             message_type="test.message",
             data={"config": "AWS key: AKIAIOSFODNN7EXAMPLE"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -124,8 +117,9 @@ class TestGatewayDLPIntegration:
         agent_a_id = "test_agent_a"
         agent_b_id = "test_agent_b"
         token_a = "token_a_123"
+        instance_id = "inst_1234"
 
-        await setup_agents(redis, agent_a_id, agent_b_id, token_a)
+        await setup_agents(redis, agent_a_id, agent_b_id, token_a, instance_id)
         await gateway_with_dlp.authz.set_permissions(agent_a_id, [agent_b_id])
 
         # Create message with SSN (default policy is REDACT)
@@ -134,6 +128,7 @@ class TestGatewayDLPIntegration:
             target_id=agent_b_id,
             message_type="test.message",
             data={"ssn": "123-45-6789", "name": "John Doe"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -147,8 +142,9 @@ class TestGatewayDLPIntegration:
         agent_a_id = "test_agent_a"
         agent_b_id = "test_agent_b"
         token_a = "token_a_123"
+        instance_id = "inst_1234"
 
-        await setup_agents(redis, agent_a_id, agent_b_id, token_a)
+        await setup_agents(redis, agent_a_id, agent_b_id, token_a, instance_id)
         await gateway_with_dlp.authz.set_permissions(agent_a_id, [agent_b_id])
 
         # Create clean message
@@ -157,6 +153,7 @@ class TestGatewayDLPIntegration:
             target_id=agent_b_id,
             message_type="test.message",
             data={"message": "Hello, how are you?", "count": 42},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)
@@ -171,8 +168,9 @@ class TestGatewayDLPIntegration:
         agent_a_id = "test_agent_a"
         agent_b_id = "test_agent_b"
         token_a = "token_a_123"
+        instance_id = "inst_1234"
 
-        await setup_agents(redis, agent_a_id, agent_b_id, token_a)
+        await setup_agents(redis, agent_a_id, agent_b_id, token_a, instance_id)
         await gateway_without_dlp.authz.set_permissions(agent_a_id, [agent_b_id])
 
         # Message with credit card should pass (DLP disabled)
@@ -181,6 +179,7 @@ class TestGatewayDLPIntegration:
             target_id=agent_b_id,
             message_type="test.message",
             data={"card": "4532-0151-2345-6789"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway_without_dlp.handle_message(message, token_a)
@@ -193,8 +192,9 @@ class TestGatewayDLPIntegration:
         agent_a_id = "test_agent_a"
         agent_b_id = "test_agent_b"
         token_a = "token_a_123"
+        instance_id = "inst_1234"
 
-        await setup_agents(redis, agent_a_id, agent_b_id, token_a)
+        await setup_agents(redis, agent_a_id, agent_b_id, token_a, instance_id)
         await gateway_with_dlp.authz.set_permissions(agent_a_id, [agent_b_id])
 
         # Create message with violation
@@ -203,6 +203,7 @@ class TestGatewayDLPIntegration:
             target_id=agent_b_id,
             message_type="test.message",
             data={"card": "4532-0151-2345-6789"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway_with_dlp.handle_message(message, token_a)

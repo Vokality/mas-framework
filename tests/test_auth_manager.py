@@ -12,7 +12,6 @@ def _test_settings():
     return GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,

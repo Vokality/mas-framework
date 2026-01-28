@@ -893,12 +893,11 @@ Agent A → Gateway Service → Validation → Redis Streams → Agent B
 ```
 
 **Gateway Features**:
-- **Authentication**: Token-based validation with revocation support
+- **Authentication**: Instance-scoped bearer tokens (hashed in Redis; `sender_instance_id` required)
 - **Authorization**: ACL (allow/block lists) and RBAC (role-based permissions)
 - **Rate Limiting**: Token bucket algorithm (per-minute, per-hour limits)
 - **Data Loss Prevention**: PII/PHI/PCI pattern detection with block/redact/alert actions
 - **Circuit Breakers**: Failure detection with auto-recovery and dead letter queues
-- **Priority Queues**: Message prioritization (CRITICAL > HIGH > NORMAL > LOW > BULK)
 - **Audit Logging**: Immutable audit trail with hash chains in Redis Streams
 - **Message Signing**: HMAC-SHA256 signatures with replay attack protection
 - **Metrics**: Prometheus instrumentation for observability
@@ -932,16 +931,15 @@ settings = GatewaySettings(
 **Default Features** (secure-by-default):
 - DLP scanning: **Enabled**
 - Circuit breakers: **Enabled**
-- Priority queues: **Enabled**
 - RBAC authorization: **Enabled**
 - Message signing: **Enabled**
 
 ### Gateway Components
 
 **Authentication Module** (`src/mas/gateway/authentication.py`):
-- Token validation against Redis registry
-- Token rotation and revocation
-- Configurable token lifetime
+- Instance-scoped bearer token validation
+- Redis stores only SHA-256 token hashes (no plaintext tokens)
+- Requires `sender_instance_id` from message metadata
 
 **Authorization Module** (`src/mas/gateway/authorization.py`):
 - ACL: Simple allow/block lists with wildcard support
@@ -969,11 +967,6 @@ settings = GatewaySettings(
 - Dead letter queue for failed messages
 - Configurable thresholds and timeouts
 
-**Priority Queue Module** (`src/mas/gateway/priority_queue.py`):
-- Five priority levels with configurable weights
-- Weighted round-robin scheduling
-- Message TTL and fairness guarantees
-
 **Message Signing Module** (`src/mas/gateway/message_signing.py`):
 - HMAC-SHA256 cryptographic signatures
 - Per-agent signing keys with rotation support
@@ -983,7 +976,7 @@ settings = GatewaySettings(
 **Metrics Module** (`src/mas/gateway/metrics.py`):
 - Prometheus counters: messages, auth failures, rate limits, DLP violations
 - Histograms: message latency, DLP scan duration, auth duration
-- Gauges: active requests, circuit breaker states, queue depth
+- Gauges: active requests, circuit breaker states
 - HTTP server for /metrics endpoint
 
 ### Gateway Redis Data Model
@@ -995,6 +988,7 @@ Additional keys used by gateway:
 | `agent:{id}:allowed_targets` | Set | ACL allowed targets |
 | `agent:{id}:blocked_targets` | Set | ACL blocked targets |
 | `agent:{id}:roles` | Set | RBAC role assignments |
+| `agent:{id}:token_hash:{instance_id}` | String | Instance token hash (SHA-256 hex) |
 | `agent:{id}:signing_key` | String | HMAC signing key |
 | `role:{name}` | Hash | Role metadata |
 | `role:{name}:permissions` | Set | Role permissions |
@@ -1006,7 +1000,6 @@ Additional keys used by gateway:
 | `audit:by_target:{id}` | Stream | Target-indexed audit |
 | `audit:security_events` | Stream | Security events |
 | `message_nonces:{id}` | String | Nonce replay protection |
-| `priority_queue:{target}:{priority}` | Sorted Set | Priority queues |
 
 ### Gateway Use Cases
 
@@ -1080,7 +1073,6 @@ print(settings.summary())
 - `rate_limit`: Rate limiting thresholds
 - `features`: Feature flag toggles
 - `circuit_breaker`: Circuit breaker parameters
-- `priority_queue`: Queue weights and TTL
 - `message_signing`: Signing and replay protection settings
 
 **RedisSettings**:
@@ -1096,10 +1088,9 @@ per_minute: int = 100  # Messages per minute per agent
 per_hour: int = 1000   # Messages per hour per agent
 ```
 
-**FeaturesSettings** (secure-by-default, queues opt-in):
+**FeaturesSettings** (secure-by-default):
 ```python
 dlp: bool = True               # Data Loss Prevention scanning
-priority_queue: bool = False   # Message priority routing
 rbac: bool = True             # Role-Based Access Control
 message_signing: bool = True  # HMAC message signatures
 circuit_breaker: bool = True  # Circuit breaker for reliability
@@ -1111,16 +1102,6 @@ failure_threshold: int = 5     # Failures before opening circuit
 success_threshold: int = 2     # Successes before closing
 timeout_seconds: float = 60.0  # Timeout before half-open state
 window_seconds: float = 300.0  # Failure counting window
-```
-
-**PriorityQueueSettings**:
-```python
-default_ttl: int = 300         # Message TTL in seconds
-critical_weight: int = 10      # CRITICAL priority weight
-high_weight: int = 5           # HIGH priority weight
-normal_weight: int = 2         # NORMAL priority weight
-low_weight: int = 1            # LOW priority weight
-bulk_weight: int = 0           # BULK priority weight
 ```
 
 **MessageSigningSettings**:
@@ -1151,9 +1132,6 @@ export GATEWAY_FEATURES__MESSAGE_SIGNING=true
 export GATEWAY_CIRCUIT_BREAKER__FAILURE_THRESHOLD=10
 export GATEWAY_CIRCUIT_BREAKER__TIMEOUT_SECONDS=120
 
-# Priority queue
-export GATEWAY_PRIORITY_QUEUE__CRITICAL_WEIGHT=20
-
 # Message signing
 export GATEWAY_MESSAGE_SIGNING__MAX_TIMESTAMP_DRIFT=600
 ```
@@ -1173,7 +1151,6 @@ rate_limit:
 
 features:
   dlp: true
-  priority_queue: false
   rbac: true
   message_signing: true
   circuit_breaker: true
@@ -1183,14 +1160,6 @@ circuit_breaker:
   success_threshold: 2
   timeout_seconds: 60
   window_seconds: 300
-
-priority_queue:
-  default_ttl: 300
-  critical_weight: 10
-  high_weight: 5
-  normal_weight: 2
-  low_weight: 1
-  bulk_weight: 0
 
 message_signing:
   max_timestamp_drift: 300
@@ -1219,7 +1188,6 @@ print(settings.summary())
 # 
 # Features:
 #   DLP: ✓
-#   Priority Queue: ✓
 #   RBAC: ✓
 #   ...
 ```

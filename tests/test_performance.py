@@ -9,6 +9,7 @@ Note: These tests require a running Redis instance on localhost:6379.
 """
 
 import asyncio
+import hashlib
 import json
 import statistics
 import time
@@ -402,84 +403,6 @@ class TestAuditPerformance:
 
 
 # -----------------------------------------------------------------------------
-# Priority Queue Benchmarks
-# -----------------------------------------------------------------------------
-
-
-class TestPriorityQueuePerformance:
-    """Benchmark priority queue performance."""
-
-    async def test_enqueue_throughput(self, redis):
-        """Measure enqueue operations per second."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        pq = PriorityQueueModule(redis)
-        msg_counter = 0
-
-        async def enqueue_message():
-            nonlocal msg_counter
-            msg_counter += 1
-            await pq.enqueue(
-                message_id=f"msg_{msg_counter}",
-                sender_id="sender",
-                target_id="pq_bench_target",
-                payload={"index": msg_counter},
-                priority=MessagePriority.NORMAL,
-            )
-
-        result = await run_benchmark(
-            name="Priority Queue Enqueue",
-            func=enqueue_message,
-            iterations=100,
-            warmup=10,
-        )
-
-        print(result)
-
-        # Cleanup
-        await pq.clear_queue("pq_bench_target")
-
-        assert result.throughput_per_second > 50
-
-    async def test_dequeue_throughput(self, redis):
-        """Measure dequeue operations per second."""
-        from mas.gateway.priority_queue import MessagePriority, PriorityQueueModule
-
-        pq = PriorityQueueModule(redis)
-
-        # Pre-populate queue
-        for i in range(200):
-            priority = list(MessagePriority)[i % 5]
-            await pq.enqueue(
-                message_id=f"dequeue_msg_{i}",
-                sender_id="sender",
-                target_id="dequeue_bench_target",
-                payload={"index": i},
-                priority=priority,
-            )
-
-        async def dequeue_message():
-            return await pq.dequeue("dequeue_bench_target", max_messages=1)
-
-        result = await run_benchmark(
-            name="Priority Queue Dequeue",
-            func=dequeue_message,
-            iterations=100,
-            warmup=10,
-        )
-
-        print(result)
-
-        # Cleanup
-        await pq.clear_queue("dequeue_bench_target")
-
-        # Baseline expectations
-        # BEFORE optimization: ~20-100 ops/sec (fallback iteration)
-        # AFTER optimization: ~200-500 ops/sec (batched checks)
-        assert result.throughput_per_second > 20
-
-
-# -----------------------------------------------------------------------------
 # Circuit Breaker Benchmarks
 # -----------------------------------------------------------------------------
 
@@ -548,13 +471,12 @@ class TestGatewayPerformance:
         """Measure end-to-end gateway message processing."""
         from mas.gateway import GatewayService
         from mas.gateway.config import FeaturesSettings, GatewaySettings
-        from mas.protocol import EnvelopeMessage
+        from mas.protocol import EnvelopeMessage, MessageMeta
 
         # Configure gateway with minimal features for baseline
         settings = GatewaySettings(
             features=FeaturesSettings(
                 dlp=False,
-                priority_queue=False,
                 rbac=False,
                 message_signing=False,
                 circuit_breaker=False,
@@ -569,14 +491,12 @@ class TestGatewayPerformance:
             sender_id = "gw_bench_sender"
             target_id = "gw_bench_target"
             token = "bench_token"
+            instance_id = "inst_1234"
 
-            await redis.hset(
-                f"agent:{sender_id}",
-                mapping={
-                    "token": token,
-                    "status": "ACTIVE",
-                    "token_expires": str(time.time() + 3600),
-                },
+            await redis.hset(f"agent:{sender_id}", mapping={"status": "ACTIVE"})
+            await redis.set(
+                f"agent:{sender_id}:token_hash:{instance_id}",
+                hashlib.sha256(token.encode()).hexdigest(),
             )
             await redis.hset(f"agent:{target_id}", mapping={"status": "ACTIVE"})
             await gateway.authz.set_permissions(sender_id, allowed_targets=[target_id])
@@ -591,6 +511,7 @@ class TestGatewayPerformance:
                     target_id=target_id,
                     message_type="benchmark.message",
                     data={"index": msg_counter},
+                    meta=MessageMeta(sender_instance_id=instance_id),
                 )
                 return await gateway.handle_message(message, token)
 
@@ -613,12 +534,11 @@ class TestGatewayPerformance:
         """Measure gateway performance with all features enabled."""
         from mas.gateway import GatewayService
         from mas.gateway.config import FeaturesSettings, GatewaySettings
-        from mas.protocol import EnvelopeMessage
+        from mas.protocol import EnvelopeMessage, MessageMeta
 
         settings = GatewaySettings(
             features=FeaturesSettings(
                 dlp=True,
-                priority_queue=False,  # Keep false to avoid queue complexity
                 rbac=True,
                 message_signing=False,  # Requires key setup
                 circuit_breaker=True,
@@ -632,14 +552,12 @@ class TestGatewayPerformance:
             sender_id = "gw_full_sender"
             target_id = "gw_full_target"
             token = "full_token"
+            instance_id = "inst_1234"
 
-            await redis.hset(
-                f"agent:{sender_id}",
-                mapping={
-                    "token": token,
-                    "status": "ACTIVE",
-                    "token_expires": str(time.time() + 3600),
-                },
+            await redis.hset(f"agent:{sender_id}", mapping={"status": "ACTIVE"})
+            await redis.set(
+                f"agent:{sender_id}:token_hash:{instance_id}",
+                hashlib.sha256(token.encode()).hexdigest(),
             )
             await redis.hset(f"agent:{target_id}", mapping={"status": "ACTIVE"})
             await gateway.authz.set_permissions(sender_id, allowed_targets=[target_id])
@@ -654,6 +572,7 @@ class TestGatewayPerformance:
                     target_id=target_id,
                     message_type="benchmark.message",
                     data={"text": f"Message {msg_counter}", "count": msg_counter},
+                    meta=MessageMeta(sender_instance_id=instance_id),
                 )
                 return await gateway.handle_message(message, token)
 

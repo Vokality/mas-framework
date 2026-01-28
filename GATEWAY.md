@@ -129,9 +129,10 @@ class GatewayService:
 **Authentication Methods**:
 
 **Token-Based (Phase 1)**:
-- Agent includes token in message envelope
-- Gateway validates against registry
-- Tokens stored in `agent:{id}` → `token` field
+- Agent includes a bearer token in the request
+- Agent includes its `sender_instance_id` in message metadata
+- Gateway validates by hashing the token and comparing against Redis
+- Tokens are scoped per instance and are never stored in plaintext
 
 **mTLS (Phase 2)**:
 - Agents connect with client certificates
@@ -146,25 +147,28 @@ class GatewayService:
 **Interface**:
 ```python
 class AuthenticationModule:
-    async def authenticate(self, message: AgentMessage) -> AuthResult
-    async def validate_token(self, agent_id: str, token: str) -> bool
+    async def authenticate(
+        self, agent_id: str, token: str, *, sender_instance_id: str | None
+    ) -> AuthResult
+    async def validate_token_hash(
+        self, agent_id: str, sender_instance_id: str, token: str
+    ) -> bool
+
+    # Future phases (design):
     async def validate_certificate(self, cert: Certificate) -> bool
     async def validate_jwt(self, jwt: str) -> JWTClaims
-    async def rotate_token(self, agent_id: str) -> str
 ```
 
 **Redis Data Model**:
 ```
-# Token storage
+# Agent record (registration + status)
 agent:{agent_id}
-  → token: "abc123..."
-  → token_expires: "1699999999"
-  → token_version: "2"
+  → status: "ACTIVE"
+  → ... (capabilities/metadata/registered_at)
 
-# Token revocation list
-revoked_tokens:{agent_id}
-  → Set of revoked tokens
-  → TTL: 24 hours (token max lifetime)
+# Per-instance token hash (SHA-256 hex)
+agent:{agent_id}:token_hash:{instance_id}
+  → "<sha256(token)>"
 ```
 
 ### 3. Authorization Module

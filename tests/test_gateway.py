@@ -1,9 +1,9 @@
 """Tests for Gateway Service components."""
 
 import asyncio
+import hashlib
 from typing import override
 import pytest
-import time
 
 from mas.agent import Agent, AgentMessage
 from mas.gateway import (
@@ -14,6 +14,7 @@ from mas.gateway import (
     RateLimitModule,
 )
 from mas.gateway.config import GatewaySettings, FeaturesSettings, RateLimitSettings
+from mas.protocol import MessageMeta
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
@@ -50,7 +51,6 @@ async def gateway(redis):
         rate_limit=RateLimitSettings(per_minute=10, per_hour=100),
         features=FeaturesSettings(
             dlp=True,
-            priority_queue=False,
             rbac=False,
             message_signing=False,  # Disable for backward compatibility
             circuit_breaker=True,
@@ -69,58 +69,60 @@ class TestAuthenticationModule:
         """Test successful authentication."""
         # Setup agent with token
         agent_id = "test_agent"
+        instance_id = "inst_1234"
         token = "test_token_123"
-        await redis.hset(
-            f"agent:{agent_id}",
-            mapping={
-                "token": token,
-                "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600),
-            },
+        await redis.hset(f"agent:{agent_id}", mapping={"status": "ACTIVE"})
+        await redis.set(
+            f"agent:{agent_id}:token_hash:{instance_id}",
+            hashlib.sha256(token.encode()).hexdigest(),
         )
 
-        result = await auth_module.authenticate(agent_id, token)
+        result = await auth_module.authenticate(
+            agent_id, token, sender_instance_id=instance_id
+        )
         assert result.authenticated is True
         assert result.agent_id == agent_id
 
     async def test_authenticate_invalid_token(self, auth_module, redis):
         """Test authentication with invalid token."""
         agent_id = "test_agent"
-        await redis.hset(
-            f"agent:{agent_id}", mapping={"token": "correct_token", "status": "ACTIVE"}
+        instance_id = "inst_1234"
+        correct_token = "correct_token"
+        await redis.hset(f"agent:{agent_id}", mapping={"status": "ACTIVE"})
+        await redis.set(
+            f"agent:{agent_id}:token_hash:{instance_id}",
+            hashlib.sha256(correct_token.encode()).hexdigest(),
         )
 
-        result = await auth_module.authenticate(agent_id, "wrong_token")
+        result = await auth_module.authenticate(
+            agent_id, "wrong_token", sender_instance_id=instance_id
+        )
         assert result.authenticated is False
-        assert "Invalid or expired token" in result.reason
+        assert result.reason == "invalid_token"
 
     async def test_authenticate_agent_not_found(self, auth_module):
         """Test authentication with non-existent agent."""
-        result = await auth_module.authenticate("nonexistent", "token")
+        result = await auth_module.authenticate(
+            "nonexistent", "token", sender_instance_id="inst_1234"
+        )
         assert result.authenticated is False
         assert "not registered" in result.reason
 
-    async def test_token_rotation(self, auth_module, redis):
-        """Test token rotation."""
+    async def test_authenticate_wrong_instance(self, auth_module, redis):
+        """Token is scoped to sender_instance_id."""
         agent_id = "test_agent"
-        old_token = "old_token"
-        await redis.hset(
-            f"agent:{agent_id}", mapping={"token": old_token, "token_version": "1"}
+        token = "test_token_123"
+        await redis.hset(f"agent:{agent_id}", mapping={"status": "ACTIVE"})
+        await redis.set(
+            f"agent:{agent_id}:token_hash:inst_a",
+            hashlib.sha256(token.encode()).hexdigest(),
         )
 
-        new_token = await auth_module.rotate_token(agent_id)
-
-        # New token should be different
-        assert new_token != old_token
-
-        # Old token should be revoked
-        is_revoked = await redis.sismember(f"revoked_tokens:{agent_id}", old_token)
-        assert is_revoked
-
-        # New token should work
-        # Note: This will fail because we didn't set status and expires
-        # In real usage, the registry would handle this
-        await auth_module.authenticate(agent_id, new_token)
+        result = await auth_module.authenticate(
+            agent_id, token, sender_instance_id="inst_b"
+        )
+        assert result.authenticated is False
+        assert result.reason == "invalid_token"
 
 
 class TestAuthorizationModule:
@@ -274,15 +276,13 @@ class TestGatewayService:
         sender = "agent_a"
         target = "agent_b"
         token = "test_token"
+        instance_id = "inst_1234"
 
         # Setup sender
-        await redis.hset(
-            f"agent:{sender}",
-            mapping={
-                "token": token,
-                "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600),
-            },
+        await redis.hset(f"agent:{sender}", mapping={"status": "ACTIVE"})
+        await redis.set(
+            f"agent:{sender}:token_hash:{instance_id}",
+            hashlib.sha256(token.encode()).hexdigest(),
         )
 
         # Setup target
@@ -297,6 +297,7 @@ class TestGatewayService:
             target_id=target,
             message_type="test.message",
             data={"test": "data"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway.handle_message(message, token)
@@ -309,15 +310,13 @@ class TestGatewayService:
         sender = "agent_a"
         target = "agent_b"
         token = "test_token"
+        instance_id = "inst_1234"
 
         # Setup sender
-        await redis.hset(
-            f"agent:{sender}",
-            mapping={
-                "token": token,
-                "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600),
-            },
+        await redis.hset(f"agent:{sender}", mapping={"status": "ACTIVE"})
+        await redis.set(
+            f"agent:{sender}:token_hash:{instance_id}",
+            hashlib.sha256(token.encode()).hexdigest(),
         )
 
         # Setup target but NO permission granted
@@ -328,6 +327,7 @@ class TestGatewayService:
             target_id=target,
             message_type="test.message",
             data={"test": "data"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway.handle_message(message, token)
@@ -338,6 +338,7 @@ class TestGatewayService:
         """Test gateway blocks message with invalid authentication."""
         sender = "agent_a"
         target = "agent_b"
+        instance_id = "inst_1234"
 
         await redis.hset(f"agent:{sender}", "status", "ACTIVE")
 
@@ -346,6 +347,7 @@ class TestGatewayService:
             target_id=target,
             message_type="test.message",
             data={"test": "data"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
 
         result = await gateway.handle_message(message, "wrong_token")
@@ -357,15 +359,13 @@ class TestGatewayService:
         sender = "agent_a"
         target = "agent_b"
         token = "test_token"
+        instance_id = "inst_1234"
 
         # Setup sender and target
-        await redis.hset(
-            f"agent:{sender}",
-            mapping={
-                "token": token,
-                "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600),
-            },
+        await redis.hset(f"agent:{sender}", mapping={"status": "ACTIVE"})
+        await redis.set(
+            f"agent:{sender}:token_hash:{instance_id}",
+            hashlib.sha256(token.encode()).hexdigest(),
         )
         await redis.hset(f"agent:{target}", "status", "ACTIVE")
         await gateway.authz.set_permissions(sender, allowed_targets=[target])
@@ -377,6 +377,7 @@ class TestGatewayService:
                 target_id=target,
                 message_type="test.message",
                 data={"msg": i},
+                meta=MessageMeta(sender_instance_id=instance_id),
             )
             result = await gateway.handle_message(message, token)
             assert result.success is True
@@ -387,6 +388,7 @@ class TestGatewayService:
             target_id=target,
             message_type="test.message",
             data={"msg": "over_limit"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
         result = await gateway.handle_message(message, token)
         assert result.success is False
@@ -397,15 +399,13 @@ class TestGatewayService:
         sender = "agent_a"
         target = "agent_b"
         token = "test_token"
+        instance_id = "inst_1234"
 
         # Setup
-        await redis.hset(
-            f"agent:{sender}",
-            mapping={
-                "token": token,
-                "status": "ACTIVE",
-                "token_expires": str(time.time() + 3600),
-            },
+        await redis.hset(f"agent:{sender}", mapping={"status": "ACTIVE"})
+        await redis.set(
+            f"agent:{sender}:token_hash:{instance_id}",
+            hashlib.sha256(token.encode()).hexdigest(),
         )
         await redis.hset(f"agent:{target}", "status", "ACTIVE")
         await gateway.authz.set_permissions(sender, allowed_targets=[target])
@@ -416,6 +416,7 @@ class TestGatewayService:
             target_id=target,
             message_type="test.message",
             data={"test": "audit"},
+            meta=MessageMeta(sender_instance_id=instance_id),
         )
         await gateway.handle_message(message, token)
 
@@ -434,7 +435,6 @@ class TestAgentWithGateway:
         settings = GatewaySettings(
             features=FeaturesSettings(
                 dlp=True,
-                priority_queue=False,
                 rbac=False,
                 message_signing=False,  # Disabled for simpler testing
                 circuit_breaker=True,

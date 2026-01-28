@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import secrets
 import time
 from typing import Any, Optional, TypedDict
@@ -52,12 +53,12 @@ class AgentRegistry:
         capabilities: list[str],
         metadata: Optional[dict[str, Any]] = None,
     ) -> str:
-        """
-        Register an agent instance.
+        """Register an agent instance.
 
-        This operation is idempotent for the agent. The first instance to register
-        creates the agent entry and generates a token. Subsequent instances
-        retrieve the existing token and increment the instance count.
+        Security model:
+        - Each instance receives its own bearer token.
+        - Redis stores only a SHA-256 hash of the token.
+        - The plaintext token is returned once to the caller.
 
         Args:
             agent_id: Logical agent identifier (shared across instances)
@@ -66,38 +67,42 @@ class AgentRegistry:
             metadata: Optional agent metadata
 
         Returns:
-            Authentication token for the agent (shared across all instances)
+            Plaintext bearer token for this specific instance.
         """
         agent_key = f"agent:{agent_id}"
         instance_count_key = f"agent:{agent_id}:instance_count"
 
+        token = self._generate_token()
+        token_hash = self._hash_token(token)
+        token_hash_key = f"agent:{agent_id}:token_hash:{instance_id}"
+
         # Check if agent already exists
         existing_data = await self.redis.hgetall(agent_key)
 
-        if existing_data and existing_data.get("token"):
-            # Agent exists - increment instance count and return existing token
-            await self.redis.incr(instance_count_key)
+        if existing_data:
+            # Agent exists - join as a new instance
+            pipe = self.redis.pipeline()
+            pipe.incr(instance_count_key)
+            pipe.set(token_hash_key, token_hash)
             # Reactivate if previously inactive
             if existing_data.get("status") == "INACTIVE":
-                await self.redis.hset(
+                pipe.hset(
                     agent_key,
                     mapping={
                         "status": "ACTIVE",
                         "registered_at": str(time.time()),
                     },
                 )
+            await pipe.execute()
             await self._ensure_signing_key(agent_id)
-            return existing_data["token"]
+            return token
 
         # First instance - create new registration
-        token = self._generate_token()
-
         agent_data: dict[str, str] = {
             "id": agent_id,
             "capabilities": json.dumps(capabilities),
             "metadata": json.dumps(metadata or {}),
             "status": "ACTIVE",
-            "token": token,
             "registered_at": str(time.time()),
         }
 
@@ -109,6 +114,7 @@ class AgentRegistry:
         pipe.hset(agent_key, mapping=agent_data)
         pipe.incr(instance_count_key)  # Set to 1
         pipe.set(signing_key_field, signing_key)
+        pipe.set(token_hash_key, token_hash)
         await pipe.execute()
 
         return token
@@ -132,23 +138,33 @@ class AgentRegistry:
         """
         instance_count_key = f"agent:{agent_id}:instance_count"
         heartbeat_key = f"agent:{agent_id}:heartbeat:{instance_id}"
+        token_hash_key = f"agent:{agent_id}:token_hash:{instance_id}"
 
         # Decrement instance count
         new_count = await self.redis.decr(instance_count_key)
 
         # Always delete this instance's heartbeat
         await self.redis.delete(heartbeat_key)
+        # Always delete this instance's token
+        await self.redis.delete(token_hash_key)
 
         if new_count <= 0:
             # Last instance - clean up agent registration
             pipe = self.redis.pipeline()
             pipe.delete(f"agent:{agent_id}")
             pipe.delete(instance_count_key)
+            pipe.delete(f"agent:{agent_id}:signing_key")
 
             # Clean up any remaining heartbeat keys for this agent
             # (in case of unclean shutdowns)
             async for key in self.redis.scan_iter(
                 match=f"agent:{agent_id}:heartbeat:*"
+            ):
+                pipe.delete(key)
+
+            # Clean up any remaining token hashes (in case of unclean shutdowns)
+            async for key in self.redis.scan_iter(
+                match=f"agent:{agent_id}:token_hash:*"
             ):
                 pipe.delete(key)
 
@@ -338,6 +354,9 @@ class AgentRegistry:
     def _generate_token(self) -> str:
         """Generate authentication token."""
         return secrets.token_urlsafe(32)
+
+    def _hash_token(self, token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def _generate_signing_key(self) -> str:
         """Generate per-agent signing key (hex encoded)."""

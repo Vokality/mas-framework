@@ -28,36 +28,6 @@ class CircuitBreakerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GATEWAY_CIRCUIT_BREAKER_")
 
 
-class PriorityQueueSettings(BaseSettings):
-    """Priority queue configuration settings."""
-
-    default_ttl: int = Field(
-        default=300, ge=0, description="Default message TTL in seconds"
-    )
-    critical_weight: int = Field(
-        default=10, ge=0, description="Weight for CRITICAL priority"
-    )
-    high_weight: int = Field(default=5, ge=0, description="Weight for HIGH priority")
-    normal_weight: int = Field(
-        default=2, ge=0, description="Weight for NORMAL priority"
-    )
-    low_weight: int = Field(default=1, ge=0, description="Weight for LOW priority")
-    bulk_weight: int = Field(default=0, ge=0, description="Weight for BULK priority")
-
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_PRIORITY_QUEUE_")
-
-    @property
-    def weights(self) -> dict[str, int]:
-        """Get priority weights as a dictionary."""
-        return {
-            "CRITICAL": self.critical_weight,
-            "HIGH": self.high_weight,
-            "NORMAL": self.normal_weight,
-            "LOW": self.low_weight,
-            "BULK": self.bulk_weight,
-        }
-
-
 class MessageSigningSettings(BaseSettings):
     """Message signing configuration settings."""
 
@@ -99,9 +69,8 @@ class FeaturesSettings(BaseSettings):
     """
     Feature flags configuration.
 
-    Production-ready defaults (security features enabled, queues opt-in):
+    Production-ready defaults (security features enabled):
     - DLP: True (data loss prevention)
-    - Priority Queue: False (message prioritization is opt-in)
     - RBAC: True (role-based access control)
     - Message Signing: True (integrity verification)
     - Circuit Breaker: True (reliability)
@@ -113,7 +82,6 @@ class FeaturesSettings(BaseSettings):
     """
 
     dlp: bool = Field(default=True, description="Enable DLP scanning")
-    priority_queue: bool = Field(default=False, description="Enable priority queues")
     rbac: bool = Field(default=True, description="Enable RBAC authorization (Phase 2)")
     message_signing: bool = Field(
         default=True, description="Enable message signing (Phase 2)"
@@ -167,7 +135,6 @@ class GatewaySettings(BaseSettings):
     circuit_breaker: CircuitBreakerSettings = Field(
         default_factory=CircuitBreakerSettings
     )
-    priority_queue: PriorityQueueSettings = Field(default_factory=PriorityQueueSettings)
     message_signing: MessageSigningSettings = Field(
         default_factory=MessageSigningSettings
     )
@@ -303,7 +270,6 @@ class GatewaySettings(BaseSettings):
             "",
             "Features:",
             f"  DLP: {'✓' if self.features.dlp else '✗'}",
-            f"  Priority Queue: {'✓' if self.features.priority_queue else '✗'}",
             f"  RBAC: {'✓' if self.features.rbac else '✗'}",
             f"  Message Signing: {'✓' if self.features.message_signing else '✗'}",
             f"  Circuit Breaker: {'✓' if self.features.circuit_breaker else '✗'}",
@@ -316,18 +282,6 @@ class GatewaySettings(BaseSettings):
                     "Circuit Breaker:",
                     f"  Failure Threshold: {self.circuit_breaker.failure_threshold}",
                     f"  Timeout: {self.circuit_breaker.timeout_seconds}s",
-                ]
-            )
-
-        if self.features.priority_queue:
-            lines.extend(
-                [
-                    "",
-                    "Priority Queue:",
-                    f"  Default TTL: {self.priority_queue.default_ttl}s",
-                    f"  Weights: CRITICAL={self.priority_queue.critical_weight}, "
-                    f"HIGH={self.priority_queue.high_weight}, "
-                    f"NORMAL={self.priority_queue.normal_weight}",
                 ]
             )
 

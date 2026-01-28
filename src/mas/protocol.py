@@ -25,9 +25,10 @@ class MessageMeta(BaseModel):
     correlation_id: Optional[str] = None
     expects_reply: bool = False
     is_reply: bool = False
-    # Instance ID of the sender for routing replies back to the correct instance
-    # in multi-instance agent deployments
+    # Instance ID of the sending process (used for auditing/authn and debugging).
     sender_instance_id: Optional[str] = None
+    # Instance ID to route replies to (set on reply messages).
+    reply_to_instance_id: Optional[str] = None
 
 
 class EnvelopeMessage(BaseModel):

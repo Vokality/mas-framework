@@ -109,7 +109,6 @@ async def test_decorator_based_dispatch(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -152,7 +151,6 @@ async def test_pydantic_validation(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -196,7 +194,6 @@ async def test_multiple_typed_handlers(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -250,7 +247,6 @@ async def test_fallback_to_on_message(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,
@@ -321,7 +317,6 @@ async def test_handler_without_model(mas_service):
     settings = GatewaySettings(
         features=FeaturesSettings(
             dlp=False,
-            priority_queue=False,
             rbac=False,
             message_signing=False,
             circuit_breaker=False,

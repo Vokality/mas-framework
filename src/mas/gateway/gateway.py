@@ -20,7 +20,6 @@ from .config import GatewaySettings
 from .dlp import ActionPolicy, DLPModule
 from .message_signing import MessageSigningModule
 from .metrics import MetricsCollector
-from .priority_queue import MessagePriority, PriorityQueueModule
 from .rate_limit import RateLimitModule
 
 logger = logging.getLogger(__name__)
@@ -93,7 +92,6 @@ class GatewayService:
         self._audit: Optional[AuditModule] = None
         self._rate_limit: Optional[RateLimitModule] = None
         self._dlp: Optional[DLPModule] = None
-        self._priority_queue: Optional[PriorityQueueModule] = None
         self._message_signing: Optional[MessageSigningModule] = None
         self._circuit_breaker: Optional[CircuitBreakerModule] = None
 
@@ -124,9 +122,6 @@ class GatewayService:
         if self.settings.features.dlp:
             self._dlp = DLPModule()
 
-        if self.settings.features.priority_queue:
-            self._priority_queue = PriorityQueueModule(redis_conn)
-
         if self.settings.features.message_signing:
             self._message_signing = MessageSigningModule(
                 redis_conn,
@@ -147,7 +142,6 @@ class GatewayService:
         MetricsCollector.set_gateway_info(
             version="0.1.14",
             dlp_enabled=self.settings.features.dlp,
-            priority_queue_enabled=self.settings.features.priority_queue,
         )
 
         self._running = True
@@ -157,7 +151,6 @@ class GatewayService:
                 "redis_url": self.settings.redis.url,
                 "features": {
                     "dlp": self.settings.features.dlp,
-                    "priority_queue": self.settings.features.priority_queue,
                     "rbac": self.settings.features.rbac,
                     "message_signing": self.settings.features.message_signing,
                     "circuit_breaker": self.settings.features.circuit_breaker,
@@ -203,9 +196,10 @@ class GatewayService:
         2. Message Signing - Verify signature (if enabled)
         3. Authorization - Check sender can message target (ACL + RBAC)
         4. Rate Limiting - Check sender within limits
-        5. DLP Scanning - Scan for sensitive data (if enabled)
-        6. Audit Logging - Log message and decision (async)
-        7. Routing - Publish to target's stream
+        5. Circuit Breaker - Block if target is unhealthy (if enabled)
+        6. DLP Scanning - Scan for sensitive data (if enabled)
+        7. Audit Logging - Log message and decision (async)
+        8. Routing - Publish to target's stream
 
         Args:
             message: Agent message to process
@@ -235,7 +229,9 @@ class GatewayService:
         assert self._redis is not None, "Gateway not started"
 
         # Stage 1: Authentication
-        auth_result = await self._auth.authenticate(message.sender_id, token)
+        auth_result = await self._auth.authenticate(
+            message.sender_id, token, sender_instance_id=message.meta.sender_instance_id
+        )
         if not auth_result.authenticated:
             latency_ms = (time.time() - start_time) * 1000
 
@@ -262,6 +258,9 @@ class GatewayService:
                 latency_ms,
                 message.payload,
                 violations=["authentication_failure"],
+                message_type=message.message_type,
+                correlation_id=message.meta.correlation_id,
+                sender_instance_id=message.meta.sender_instance_id,
             )
 
             return GatewayResult(
@@ -300,6 +299,9 @@ class GatewayService:
                     latency_ms,
                     message.payload,
                     violations=["missing_signature_parameters"],
+                    message_type=message.message_type,
+                    correlation_id=message.meta.correlation_id,
+                    sender_instance_id=message.meta.sender_instance_id,
                 )
 
                 return GatewayResult(
@@ -348,6 +350,9 @@ class GatewayService:
                     latency_ms,
                     message.payload,
                     violations=["signature_verification_failed"],
+                    message_type=message.message_type,
+                    correlation_id=message.meta.correlation_id,
+                    sender_instance_id=message.meta.sender_instance_id,
                 )
 
                 return GatewayResult(
@@ -383,6 +388,9 @@ class GatewayService:
                 latency_ms,
                 message.payload,
                 violations=["authorization_denied"],
+                message_type=message.message_type,
+                correlation_id=message.meta.correlation_id,
+                sender_instance_id=message.meta.sender_instance_id,
             )
 
             return GatewayResult(
@@ -412,6 +420,9 @@ class GatewayService:
                 latency_ms,
                 message.payload,
                 violations=["rate_limit_exceeded"],
+                message_type=message.message_type,
+                correlation_id=message.meta.correlation_id,
+                sender_instance_id=message.meta.sender_instance_id,
             )
 
             return GatewayResult(
@@ -421,7 +432,48 @@ class GatewayService:
                 latency_ms=latency_ms,
             )
 
-        # Stage 5: DLP Scanning (if enabled)
+        # Stage 5: Circuit Breaker (if enabled)
+        if self.settings.features.circuit_breaker and self._circuit_breaker:
+            circuit_status = await self._circuit_breaker.check_circuit(
+                message.target_id
+            )
+            if not circuit_status.allowed:
+                latency_ms = (time.time() - start_time) * 1000
+
+                MetricsCollector.record_message("CIRCUIT_OPEN", latency_ms / 1000)
+
+                await self._audit.log_security_event(
+                    "CIRCUIT_OPEN",
+                    {
+                        "sender_id": message.sender_id,
+                        "sender_instance_id": message.meta.sender_instance_id,
+                        "target_id": message.target_id,
+                        "state": circuit_status.state,
+                        "failure_count": circuit_status.failure_count,
+                    },
+                )
+
+                await self._audit.log_message(
+                    message.message_id,
+                    message.sender_id,
+                    message.target_id,
+                    "CIRCUIT_OPEN",
+                    latency_ms,
+                    message.payload,
+                    violations=["circuit_open"],
+                    message_type=message.message_type,
+                    correlation_id=message.meta.correlation_id,
+                    sender_instance_id=message.meta.sender_instance_id,
+                )
+
+                return GatewayResult(
+                    success=False,
+                    decision="CIRCUIT_OPEN",
+                    message="Target circuit is open",
+                    latency_ms=latency_ms,
+                )
+
+        # Stage 6: DLP Scanning (if enabled)
         if self.settings.features.dlp and self._dlp:
             scan_result = await self._dlp.scan(message.payload)
 
@@ -462,6 +514,9 @@ class GatewayService:
                         latency_ms,
                         message.payload,
                         violations=violations,
+                        message_type=message.message_type,
+                        correlation_id=message.meta.correlation_id,
+                        sender_instance_id=message.meta.sender_instance_id,
                     )
 
                     return GatewayResult(
@@ -502,7 +557,14 @@ class GatewayService:
                 latency_ms,
                 message.payload,
                 violations=violations,
+                message_type=message.message_type,
+                correlation_id=message.meta.correlation_id,
+                sender_instance_id=message.meta.sender_instance_id,
             )
+
+            # Record circuit breaker success (gateway delivery succeeded)
+            if self.settings.features.circuit_breaker and self._circuit_breaker:
+                await self._circuit_breaker.record_success(message.target_id)
 
             logger.info(
                 "Message routed",
@@ -543,7 +605,16 @@ class GatewayService:
                 latency_ms,
                 message.payload,
                 violations=["routing_error"],
+                message_type=message.message_type,
+                correlation_id=message.meta.correlation_id,
+                sender_instance_id=message.meta.sender_instance_id,
             )
+
+            # Record circuit breaker failure
+            if self.settings.features.circuit_breaker and self._circuit_breaker:
+                await self._circuit_breaker.record_failure(
+                    message.target_id, reason="routing_failed"
+                )
 
             return GatewayResult(
                 success=False,
@@ -556,95 +627,41 @@ class GatewayService:
         """
         Route message to target agent's stream.
 
-        If priority queue is enabled, enqueues message by priority.
-        Otherwise, delivers to per-agent Redis Stream (at-least-once).
-
         Args:
             message: Message to route
         """
         assert self._redis is not None, "Gateway not started"
 
-        if self.settings.features.priority_queue and self._priority_queue:
-            # Determine priority from message metadata
-            priority = self._determine_message_priority(message)
-
-            # Enqueue message
-            await self._priority_queue.enqueue(
-                message_id=message.message_id,
-                sender_id=message.sender_id,
-                target_id=message.target_id,
-                payload=message.payload,
-                priority=priority,
-            )
-
-            logger.debug(
-                "Message enqueued",
-                extra={
-                    "message_id": message.message_id,
-                    "priority": priority.name,
-                },
+        # Stream-based delivery (at-least-once)
+        # For replies with reply_to_instance_id, route directly to the specific
+        # requesting instance to ensure request-response works correctly with
+        # multi-instance agents.
+        if message.meta.is_reply and message.meta.reply_to_instance_id:
+            # Route to instance-specific stream for reply delivery
+            target_stream = (
+                f"{self.settings.agent_stream_prefix}"
+                f"{message.target_id}:{message.meta.reply_to_instance_id}"
             )
         else:
-            # Stream-based delivery (at-least-once)
-            # For replies with sender_instance_id, route directly to the specific instance
-            # to ensure request-response works correctly with multi-instance agents
-            if message.meta.is_reply and message.meta.sender_instance_id:
-                # Route to instance-specific stream for reply delivery
-                target_stream = (
-                    f"{self.settings.agent_stream_prefix}"
-                    f"{message.target_id}:{message.meta.sender_instance_id}"
-                )
-            else:
-                # Regular message - route to shared stream (load balanced across instances)
-                target_stream = (
-                    f"{self.settings.agent_stream_prefix}{message.target_id}"
-                )
+            # Regular message - route to shared stream (load balanced across instances)
+            target_stream = f"{self.settings.agent_stream_prefix}{message.target_id}"
 
-            await self._redis.xadd(
-                target_stream,
-                {
-                    "envelope": message.model_dump_json(),
-                },
-            )
+        await self._redis.xadd(
+            target_stream,
+            {
+                "envelope": message.model_dump_json(),
+            },
+        )
 
-            logger.debug(
-                "Message written to delivery stream",
-                extra={
-                    "message_id": message.message_id,
-                    "target_stream": target_stream,
-                    "is_instance_specific": message.meta.is_reply
-                    and bool(message.meta.sender_instance_id),
-                },
-            )
-
-    def _determine_message_priority(self, message: AgentMessage) -> MessagePriority:
-        """
-        Determine message priority based on payload markers.
-
-        Priority rules:
-        - payload.priority = "critical" → CRITICAL
-        - payload.priority = "high" → HIGH
-        - payload.priority = "low" → LOW
-        - payload.priority = "bulk" → BULK
-        - Default → NORMAL
-
-        Args:
-            message: Agent message
-
-        Returns:
-            MessagePriority enum
-        """
-        priority_str = str(message.payload.get("priority", "normal")).lower()
-
-        priority_map = {
-            "critical": MessagePriority.CRITICAL,
-            "high": MessagePriority.HIGH,
-            "normal": MessagePriority.NORMAL,
-            "low": MessagePriority.LOW,
-            "bulk": MessagePriority.BULK,
-        }
-
-        return priority_map.get(priority_str, MessagePriority.NORMAL)
+        logger.debug(
+            "Message written to delivery stream",
+            extra={
+                "message_id": message.message_id,
+                "target_stream": target_stream,
+                "is_instance_specific": message.meta.is_reply
+                and bool(message.meta.reply_to_instance_id),
+            },
+        )
 
     # Module accessors for management operations
 
@@ -680,11 +697,6 @@ class GatewayService:
     def dlp(self) -> DLPModule | None:
         """Get DLP module (if enabled)."""
         return self._dlp
-
-    @property
-    def priority_queue(self) -> PriorityQueueModule | None:
-        """Get priority queue module (if enabled)."""
-        return self._priority_queue
 
     @property
     def message_signing(self) -> MessageSigningModule | None:
@@ -780,13 +792,25 @@ class GatewayService:
                                     envelope_json=envelope_json or None,
                                 )
                                 if not result.success:
-                                    # Write to DLQ with reason
+                                    # Write to DLQ with minimal data (no raw envelope).
+                                    # Use hashes for correlation without storing sensitive payloads.
+                                    import hashlib
+
+                                    envelope_hash = hashlib.sha256(
+                                        (envelope_json or "").encode("utf-8")
+                                    ).hexdigest()
                                     await self._redis.xadd(
                                         self.settings.dlq_stream,
                                         {
-                                            "envelope": envelope_json,
+                                            "message_id": msg.message_id,
+                                            "sender_id": msg.sender_id,
+                                            "sender_instance_id": msg.meta.sender_instance_id
+                                            or "",
+                                            "target_id": msg.target_id,
+                                            "message_type": msg.message_type,
                                             "decision": result.decision,
-                                            "message": result.message or "",
+                                            "reason": result.message or "",
+                                            "envelope_hash": envelope_hash,
                                         },
                                     )
                             finally:

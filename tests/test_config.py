@@ -12,7 +12,6 @@ from mas.gateway.config import (
     RateLimitSettings,
     FeaturesSettings,
     CircuitBreakerSettings,
-    PriorityQueueSettings,
     MessageSigningSettings,
     load_settings,
 )
@@ -67,9 +66,8 @@ class TestFeaturesSettings:
         """Test default feature flags (production-ready defaults)."""
         settings = FeaturesSettings()
 
-        # Security features enabled by default; priority queue is opt-in
+        # Security features enabled by default
         assert settings.dlp is True
-        assert settings.priority_queue is False
         assert settings.rbac is True
         assert settings.message_signing is True
         assert settings.circuit_breaker is True
@@ -78,7 +76,6 @@ class TestFeaturesSettings:
         """Test enabling all features."""
         settings = FeaturesSettings(
             dlp=True,
-            priority_queue=True,
             rbac=True,
             message_signing=True,
             circuit_breaker=True,
@@ -87,7 +84,6 @@ class TestFeaturesSettings:
         assert all(
             [
                 settings.dlp,
-                settings.priority_queue,
                 settings.rbac,
                 settings.message_signing,
                 settings.circuit_breaker,
@@ -122,41 +118,6 @@ class TestCircuitBreakerSettings:
         assert settings.window_seconds == 600.0
 
 
-class TestPriorityQueueSettings:
-    """Test priority queue configuration."""
-
-    def test_default_priority_queue(self):
-        """Test default priority queue settings."""
-        settings = PriorityQueueSettings()
-
-        assert settings.default_ttl == 300
-        assert settings.weights == {
-            "CRITICAL": 10,
-            "HIGH": 5,
-            "NORMAL": 2,
-            "LOW": 1,
-            "BULK": 0,
-        }
-
-    def test_custom_weights(self):
-        """Test custom priority weights."""
-        settings = PriorityQueueSettings(
-            critical_weight=20,
-            high_weight=10,
-            normal_weight=5,
-            low_weight=2,
-            bulk_weight=1,
-        )
-
-        assert settings.weights == {
-            "CRITICAL": 20,
-            "HIGH": 10,
-            "NORMAL": 5,
-            "LOW": 2,
-            "BULK": 1,
-        }
-
-
 class TestMessageSigningSettings:
     """Test message signing configuration."""
 
@@ -185,7 +146,6 @@ class TestGatewaySettings:
         assert settings.redis.url == "redis://localhost:6379"
         assert settings.rate_limit.per_minute == 100
         assert settings.features.dlp is True
-        assert settings.features.priority_queue is False
         assert settings.features.rbac is True
         assert settings.features.message_signing is True
         assert settings.features.circuit_breaker is True
@@ -360,7 +320,6 @@ class TestSettingsSummary:
                 rbac=True,
                 message_signing=True,
                 circuit_breaker=True,
-                priority_queue=True,
             )
         )
         summary = settings.summary()
@@ -369,4 +328,3 @@ class TestSettingsSummary:
         assert "RBAC: ✓" in summary
         assert "Message Signing: ✓" in summary
         assert "Circuit Breaker: ✓" in summary
-        assert "Priority Queue: ✓" in summary

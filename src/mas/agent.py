@@ -329,6 +329,7 @@ class Agent(Generic[StateType]):
             target_id=target_id,
             message_type=message_type,
             data=payload,
+            meta=MessageMeta(sender_instance_id=self.instance_id),
         )
         await self._send_envelope(message)
 
@@ -875,8 +876,10 @@ class Agent(Generic[StateType]):
                 correlation_id=original.meta.correlation_id,
                 expects_reply=False,
                 is_reply=True,
-                # Preserve the original sender's instance ID for routing
-                sender_instance_id=original.meta.sender_instance_id,
+                # Identify this sending instance.
+                sender_instance_id=self.instance_id,
+                # Route back to the requesting instance.
+                reply_to_instance_id=original.meta.sender_instance_id,
             ),
         )
         await self._send_envelope(reply)
