@@ -80,7 +80,7 @@ class GatewaySettings(BaseSettings):
     Configuration can be loaded from:
     1. Environment variables (GATEWAY_*)
     2. .env file
-    3. YAML config file (specified via GATEWAY_CONFIG_FILE)
+    3. YAML config file (standalone usage via GATEWAY_CONFIG_FILE)
     4. Direct instantiation with parameters
 
     Priority (highest to lowest):
@@ -94,7 +94,7 @@ class GatewaySettings(BaseSettings):
         # From environment variables
         settings = GatewaySettings()
 
-        # From config file
+        # From config file (standalone usage)
         settings = GatewaySettings(config_file="gateway.yaml")
 
         # Direct configuration
@@ -249,10 +249,10 @@ def load_settings(
         # Load from environment
         settings = load_settings()
 
-        # Load from file
+        # Load from file (standalone usage)
         settings = load_settings(config_file="gateway.yaml")
 
-        # Load with overrides
+        # Load with overrides (standalone usage)
         settings = load_settings(
             config_file="gateway.yaml",
             redis={"url": "redis://override:6379"},

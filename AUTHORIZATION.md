@@ -2,7 +2,7 @@
 
 MAS is deny-by-default.
 
-Authorization is configured in `agents.yaml` under `permissions:`. The runner applies these rules to Redis so the server can enforce them.
+Authorization is configured in `mas.yaml` under `permissions:`. The runner applies these rules to Redis so the server can enforce them.
 
 ## Permission Specs
 

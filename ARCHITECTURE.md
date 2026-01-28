@@ -18,7 +18,7 @@ The MAS server is the policy and routing boundary:
 
 - `src/mas/server.py`: gRPC+mTLS MAS server, owns all Redis responsibilities
 - `src/mas/agent.py`: agent client, speaks only gRPC
-- `src/mas/runner.py`: loads `agents.yaml`, starts the server and agent processes
+- `src/mas/runner.py`: loads `mas.yaml`, starts the server and agent processes
 - `src/mas/gateway/*`: policy modules used by the server (audit, authz, rate limit, DLP, circuit breaker)
 
 ## Message Flow
@@ -46,5 +46,5 @@ Multi-instance
 
 - mTLS is mandatory; agents must present a client certificate
 - Agent identity comes from the certificate SAN; callers cannot spoof `sender_id`
-- Authorization is deny-by-default; configure explicit allow rules in `agents.yaml`
+- Authorization is deny-by-default; configure explicit allow rules in `mas.yaml`
 - Audit logs are written server-side for every decision

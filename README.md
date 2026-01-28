@@ -35,9 +35,9 @@ Agent (mTLS)  ─┘        ├─ AuthN: SPIFFE URI SAN (spiffe://mas/agent/{ag
 redis-server
 ```
 
-2) Create `agents.yaml`
+2) Create `mas.yaml`
 
-Use `agents.yaml.example` as a template. You must provide:
+Use `mas.yaml.example` as a template. You must provide:
 - Server cert/key + CA (`tls_ca_path`, `tls_server_cert_path`, `tls_server_key_path`)
 - A client cert/key per agent (`tls_cert_path`, `tls_key_path`)
 

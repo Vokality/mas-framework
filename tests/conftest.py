@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import textwrap
-from typing import Awaitable, Callable
+from typing import AsyncGenerator, Awaitable, Callable
 
 import pytest
 from redis.asyncio import Redis
@@ -188,6 +188,8 @@ async def cleanup_agent_keys():
     # Rate limit keys
     async for key in redis.scan_iter("rate_limit:*"):
         keys_to_delete.append(key)
+    async for key in redis.scan_iter("ratelimit:*"):
+        keys_to_delete.append(key)
 
     # ACL keys
     async for key in redis.scan_iter("acl:*"):
@@ -326,7 +328,10 @@ def test_tls(tmp_path_factory) -> TestTlsPaths:
 @pytest.fixture
 async def mas_server_factory(
     test_tls: TestTlsPaths,
-) -> Callable[[dict[str, AgentDefinition] | None], Awaitable[MASServer]]:
+) -> AsyncGenerator[
+    Callable[[dict[str, AgentDefinition] | None], Awaitable[MASServer]],
+    None,
+]:
     servers: list[MASServer] = []
 
     async def _start(agents: dict[str, AgentDefinition] | None = None) -> MASServer:

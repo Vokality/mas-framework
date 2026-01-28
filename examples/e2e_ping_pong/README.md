@@ -14,7 +14,7 @@ cd examples/e2e_ping_pong
 # Generate CA, server cert, and agent certs (mTLS)
 bash make_certs.sh
 
-# Run the runner (auto-loads ./agents.yaml)
+# Run the runner (auto-loads ./mas.yaml)
 uv run python -m mas
 ```
 

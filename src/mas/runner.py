@@ -17,7 +17,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .agent import Agent, TlsClientConfig
 from .gateway.config import GatewaySettings
-from .gateway.config import load_settings as load_gateway_settings
 from .server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
 
 logger = logging.getLogger(__name__)
@@ -97,14 +96,13 @@ PermissionSpec = Annotated[
 
 class _RunnerSettingsInit(TypedDict, total=False):
     config_file: Optional[str]
-    redis_url: str
     server_listen_addr: str
     tls_ca_path: str
     tls_server_cert_path: str
     tls_server_key_path: str
-    gateway_config_file: Optional[str]
     permissions: list[PermissionSpec]
     agents: list[AgentSpec]
+    gateway: dict[str, Any]
 
 
 class RunnerSettings(BaseSettings):
@@ -114,16 +112,12 @@ class RunnerSettings(BaseSettings):
     Configuration sources:
     1) Explicit parameters
     2) Environment variables (MAS_RUNNER_*)
-    3) agents.yaml (auto-loaded if present)
+    3) mas.yaml (auto-loaded if present)
     4) Defaults
     """
 
     config_file: Optional[str] = Field(
         default=None, description="Path to YAML config file"
-    )
-    redis_url: str = Field(
-        default="redis://localhost:6379",
-        description="Redis URL for MAS server",
     )
     server_listen_addr: str = Field(
         default="127.0.0.1:50051",
@@ -132,9 +126,6 @@ class RunnerSettings(BaseSettings):
     tls_ca_path: str = Field(..., description="CA PEM used to verify peer certs")
     tls_server_cert_path: str = Field(..., description="Server certificate PEM")
     tls_server_key_path: str = Field(..., description="Server private key PEM")
-    gateway_config_file: Optional[str] = Field(
-        default=None, description="Path to gateway YAML config file"
-    )
     permissions: list[PermissionSpec] = Field(
         default_factory=list,
         description="Authorization rules to apply",
@@ -142,6 +133,10 @@ class RunnerSettings(BaseSettings):
     agents: list[AgentSpec] = Field(
         default_factory=list,
         description="Agent definitions to run",
+    )
+    gateway: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Gateway policy configuration",
     )
 
     model_config = SettingsConfigDict(
@@ -162,7 +157,7 @@ class RunnerSettings(BaseSettings):
 
         if config_file is None and "agents" not in data:
             raise FileNotFoundError(
-                "agents.yaml not found. Create agents.yaml in the project root "
+                "mas.yaml not found. Create mas.yaml in the project root "
                 "or pass a config_file."
             )
 
@@ -194,9 +189,6 @@ class RunnerSettings(BaseSettings):
         self.tls_server_cert_path = resolve_path(self.tls_server_cert_path)
         self.tls_server_key_path = resolve_path(self.tls_server_key_path)
 
-        if self.gateway_config_file:
-            self.gateway_config_file = resolve_path(self.gateway_config_file)
-
         self.agents = [
             spec.model_copy(
                 update={
@@ -211,7 +203,7 @@ class RunnerSettings(BaseSettings):
     def _default_config_file() -> Optional[str]:
         start = Path.cwd()
         for current in [start, *start.parents]:
-            candidate = current / "agents.yaml"
+            candidate = current / "mas.yaml"
             if candidate.exists():
                 return str(candidate)
         return None
@@ -251,7 +243,7 @@ class AgentRunner:
     async def run(self) -> None:
         """Start agents and wait for shutdown."""
         if not self._settings.agents:
-            raise RuntimeError("No agents configured. Provide agents.yaml or settings.")
+            raise RuntimeError("No agents configured. Provide mas.yaml or settings.")
 
         self._setup_signals()
         try:
@@ -317,7 +309,7 @@ class AgentRunner:
             )
 
         server_settings = MASServerSettings(
-            redis_url=self._settings.redis_url,
+            redis_url=gateway_settings.redis.url,
             listen_addr=self._settings.server_listen_addr,
             tls=TlsConfig(
                 server_cert_path=self._settings.tls_server_cert_path,
@@ -403,16 +395,8 @@ class AgentRunner:
         return cast(type[Agent[Any]], target)
 
     def _load_gateway_settings(self) -> GatewaySettings:
-        if self._settings.gateway_config_file:
-            return load_gateway_settings(config_file=self._settings.gateway_config_file)
-
-        if self._settings.config_file:
-            base = Path(self._settings.config_file).resolve().parent
-            candidate = base / "gateway.yaml"
-            if candidate.exists():
-                return load_gateway_settings(config_file=str(candidate))
-
-        return load_gateway_settings()
+        gateway_data = dict(self._settings.gateway)
+        return GatewaySettings(**gateway_data)
 
 
 def load_runner_settings(

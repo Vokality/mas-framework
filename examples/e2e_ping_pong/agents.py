@@ -79,7 +79,7 @@ class PingAgent(Agent[dict[str, object]]):
             "Got it. I will monitor it and come back if it does not improve. Thanks.",
         ]
 
-        # PongAgent is started first by agents.yaml, but give transport a moment.
+        # PongAgent is started first by mas.yaml, but give transport a moment.
         await asyncio.sleep(0.2)
 
         for turn_index, line in enumerate(patient_lines, start=1):

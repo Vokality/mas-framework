@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import override
+from typing import cast, override
 
 import pytest
 
@@ -51,31 +51,38 @@ class FakeServer:
         self.stopped = True
 
 
-def _write_agents_yaml(path: Path) -> None:
-    path.write_text(
-        "\n".join(
+def _write_mas_yaml(path: Path, *, gateway_url: str | None = None) -> None:
+    lines = [
+        "tls_ca_path: tests/certs/ca.pem",
+        "tls_server_cert_path: tests/certs/server.pem",
+        "tls_server_key_path: tests/certs/server.key",
+    ]
+    if gateway_url is not None:
+        lines.extend(
             [
-                "tls_ca_path: tests/certs/ca.pem",
-                "tls_server_cert_path: tests/certs/server.pem",
-                "tls_server_key_path: tests/certs/server.key",
-                "agents:",
-                "  - agent_id: test_agent",
-                "    class_path: tests.test_runner:NoopAgent",
-                "    instances: 1",
-                "    tls_cert_path: tests/certs/sender.pem",
-                "    tls_key_path: tests/certs/sender.key",
+                "gateway:",
+                "  redis:",
+                f"    url: {gateway_url}",
             ]
         )
-        + "\n",
-        encoding="utf-8",
+    lines.extend(
+        [
+            "agents:",
+            "  - agent_id: test_agent",
+            "    class_path: tests.test_runner:NoopAgent",
+            "    instances: 1",
+            "    tls_cert_path: tests/certs/sender.pem",
+            "    tls_key_path: tests/certs/sender.key",
+        ]
     )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def test_settings_loads_agents_yaml_from_parent(tmp_path, monkeypatch) -> None:
+def test_settings_loads_mas_yaml_from_parent(tmp_path, monkeypatch) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
-    config_path = project_root / "agents.yaml"
-    _write_agents_yaml(config_path)
+    config_path = project_root / "mas.yaml"
+    _write_mas_yaml(config_path)
 
     nested = project_root / "apps" / "worker"
     nested.mkdir(parents=True)
@@ -87,13 +94,23 @@ def test_settings_loads_agents_yaml_from_parent(tmp_path, monkeypatch) -> None:
     assert settings.agents[0].agent_id == "test_agent"
 
 
-def test_settings_requires_agents_yaml(tmp_path, monkeypatch) -> None:
+def test_settings_requires_mas_yaml(tmp_path, monkeypatch) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
     monkeypatch.chdir(project_root)
 
-    with pytest.raises(FileNotFoundError, match="agents.yaml not found"):
+    with pytest.raises(FileNotFoundError, match="mas.yaml not found"):
         load_runner_settings()
+
+
+def test_settings_loads_gateway_from_mas_yaml(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    config_path = project_root / "mas.yaml"
+    _write_mas_yaml(config_path, gateway_url="redis://custom:6379")
+
+    settings = load_runner_settings(config_file=str(config_path))
+    assert settings.gateway["redis"]["url"] == "redis://custom:6379"
 
 
 def test_load_agent_class_validation() -> None:
@@ -174,7 +191,26 @@ async def test_runner_starts_and_stops_server(monkeypatch) -> None:
 
     await runner._start_server()
     assert runner._server is not None
-    assert runner._server.started is True
+    server = cast(FakeServer, runner._server)
+    assert server.started is True
 
     await runner._stop_server()
     assert runner._server is None
+
+
+@pytest.mark.asyncio
+async def test_runner_passes_gateway_redis_to_server(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("mas.runner.MASServer", FakeServer)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    config_path = project_root / "mas.yaml"
+    _write_mas_yaml(config_path, gateway_url="redis://custom:6380")
+
+    settings = load_runner_settings(config_file=str(config_path))
+    runner = AgentRunner(settings)
+
+    await runner._start_server()
+    assert runner._server is not None
+    server = cast(FakeServer, runner._server)
+    assert server.settings.redis_url == "redis://custom:6380"
+    assert server.gateway.redis.url == "redis://custom:6380"
