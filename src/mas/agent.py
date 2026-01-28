@@ -818,7 +818,7 @@ class Agent(Generic[StateType]):
         super().__init_subclass__(**kwargs)
 
         # Create a new handlers dict for this subclass
-        cls._handlers = {}  # type: ignore[misc]
+        cls._handlers = {}
 
         # Register all decorated methods from this class and parent classes
         for name in dir(cls):
@@ -829,7 +829,7 @@ class Agent(Generic[StateType]):
                         attr, "_agent_handlers"
                     )
                     for message_type, model in handler_list:
-                        cls._handlers[message_type] = Agent._HandlerSpec(  # type: ignore[misc]
+                        cls._handlers[message_type] = Agent._HandlerSpec(
                             fn=attr, model=model
                         )
             except AttributeError:

@@ -4,8 +4,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 if TYPE_CHECKING:
-    from .gateway import GatewayService
     from .authorization import AuthorizationModule
+    from .gateway import GatewayService
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class AuthorizationManager:
             gateway: GatewayService instance with authorization module
         """
         self._gateway = gateway
-        self._authz: "AuthorizationModule" = gateway._authz  # type: ignore
+        self._authz: "AuthorizationModule" = gateway._authz
         if not self._authz:
             raise RuntimeError(
                 "Gateway must be started before using AuthorizationManager"

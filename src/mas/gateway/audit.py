@@ -280,13 +280,13 @@ class AuditModule:
                 # Parse violations JSON if present
                 if "violations" in data:
                     try:
-                        data["violations"] = json.loads(data["violations"])  # type: ignore[arg-type]
+                        data["violations"] = json.loads(data["violations"])
                     except (json.JSONDecodeError, TypeError):
                         data["violations"] = []
                 # Parse details JSON if present (for security events)
                 if "details" in data:
                     try:
-                        data["details"] = json.loads(data["details"])  # type: ignore[arg-type]
+                        data["details"] = json.loads(data["details"])
                     except (json.JSONDecodeError, TypeError):
                         pass
                 # Add stream ID to entry

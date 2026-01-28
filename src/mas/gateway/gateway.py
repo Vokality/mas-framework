@@ -235,7 +235,7 @@ class GatewayService:
         assert self._redis is not None, "Gateway not started"
 
         # Stage 1: Authentication
-        auth_result = await self._auth.authenticate(message.sender_id, token)  # type: ignore[union-attr]
+        auth_result = await self._auth.authenticate(message.sender_id, token)
         if not auth_result.authenticated:
             latency_ms = (time.time() - start_time) * 1000
 

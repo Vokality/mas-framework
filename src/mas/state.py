@@ -3,7 +3,7 @@
 import json
 import logging
 from collections.abc import MutableMapping
-from typing import Any, Mapping, TypeVar, Generic, cast
+from typing import Any, Generic, Mapping, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -50,7 +50,7 @@ class StateManager(Generic[StateType]):
     async def load(self) -> None:
         """Load state from Redis."""
         key = f"agent.state:{self.agent_id}"
-        data = await self.redis.hgetall(key)  # type: ignore
+        data = await self.redis.hgetall(key)
 
         if data:
             if self._state_model is None:
