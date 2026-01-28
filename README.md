@@ -5,6 +5,14 @@ Secure multi-agent runtime:
 - Server owns all Redis access (routing, state, audit, policy)
 - Agents never touch Redis
 
+## Use Cases
+
+- Ship multi-agent systems without widening data access: enforce deny-by-default ACLs and mTLS identity per agent.
+- Meet security and compliance requirements with tamper-evident audit logs and explicit policy decisions.
+- Protect sensitive data in transit using DLP scanning with block/redact rules.
+- Reduce incident blast radius with centralized policy, rate limiting, and circuit breakers.
+- Support multi-team agent development without shared Redis credentials or direct data access.
+
 ## Architecture
 
 ```
