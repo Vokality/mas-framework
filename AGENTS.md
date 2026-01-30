@@ -34,3 +34,4 @@ Coding style: All code must be clean, documented and minimal. That means:
 - If some code looks heavyweight, perhaps with lots of conditionals, then think harder for a more elegant way of achieving it.
 - Prefer docstrings for modules/classes/public functions. Use comments sparingly for non-obvious intent and invariants (avoid restating the code).
 - Your work is incomplete until you've performed all the checks.
+- Your decisions must be rooted in evidence and truth.
