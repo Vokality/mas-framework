@@ -1,3 +1,5 @@
+"""MAS gRPC server and Redis-backed routing."""
+
 from __future__ import annotations
 
 import asyncio
@@ -34,6 +36,8 @@ _INSTANCE_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
 
 @dataclass(frozen=True, slots=True)
 class AgentDefinition:
+    """Agent allowlist entry and metadata."""
+
     agent_id: str
     capabilities: list[str]
     metadata: dict[str, Any]
@@ -41,6 +45,8 @@ class AgentDefinition:
 
 @dataclass(frozen=True, slots=True)
 class TlsConfig:
+    """Server-side TLS credential paths."""
+
     server_cert_path: str
     server_key_path: str
     client_ca_path: str
@@ -48,6 +54,8 @@ class TlsConfig:
 
 @dataclass(frozen=True, slots=True)
 class MASServerSettings:
+    """Configuration for MAS server runtime."""
+
     redis_url: str
     listen_addr: str
     tls: TlsConfig
@@ -60,6 +68,8 @@ class MASServerSettings:
 
 @dataclass(slots=True)
 class _InflightDelivery:
+    """Delivery state tracked while awaiting ACK/NACK."""
+
     stream_name: str
     group: str
     entry_id: str
@@ -69,6 +79,8 @@ class _InflightDelivery:
 
 @dataclass(slots=True)
 class _Session:
+    """Active agent session for a single instance."""
+
     agent_id: str
     instance_id: str
     outbound: asyncio.Queue[mas_pb2.ServerEvent]
@@ -85,6 +97,7 @@ class MASServer:
         settings: MASServerSettings,
         gateway: GatewaySettings | None = None,
     ):
+        """Initialize server state and gateway modules."""
         self._settings = settings
         self._gateway_settings = gateway or GatewaySettings(
             redis=RedisSettings(url=settings.redis_url)
@@ -105,6 +118,7 @@ class MASServer:
         self._sessions_lock = asyncio.Lock()
 
     async def start(self) -> None:
+        """Start Redis connection, modules, and gRPC server."""
         redis_conn = create_redis_client(
             url=self._gateway_settings.redis.url,
             decode_responses=self._gateway_settings.redis.decode_responses,
@@ -162,6 +176,7 @@ class MASServer:
         )
 
     async def stop(self) -> None:
+        """Stop gRPC server, Redis connection, and sessions."""
         self._running = False
 
         # Stop sessions
@@ -187,12 +202,14 @@ class MASServer:
 
     @property
     def authz(self) -> AuthorizationModule:
+        """Return the authorization module after startup."""
         if not self._authz:
             raise RuntimeError("Server not started")
         return self._authz
 
     @property
     def bound_addr(self) -> str:
+        """Return the bound listen address after startup."""
         if not self._bound_addr:
             raise RuntimeError("Server not started")
         return self._bound_addr
@@ -205,6 +222,7 @@ class MASServer:
         agent_id: str,
         instance_id: str,
     ) -> _Session:
+        """Create a session for a connecting agent instance."""
         if agent_id not in self._settings.agents:
             raise _UnauthenticatedError("agent_not_allowlisted")
         if not _INSTANCE_RE.match(instance_id):
@@ -241,6 +259,7 @@ class MASServer:
         return session
 
     async def disconnect_session(self, *, agent_id: str, instance_id: str) -> None:
+        """Disconnect a session and update agent status."""
         key = (agent_id, instance_id)
         async with self._sessions_lock:
             sess = self._sessions.pop(key, None)
@@ -260,28 +279,17 @@ class MASServer:
         instance_id: str,
         delivery_id: str,
     ) -> None:
-        if not delivery_id:
-            return
-
-        key = (agent_id, instance_id)
-        async with self._sessions_lock:
-            sess = self._sessions.get(key)
-
-        if not sess:
-            return
-
-        inflight = sess.inflight.pop(delivery_id, None)
+        """Handle delivery ACK and update inflight state."""
+        inflight = await self._pop_inflight_delivery(
+            agent_id=agent_id,
+            instance_id=instance_id,
+            delivery_id=delivery_id,
+        )
         if not inflight:
             return
 
         assert self._redis is not None
-        try:
-            await self._redis.xack(
-                inflight.stream_name, inflight.group, inflight.entry_id
-            )
-        except Exception:
-            # Best-effort; message will be reclaimed if needed.
-            pass
+        await self._ack_inflight(inflight)
 
         if self._circuit_breaker:
             await self._circuit_breaker.record_success(agent_id)
@@ -295,17 +303,12 @@ class MASServer:
         reason: str,
         retryable: bool,
     ) -> None:
-        if not delivery_id:
-            return
-
-        key = (agent_id, instance_id)
-        async with self._sessions_lock:
-            sess = self._sessions.get(key)
-
-        if not sess:
-            return
-
-        inflight = sess.inflight.pop(delivery_id, None)
+        """Handle delivery NACK and retry or DLQ."""
+        inflight = await self._pop_inflight_delivery(
+            agent_id=agent_id,
+            instance_id=instance_id,
+            delivery_id=delivery_id,
+        )
         if not inflight:
             return
 
@@ -313,9 +316,7 @@ class MASServer:
         if retryable:
             # Requeue by ACKing and re-adding to the same stream.
             try:
-                await self._redis.xack(
-                    inflight.stream_name, inflight.group, inflight.entry_id
-                )
+                await self._ack_inflight(inflight)
                 await self._redis.xadd(
                     inflight.stream_name, {"envelope": inflight.envelope_json}
                 )
@@ -323,12 +324,7 @@ class MASServer:
                 pass
         else:
             await self._write_dlq(envelope_json=inflight.envelope_json, reason=reason)
-            try:
-                await self._redis.xack(
-                    inflight.stream_name, inflight.group, inflight.entry_id
-                )
-            except Exception:
-                pass
+            await self._ack_inflight(inflight)
 
         if self._circuit_breaker:
             await self._circuit_breaker.record_failure(agent_id, reason=reason)
@@ -342,9 +338,10 @@ class MASServer:
         message_type: str,
         data_json: str,
     ) -> str:
+        """Send a one-way message through policy checks and routing."""
         self._ensure_connected(sender_id, sender_instance_id)
         payload = _parse_payload_json(data_json)
-        msg = EnvelopeMessage(
+        msg = self._build_message(
             sender_id=sender_id,
             target_id=target_id,
             message_type=message_type,
@@ -364,6 +361,7 @@ class MASServer:
         data_json: str,
         timeout_ms: int,
     ) -> tuple[str, str]:
+        """Send a request and register correlation tracking."""
         self._ensure_connected(sender_id, sender_instance_id)
         assert self._redis is not None
         payload = _parse_payload_json(data_json)
@@ -383,7 +381,7 @@ class MASServer:
             ),
         )
 
-        msg = EnvelopeMessage(
+        msg = self._build_message(
             sender_id=sender_id,
             target_id=target_id,
             message_type=message_type,
@@ -406,6 +404,7 @@ class MASServer:
         message_type: str,
         data_json: str,
     ) -> str:
+        """Send a reply to a pending request."""
         self._ensure_connected(sender_id, sender_instance_id)
         assert self._redis is not None
         payload = _parse_payload_json(data_json)
@@ -437,9 +436,16 @@ class MASServer:
         origin_agent_id = str(origin_obj.get("agent_id", ""))
         origin_instance_id = str(origin_obj.get("instance_id", ""))
         expires_at_raw = origin_obj.get("expires_at")
-        try:
+        if expires_at_raw is None:
+            raise _InvalidArgumentError("unknown_correlation_id")
+        if isinstance(expires_at_raw, (int, float)):
             expires_at = float(expires_at_raw)
-        except (TypeError, ValueError):
+        elif isinstance(expires_at_raw, str):
+            try:
+                expires_at = float(expires_at_raw)
+            except ValueError as exc:
+                raise _InvalidArgumentError("unknown_correlation_id") from exc
+        else:
             raise _InvalidArgumentError("unknown_correlation_id")
 
         if not origin_agent_id or not origin_instance_id:
@@ -452,7 +458,7 @@ class MASServer:
                 pass
             raise _FailedPreconditionError("correlation_id_expired")
 
-        msg = EnvelopeMessage(
+        msg = self._build_message(
             sender_id=sender_id,
             target_id=origin_agent_id,
             message_type=message_type,
@@ -480,6 +486,7 @@ class MASServer:
         agent_id: str,
         capabilities: list[str],
     ) -> list[dict[str, Any]]:
+        """List discoverable agents for a sender and capability filter."""
         # Secure-by-default: only return targets this agent can send to.
         assert self._redis is not None
         assert self._authz is not None
@@ -523,28 +530,71 @@ class MASServer:
         return results
 
     async def get_state(self, *, agent_id: str) -> dict[str, str]:
+        """Return persisted state for an agent."""
         assert self._redis is not None
         return await self._redis.hgetall(f"agent.state:{agent_id}")
 
     async def update_state(self, *, agent_id: str, updates: dict[str, str]) -> None:
+        """Update persisted agent state with provided fields."""
         assert self._redis is not None
         if updates:
             await self._redis.hset(f"agent.state:{agent_id}", mapping=updates)
 
     async def reset_state(self, *, agent_id: str) -> None:
+        """Clear persisted agent state."""
         assert self._redis is not None
         await self._redis.delete(f"agent.state:{agent_id}")
 
     def _ensure_connected(self, agent_id: str, instance_id: str) -> None:
+        """Validate a connected session for sender."""
         if not _INSTANCE_RE.match(instance_id):
             raise _InvalidArgumentError("invalid_instance_id")
         key = (agent_id, instance_id)
         if key not in self._sessions:
             raise _FailedPreconditionError("session_not_connected")
 
+    @staticmethod
+    def _build_message(
+        *,
+        sender_id: str,
+        target_id: str,
+        message_type: str,
+        data: dict[str, Any],
+        meta: MessageMeta,
+    ) -> EnvelopeMessage:
+        """Build a message envelope from parsed payload and meta."""
+        return EnvelopeMessage(
+            sender_id=sender_id,
+            target_id=target_id,
+            message_type=message_type,
+            data=data,
+            meta=meta,
+        )
+
+    async def _pop_inflight_delivery(
+        self,
+        *,
+        agent_id: str,
+        instance_id: str,
+        delivery_id: str,
+    ) -> _InflightDelivery | None:
+        """Remove and return an inflight delivery for a session."""
+        if not delivery_id:
+            return None
+
+        key = (agent_id, instance_id)
+        async with self._sessions_lock:
+            sess = self._sessions.get(key)
+
+        if not sess:
+            return None
+
+        return sess.inflight.pop(delivery_id, None)
+
     # --- internals ---
 
     async def _bootstrap_registry(self) -> None:
+        """Populate Redis agent records from allowlist."""
         assert self._redis is not None
         now = str(time.time())
         pipe = self._redis.pipeline()
@@ -563,6 +613,7 @@ class MASServer:
         await pipe.execute()
 
     async def _set_agent_status(self, agent_id: str, status: str) -> None:
+        """Update an agent's status field in Redis."""
         assert self._redis is not None
         await self._redis.hset(
             f"agent:{agent_id}",
@@ -570,6 +621,7 @@ class MASServer:
         )
 
     async def _write_dlq(self, *, envelope_json: str, reason: str) -> None:
+        """Write a message to the DLQ stream for auditing."""
         if not self._redis:
             return
         if not self._audit:
@@ -597,72 +649,78 @@ class MASServer:
         except Exception:
             pass
 
+    async def _ack_inflight(self, inflight: _InflightDelivery) -> None:
+        """Best-effort ACK for a stream entry."""
+        assert self._redis is not None
+        try:
+            await self._redis.xack(
+                inflight.stream_name, inflight.group, inflight.entry_id
+            )
+        except Exception:
+            # Best-effort; message will be reclaimed if needed.
+            pass
+
     async def _ingest_and_route(self, message: EnvelopeMessage) -> None:
+        """Run policy checks, route, and audit the message."""
         assert self._authz is not None
         assert self._rate_limit is not None
         assert self._audit is not None
         assert self._redis is not None
 
+        audit = self._audit
+
         start = time.time()
+
+        async def log_and_raise(
+            decision: str, violations: list[str], exc: _RpcError
+        ) -> None:
+            """Log an audit entry and raise a gRPC error."""
+            latency_ms = (time.time() - start) * 1000
+            await audit.log_message(
+                message.message_id,
+                message.sender_id,
+                message.target_id,
+                decision,
+                latency_ms,
+                message.data,
+                violations=violations,
+                message_type=message.message_type,
+                correlation_id=message.meta.correlation_id,
+                sender_instance_id=message.meta.sender_instance_id,
+            )
+            raise exc
 
         # Authorization
         authorized = await self._authz.authorize(
             message.sender_id, message.target_id, action="send"
         )
         if not authorized:
-            latency_ms = (time.time() - start) * 1000
-            await self._audit.log_message(
-                message.message_id,
-                message.sender_id,
-                message.target_id,
+            await log_and_raise(
                 "AUTHZ_DENIED",
-                latency_ms,
-                message.data,
-                violations=["authorization_denied"],
-                message_type=message.message_type,
-                correlation_id=message.meta.correlation_id,
-                sender_instance_id=message.meta.sender_instance_id,
+                ["authorization_denied"],
+                _PermissionDeniedError("not_authorized"),
             )
-            raise _PermissionDeniedError("not_authorized")
 
         # Rate limit
         rate = await self._rate_limit.check_rate_limit(
             message.sender_id, message.message_id
         )
         if not rate.allowed:
-            latency_ms = (time.time() - start) * 1000
-            await self._audit.log_message(
-                message.message_id,
-                message.sender_id,
-                message.target_id,
+            await log_and_raise(
                 "RATE_LIMITED",
-                latency_ms,
-                message.data,
-                violations=["rate_limit_exceeded"],
-                message_type=message.message_type,
-                correlation_id=message.meta.correlation_id,
-                sender_instance_id=message.meta.sender_instance_id,
+                ["rate_limit_exceeded"],
+                _ResourceExhaustedError("rate_limited"),
             )
-            raise _ResourceExhaustedError("rate_limited")
 
         # Circuit breaker (block if open)
         if self._circuit_breaker:
             status = await self._circuit_breaker.check_circuit(message.target_id)
             if not status.allowed:
-                latency_ms = (time.time() - start) * 1000
-                await self._audit.log_message(
-                    message.message_id,
-                    message.sender_id,
-                    message.target_id,
+                await log_and_raise(
                     "CIRCUIT_OPEN",
-                    latency_ms,
-                    message.data,
-                    violations=["circuit_open"],
-                    message_type=message.message_type,
-                    correlation_id=message.meta.correlation_id,
-                    sender_instance_id=message.meta.sender_instance_id,
+                    ["circuit_open"],
+                    _FailedPreconditionError("circuit_open"),
                 )
-                raise _FailedPreconditionError("circuit_open")
 
         # DLP
         violations: list[str] = []
@@ -672,20 +730,11 @@ class MASServer:
                 violations.extend([v.violation_type.value for v in scan.violations])
 
                 if scan.action == ActionPolicy.BLOCK:
-                    latency_ms = (time.time() - start) * 1000
-                    await self._audit.log_message(
-                        message.message_id,
-                        message.sender_id,
-                        message.target_id,
+                    await log_and_raise(
                         "DLP_BLOCKED",
-                        latency_ms,
-                        message.data,
-                        violations=violations,
-                        message_type=message.message_type,
-                        correlation_id=message.meta.correlation_id,
-                        sender_instance_id=message.meta.sender_instance_id,
+                        violations,
+                        _PermissionDeniedError("dlp_blocked"),
                     )
-                    raise _PermissionDeniedError("dlp_blocked")
 
                 if scan.action == ActionPolicy.REDACT and scan.redacted_payload:
                     message.data = scan.redacted_payload
@@ -708,6 +757,7 @@ class MASServer:
         )
 
     async def _route_message(self, message: EnvelopeMessage) -> None:
+        """Write message payload to the appropriate Redis stream."""
         assert self._redis is not None
         envelope_json = message.model_dump_json()
         fields = {"envelope": envelope_json}
@@ -811,6 +861,7 @@ class MASServer:
         outbound: asyncio.Queue[mas_pb2.ServerEvent],
         inflight: dict[str, _InflightDelivery],
     ) -> str:
+        """Reclaim idle pending messages for delivery."""
         assert self._redis is not None
 
         try:
@@ -856,6 +907,7 @@ class MASServer:
         entry_id: str,
         envelope_json: str,
     ) -> None:
+        """Send a single stream entry to the client."""
         delivery_id = uuid.uuid4().hex
         inflight[delivery_id] = _InflightDelivery(
             stream_name=stream_name,
@@ -875,18 +927,28 @@ class MASServer:
 
 
 class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
+    """gRPC servicer wiring to MASServer operations."""
+
     def __init__(self, server: MASServer):
+        """Initialize servicer with a MASServer."""
         self._server = server
+
+    async def _agent_id_or_abort(self, context: grpc_aio.ServicerContext) -> str | None:
+        """Resolve agent id or abort the RPC."""
+        try:
+            return _spiffe_agent_id(context)
+        except _RpcError as exc:
+            await context.abort(exc.status, exc.message)
+            return None
 
     async def Transport(
         self,
         request_iterator: AsyncIterator[mas_pb2.ClientEvent],
         context: grpc_aio.ServicerContext,
     ) -> AsyncIterator[mas_pb2.ServerEvent]:
-        try:
-            agent_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Handle bidirectional transport stream."""
+        agent_id = await self._agent_id_or_abort(context)
+        if agent_id is None:
             return
 
         # First message must be Hello with instance_id
@@ -941,10 +1003,9 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
     async def Send(
         self, request: mas_pb2.SendRequest, context: grpc_aio.ServicerContext
     ) -> mas_pb2.SendResponse:
-        try:
-            sender_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Handle one-way send requests."""
+        sender_id = await self._agent_id_or_abort(context)
+        if sender_id is None:
             return mas_pb2.SendResponse()
         sender_instance_id = request.instance_id
         try:
@@ -963,10 +1024,9 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
     async def Request(
         self, request: mas_pb2.RequestRequest, context: grpc_aio.ServicerContext
     ) -> mas_pb2.RequestResponse:
-        try:
-            sender_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Handle request-response messages."""
+        sender_id = await self._agent_id_or_abort(context)
+        if sender_id is None:
             return mas_pb2.RequestResponse()
         sender_instance_id = request.instance_id
         try:
@@ -988,10 +1048,9 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
     async def Reply(
         self, request: mas_pb2.ReplyRequest, context: grpc_aio.ServicerContext
     ) -> mas_pb2.ReplyResponse:
-        try:
-            sender_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Handle replies to pending requests."""
+        sender_id = await self._agent_id_or_abort(context)
+        if sender_id is None:
             return mas_pb2.ReplyResponse()
         sender_instance_id = request.instance_id
         try:
@@ -1010,10 +1069,9 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
     async def Discover(
         self, request: mas_pb2.DiscoverRequest, context: grpc_aio.ServicerContext
     ) -> mas_pb2.DiscoverResponse:
-        try:
-            agent_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Handle discovery requests."""
+        agent_id = await self._agent_id_or_abort(context)
+        if agent_id is None:
             return mas_pb2.DiscoverResponse()
         try:
             records = await self._server.discover(
@@ -1038,10 +1096,9 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
     async def GetState(
         self, request: mas_pb2.GetStateRequest, context: grpc_aio.ServicerContext
     ) -> mas_pb2.GetStateResponse:
-        try:
-            agent_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Return persisted state for the caller."""
+        agent_id = await self._agent_id_or_abort(context)
+        if agent_id is None:
             return mas_pb2.GetStateResponse()
         state = await self._server.get_state(agent_id=agent_id)
         return mas_pb2.GetStateResponse(state=state)
@@ -1049,10 +1106,9 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
     async def UpdateState(
         self, request: mas_pb2.UpdateStateRequest, context: grpc_aio.ServicerContext
     ) -> mas_pb2.UpdateStateResponse:
-        try:
-            agent_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Update persisted state for the caller."""
+        agent_id = await self._agent_id_or_abort(context)
+        if agent_id is None:
             return mas_pb2.UpdateStateResponse()
         await self._server.update_state(
             agent_id=agent_id, updates=dict(request.updates)
@@ -1062,10 +1118,9 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
     async def ResetState(
         self, request: mas_pb2.ResetStateRequest, context: grpc_aio.ServicerContext
     ) -> mas_pb2.ResetStateResponse:
-        try:
-            agent_id = _spiffe_agent_id(context)
-        except _RpcError as exc:
-            await context.abort(exc.status, exc.message)
+        """Reset persisted state for the caller."""
+        agent_id = await self._agent_id_or_abort(context)
+        if agent_id is None:
             return mas_pb2.ResetStateResponse()
         await self._server.reset_state(agent_id=agent_id)
         return mas_pb2.ResetStateResponse()
@@ -1077,6 +1132,7 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
         agent_id: str,
         instance_id: str,
     ) -> None:
+        """Consume inbound ACK/NACK events."""
         async for event in request_iterator:
             if event.HasField("ack"):
                 await self._server.handle_ack(
@@ -1095,6 +1151,7 @@ class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):
 
 
 def _parse_payload_json(data_json: str) -> dict[str, Any]:
+    """Parse payload JSON into a dictionary."""
     try:
         obj = json.loads(data_json) if data_json else {}
     except json.JSONDecodeError as exc:
@@ -1105,9 +1162,13 @@ def _parse_payload_json(data_json: str) -> dict[str, Any]:
 
 
 def _load_server_credentials(tls: TlsConfig) -> grpc.ServerCredentials:
-    server_cert = _read_file_bytes(tls.server_cert_path)
-    server_key = _read_file_bytes(tls.server_key_path)
-    client_ca = _read_file_bytes(tls.client_ca_path)
+    """Load TLS credentials for the gRPC server."""
+    with open(tls.server_cert_path, "rb") as f:
+        server_cert = f.read()
+    with open(tls.server_key_path, "rb") as f:
+        server_key = f.read()
+    with open(tls.client_ca_path, "rb") as f:
+        client_ca = f.read()
     return grpc.ssl_server_credentials(
         [(server_key, server_cert)],
         root_certificates=client_ca,
@@ -1115,12 +1176,8 @@ def _load_server_credentials(tls: TlsConfig) -> grpc.ServerCredentials:
     )
 
 
-def _read_file_bytes(path: str) -> bytes:
-    with open(path, "rb") as f:
-        return f.read()
-
-
 def _spiffe_agent_id(context: grpc_aio.ServicerContext) -> str:
+    """Extract agent ID from mTLS SPIFFE SAN."""
     auth_ctx = context.auth_context() or {}
     sans = auth_ctx.get("x509_subject_alternative_name")
     if not sans:
@@ -1150,32 +1207,50 @@ def _spiffe_agent_id(context: grpc_aio.ServicerContext) -> str:
 
 
 class _RpcError(Exception):
+    """Base exception that maps to gRPC status codes."""
+
     def __init__(self, status: grpc.StatusCode, message: str):
+        """Initialize error with gRPC status and message."""
         super().__init__(message)
         self.status = status
         self.message = message
 
 
 class _UnauthenticatedError(_RpcError):
+    """Unauthenticated gRPC error."""
+
     def __init__(self, message: str):
+        """Initialize unauthenticated error."""
         super().__init__(grpc.StatusCode.UNAUTHENTICATED, message)
 
 
 class _PermissionDeniedError(_RpcError):
+    """Permission denied gRPC error."""
+
     def __init__(self, message: str):
+        """Initialize permission denied error."""
         super().__init__(grpc.StatusCode.PERMISSION_DENIED, message)
 
 
 class _ResourceExhaustedError(_RpcError):
+    """Resource exhausted gRPC error."""
+
     def __init__(self, message: str):
+        """Initialize resource exhausted error."""
         super().__init__(grpc.StatusCode.RESOURCE_EXHAUSTED, message)
 
 
 class _InvalidArgumentError(_RpcError):
+    """Invalid argument gRPC error."""
+
     def __init__(self, message: str):
+        """Initialize invalid argument error."""
         super().__init__(grpc.StatusCode.INVALID_ARGUMENT, message)
 
 
 class _FailedPreconditionError(_RpcError):
+    """Failed precondition gRPC error."""
+
     def __init__(self, message: str):
+        """Initialize failed precondition error."""
         super().__init__(grpc.StatusCode.FAILED_PRECONDITION, message)

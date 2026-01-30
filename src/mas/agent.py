@@ -1,3 +1,5 @@
+"""Agent client implementation for MAS."""
+
 from __future__ import annotations
 
 import asyncio
@@ -36,6 +38,8 @@ MutableJSONMapping = MutableMapping[str, Any]
 
 @dataclass(frozen=True, slots=True)
 class TlsClientConfig:
+    """Client mTLS credential paths."""
+
     root_ca_path: str
     client_cert_path: str
     client_key_path: str
@@ -46,6 +50,8 @@ class Agent(Generic[StateType]):
 
     @dataclass(frozen=True, slots=True)
     class _HandlerSpec:
+        """Typed handler registration entry."""
+
         fn: Callable[..., Awaitable[None]]
         model: type[BaseModel] | None
 
@@ -58,6 +64,7 @@ class Agent(Generic[StateType]):
         tls: TlsClientConfig | None = None,
         state_model: type[StateType] | None = None,
     ) -> None:
+        """Initialize an Agent client."""
         self.id = agent_id
         self.instance_id = uuid.uuid4().hex[:8]
         self.capabilities = capabilities or []
@@ -80,6 +87,7 @@ class Agent(Generic[StateType]):
 
     @property
     def state(self) -> StateType:
+        """Return the current agent state after startup."""
         if self._state is None:
             raise RuntimeError(
                 "Agent not started. State is only available after calling start()."
@@ -87,15 +95,23 @@ class Agent(Generic[StateType]):
         return self._state
 
     async def start(self) -> None:
+        """Connect to the server and begin transport loop."""
         if self.tls is None:
             raise RuntimeError(
                 "TLS config required. Agents must connect via mTLS to MAS server."
             )
 
+        with open(self.tls.root_ca_path, "rb") as f:
+            root_certificates = f.read()
+        with open(self.tls.client_key_path, "rb") as f:
+            private_key = f.read()
+        with open(self.tls.client_cert_path, "rb") as f:
+            certificate_chain = f.read()
+
         creds = grpc.ssl_channel_credentials(
-            root_certificates=_read_file_bytes(self.tls.root_ca_path),
-            private_key=_read_file_bytes(self.tls.client_key_path),
-            certificate_chain=_read_file_bytes(self.tls.client_cert_path),
+            root_certificates=root_certificates,
+            private_key=private_key,
+            certificate_chain=certificate_chain,
         )
         channel = grpc_aio.secure_channel(self.server_addr, creds)
         self._channel = channel
@@ -114,6 +130,7 @@ class Agent(Generic[StateType]):
         )
 
     async def stop(self) -> None:
+        """Stop the transport loop and close the channel."""
         self._running = False
         await self.on_stop()
 
@@ -133,6 +150,7 @@ class Agent(Generic[StateType]):
         )
 
     async def wait_transport_ready(self, timeout: float | None = None) -> None:
+        """Wait until the server transport is ready."""
         if timeout is None:
             await self._transport_ready.wait()
         else:
@@ -141,6 +159,7 @@ class Agent(Generic[StateType]):
     async def send(
         self, target_id: str, message_type: str, data: Mapping[str, Any]
     ) -> None:
+        """Send a one-way message to another agent."""
         stub = self._require_stub()
         await stub.Send(
             mas_pb2.SendRequest(
@@ -158,6 +177,7 @@ class Agent(Generic[StateType]):
         data: Mapping[str, Any],
         timeout: float | None = None,
     ) -> AgentMessage:
+        """Send a request and await a reply."""
         stub = self._require_stub()
 
         timeout_ms = int(timeout * 1000) if timeout is not None else 0
@@ -190,6 +210,7 @@ class Agent(Generic[StateType]):
     async def send_reply_envelope(
         self, original: AgentMessage, message_type: str, payload: dict[str, Any]
     ) -> None:
+        """Send a reply for a previously received message."""
         if not original.meta.correlation_id:
             raise RuntimeError("Cannot reply: missing correlation_id")
         stub = self._require_stub()
@@ -205,6 +226,7 @@ class Agent(Generic[StateType]):
     async def discover(
         self, capabilities: list[str] | None = None
     ) -> list[dict[str, Any]]:
+        """Return matching agents with optional capability filters."""
         stub = self._require_stub()
         resp = await stub.Discover(
             mas_pb2.DiscoverRequest(capabilities=list(capabilities or []))
@@ -224,6 +246,7 @@ class Agent(Generic[StateType]):
         return records
 
     async def update_state(self, updates: Mapping[str, Any]) -> None:
+        """Update the remote state with provided fields."""
         stub = self._require_stub()
         current = self.state
 
@@ -246,6 +269,7 @@ class Agent(Generic[StateType]):
         await stub.UpdateState(mas_pb2.UpdateStateRequest(updates=redis_data))
 
     async def reset_state(self) -> None:
+        """Reset remote state to defaults."""
         stub = self._require_stub()
         await stub.ResetState(mas_pb2.ResetStateRequest())
         if self._state_model is None:
@@ -269,9 +293,11 @@ class Agent(Generic[StateType]):
     # --- Transport ---
 
     async def _transport_loop(self) -> None:
+        """Stream client events and handle server deliveries."""
         stub = self._require_stub()
 
         async def outgoing_iter() -> AsyncIterator[mas_pb2.ClientEvent]:
+            """Yield outbound events from the client queue."""
             while True:
                 event = await self._outgoing.get()
                 yield event
@@ -300,6 +326,7 @@ class Agent(Generic[StateType]):
             )
 
     async def _handle_delivery(self, delivery: mas_pb2.Delivery) -> None:
+        """Validate and dispatch a delivery message."""
         try:
             msg = AgentMessage.model_validate_json(delivery.envelope_json)
         except Exception as exc:
@@ -327,6 +354,7 @@ class Agent(Generic[StateType]):
     async def _handle_message_and_ack(
         self, delivery_id: str, msg: AgentMessage
     ) -> None:
+        """Run handlers and ACK/NACK as needed."""
         try:
             dispatched = await self._dispatch_typed(msg)
             if not dispatched:
@@ -350,6 +378,7 @@ class Agent(Generic[StateType]):
             )
 
     async def _send_ack(self, delivery_id: str) -> None:
+        """Send an ACK for a delivery."""
         try:
             await self._outgoing.put(
                 mas_pb2.ClientEvent(ack=mas_pb2.Ack(delivery_id=delivery_id))
@@ -360,6 +389,7 @@ class Agent(Generic[StateType]):
     async def _send_nack(
         self, delivery_id: str, *, reason: str, retryable: bool
     ) -> None:
+        """Send a NACK for a delivery."""
         try:
             await self._outgoing.put(
                 mas_pb2.ClientEvent(
@@ -374,6 +404,7 @@ class Agent(Generic[StateType]):
             pass
 
     async def _load_state(self) -> None:
+        """Load initial agent state from the server."""
         stub = self._require_stub()
         resp = await stub.GetState(mas_pb2.GetStateRequest())
         data = dict(resp.state)
@@ -393,6 +424,7 @@ class Agent(Generic[StateType]):
                 self._state = self._state_model()
 
     def _require_stub(self) -> mas_pb2_grpc.MasServiceStub:
+        """Return the gRPC stub if connected."""
         if not self._stub:
             raise RuntimeError("Agent not started")
         return self._stub
@@ -408,6 +440,7 @@ class Agent(Generic[StateType]):
         def decorator(
             fn: Callable[..., Awaitable[None]],
         ) -> Callable[..., Awaitable[None]]:
+            """Register a function as a handler for this agent class."""
             if not callable(fn):
                 raise TypeError("handler must be callable")
 
@@ -434,6 +467,7 @@ class Agent(Generic[StateType]):
         return decorator
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Collect handler registrations from subclass methods."""
         super().__init_subclass__(**kwargs)
         cls._handlers = {}
 
@@ -452,6 +486,7 @@ class Agent(Generic[StateType]):
                 pass
 
     async def _dispatch_typed(self, msg: AgentMessage) -> bool:
+        """Dispatch to a typed handler if registered."""
         registry: dict[str, Agent._HandlerSpec] = getattr(
             self.__class__, "_handlers", {}
         )
@@ -466,8 +501,3 @@ class Agent(Generic[StateType]):
         payload_model = spec.model.model_validate(msg.data)
         await spec.fn(self, msg, payload_model)
         return True
-
-
-def _read_file_bytes(path: str) -> bytes:
-    with open(path, "rb") as f:
-        return f.read()

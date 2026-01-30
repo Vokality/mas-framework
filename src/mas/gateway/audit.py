@@ -206,8 +206,9 @@ class AuditModule:
         Returns:
             List of audit entries
         """
-        stream = f"audit:by_sender:{sender_id}"
-        return await self._query_stream(stream, start_time, end_time, count)
+        return await self._query_indexed_stream(
+            "audit:by_sender", sender_id, start_time, end_time, count
+        )
 
     async def query_by_target(
         self,
@@ -228,8 +229,9 @@ class AuditModule:
         Returns:
             List of audit entries
         """
-        stream = f"audit:by_target:{target_id}"
-        return await self._query_stream(stream, start_time, end_time, count)
+        return await self._query_indexed_stream(
+            "audit:by_target", target_id, start_time, end_time, count
+        )
 
     async def query_security_events(
         self,
@@ -251,6 +253,27 @@ class AuditModule:
         return await self._query_stream(
             "audit:security_events", start_time, end_time, count
         )
+
+    async def _query_indexed_stream(
+        self,
+        prefix: str,
+        key: str,
+        start_time: Optional[float],
+        end_time: Optional[float],
+        count: int,
+    ) -> list[AuditRecord]:
+        """Query an index stream keyed by sender/target."""
+        stream = f"{prefix}:{key}"
+        return await self._query_stream(stream, start_time, end_time, count)
+
+    async def _query_messages(
+        self,
+        start_time: Optional[float],
+        end_time: Optional[float],
+        count: int,
+    ) -> list[AuditRecord]:
+        """Query the main audit message stream."""
+        return await self._query_stream("audit:messages", start_time, end_time, count)
 
     async def _query_stream(
         self,
@@ -360,12 +383,7 @@ class AuditModule:
             List of audit entries matching decision
         """
         # Query main stream and filter by decision
-        all_entries = await self._query_stream(
-            "audit:messages",
-            start_time,
-            end_time,
-            count * 2,  # Get more to filter
-        )
+        all_entries = await self._query_messages(start_time, end_time, count * 2)
 
         # Filter by decision
         filtered = [entry for entry in all_entries if entry.get("decision") == decision]
@@ -391,9 +409,7 @@ class AuditModule:
             List of audit entries with specified violation
         """
         # Query main stream and filter by violation
-        all_entries = await self._query_stream(
-            "audit:messages", start_time, end_time, count * 2
-        )
+        all_entries = await self._query_messages(start_time, end_time, count * 2)
 
         # Filter by violation type
         filtered: list[AuditRecord] = []
@@ -425,7 +441,7 @@ class AuditModule:
         Returns:
             List of all audit entries
         """
-        return await self._query_stream("audit:messages", start_time, end_time, count)
+        return await self._query_messages(start_time, end_time, count)
 
     async def export_to_csv(
         self,

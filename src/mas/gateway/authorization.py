@@ -211,9 +211,7 @@ class AuthorizationModule:
             agent_id: Agent ID
             target_id: Target ID to block
         """
-        blocked_key = f"agent:{agent_id}:blocked_targets"
-        await self.redis.sadd(blocked_key, target_id)
-        logger.info("Blocked target", extra={"agent_id": agent_id, "target": target_id})
+        await self._set_blocked(agent_id=agent_id, target_id=target_id, blocked=True)
 
     async def unblock_target(self, agent_id: str, target_id: str) -> None:
         """
@@ -223,11 +221,25 @@ class AuthorizationModule:
             agent_id: Agent ID
             target_id: Target ID to unblock
         """
+        await self._set_blocked(agent_id=agent_id, target_id=target_id, blocked=False)
+
+    async def _set_blocked(
+        self, *, agent_id: str, target_id: str, blocked: bool
+    ) -> None:
+        """Update blocked targets for an agent."""
         blocked_key = f"agent:{agent_id}:blocked_targets"
-        await self.redis.srem(blocked_key, target_id)
-        logger.info(
-            "Unblocked target", extra={"agent_id": agent_id, "target": target_id}
-        )
+        if blocked:
+            await self.redis.sadd(blocked_key, target_id)
+            logger.info(
+                "Blocked target",
+                extra={"agent_id": agent_id, "target": target_id},
+            )
+        else:
+            await self.redis.srem(blocked_key, target_id)
+            logger.info(
+                "Unblocked target",
+                extra={"agent_id": agent_id, "target": target_id},
+            )
 
     async def get_permissions(self, agent_id: str) -> dict[str, list[str]]:
         """

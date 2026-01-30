@@ -82,6 +82,62 @@ class CircuitBreakerModule:
         self.redis: AsyncRedisProtocol = redis
         self.config = config or CircuitBreakerConfig()
 
+    def _parse_circuit_data(
+        self, circuit_data: Mapping[str, str]
+    ) -> Tuple[CircuitState, int, int, Optional[float], Optional[float]]:
+        """Parse Redis circuit data into typed values."""
+        state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
+        failure_count = int(circuit_data.get("failure_count", 0))
+        success_count = int(circuit_data.get("success_count", 0))
+        last_failure_time_raw = circuit_data.get("last_failure_time")
+        opened_at_raw = circuit_data.get("opened_at")
+
+        last_failure_time = (
+            float(last_failure_time_raw) if last_failure_time_raw else None
+        )
+        opened_at = float(opened_at_raw) if opened_at_raw else None
+        return state, failure_count, success_count, last_failure_time, opened_at
+
+    def _maybe_transition_half_open(
+        self,
+        state: CircuitState,
+        opened_at: Optional[float],
+        success_count: int,
+        current_time: float,
+    ) -> Tuple[CircuitState, int, bool]:
+        """Transition OPEN to HALF_OPEN when timeout expires."""
+        if state == CircuitState.OPEN and opened_at:
+            if (current_time - opened_at) >= self.config.timeout_seconds:
+                return CircuitState.HALF_OPEN, 0, True
+        return state, success_count, False
+
+    def _next_failure_count(
+        self,
+        *,
+        has_data: bool,
+        last_failure_time: Optional[float],
+        current_time: float,
+        failure_count: int,
+    ) -> int:
+        """Compute the next failure count based on windowing."""
+        if not has_data:
+            return 1
+        if last_failure_time and (
+            current_time - last_failure_time > self.config.window_seconds
+        ):
+            return 1
+        return failure_count + 1
+
+    @staticmethod
+    def _default_status() -> CircuitStatus:
+        """Return default closed circuit status."""
+        return CircuitStatus(
+            state=CircuitState.CLOSED,
+            failure_count=0,
+            success_count=0,
+            allowed=True,
+        )
+
     async def check_circuit(self, target_id: str) -> CircuitStatus:
         """
         Check circuit breaker state for target agent.
@@ -97,40 +153,24 @@ class CircuitBreakerModule:
 
         if not circuit_data:
             # No circuit data, default to CLOSED
-            return CircuitStatus(
-                state=CircuitState.CLOSED,
-                failure_count=0,
-                success_count=0,
-                allowed=True,
-            )
+            return self._default_status()
 
-        state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
-        failure_count = int(circuit_data.get("failure_count", 0))
-        success_count = int(circuit_data.get("success_count", 0))
-        last_failure_time = (
-            float(circuit_data["last_failure_time"])
-            if "last_failure_time" in circuit_data
-            else None
-        )
-        opened_at = (
-            float(circuit_data["opened_at"])
-            if "opened_at" in circuit_data and circuit_data["opened_at"]
-            else None
+        state, failure_count, success_count, last_failure_time, opened_at = (
+            self._parse_circuit_data(circuit_data)
         )
 
         current_time = time.time()
 
         # State transitions
-        if state == CircuitState.OPEN:
-            # Check if timeout expired, move to HALF_OPEN
-            if opened_at and (current_time - opened_at) >= self.config.timeout_seconds:
-                state = CircuitState.HALF_OPEN
-                success_count = 0
-                await self._update_state(target_id, state, failure_count, success_count)
-                logger.info(
-                    f"Circuit breaker HALF_OPEN for {target_id} after timeout",
-                    extra={"target_id": target_id, "state": state},
-                )
+        state, success_count, transitioned = self._maybe_transition_half_open(
+            state, opened_at, success_count, current_time
+        )
+        if transitioned:
+            await self._update_state(target_id, state, failure_count, success_count)
+            logger.info(
+                f"Circuit breaker HALF_OPEN for {target_id} after timeout",
+                extra={"target_id": target_id, "state": state},
+            )
 
         # Determine if message is allowed
         allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
@@ -159,16 +199,11 @@ class CircuitBreakerModule:
 
         if not circuit_data:
             # No circuit data, initialize
-            return CircuitStatus(
-                state=CircuitState.CLOSED,
-                failure_count=0,
-                success_count=0,
-                allowed=True,
-            )
+            return self._default_status()
 
-        state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
-        failure_count = int(circuit_data.get("failure_count", 0))
-        success_count = int(circuit_data.get("success_count", 0))
+        state, failure_count, success_count, _last_failure_time, _opened_at = (
+            self._parse_circuit_data(circuit_data)
+        )
 
         if state == CircuitState.HALF_OPEN:
             success_count += 1
@@ -219,35 +254,19 @@ class CircuitBreakerModule:
 
         if not circuit_data:
             # No circuit data, default to CLOSED - no need to record
-            status = CircuitStatus(
-                state=CircuitState.CLOSED,
-                failure_count=0,
-                success_count=0,
-                allowed=True,
-            )
+            status = self._default_status()
             return status, status
 
-        state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
-        failure_count = int(circuit_data.get("failure_count", 0))
-        success_count = int(circuit_data.get("success_count", 0))
-        last_failure_time = (
-            float(circuit_data["last_failure_time"])
-            if "last_failure_time" in circuit_data
-            else None
-        )
-        opened_at = (
-            float(circuit_data["opened_at"])
-            if "opened_at" in circuit_data and circuit_data["opened_at"]
-            else None
+        state, failure_count, success_count, last_failure_time, opened_at = (
+            self._parse_circuit_data(circuit_data)
         )
 
         current_time = time.time()
 
         # State transitions for check
-        if state == CircuitState.OPEN:
-            if opened_at and (current_time - opened_at) >= self.config.timeout_seconds:
-                state = CircuitState.HALF_OPEN
-                success_count = 0
+        state, success_count, _transitioned = self._maybe_transition_half_open(
+            state, opened_at, success_count, current_time
+        )
 
         allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
 
@@ -306,6 +325,7 @@ class CircuitBreakerModule:
 
         current_time = time.time()
         opened_at: Optional[float] = None
+        has_data = bool(circuit_data)
 
         if not circuit_data:
             state = CircuitState.CLOSED
@@ -313,28 +333,14 @@ class CircuitBreakerModule:
             success_count = 0
             last_failure_time = None
         else:
-            state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
-            failure_count = int(circuit_data.get("failure_count", 0))
-            success_count = int(circuit_data.get("success_count", 0))
-            last_failure_time = (
-                float(circuit_data["last_failure_time"])
-                if "last_failure_time" in circuit_data
-                else None
-            )
-            opened_at = (
-                float(circuit_data["opened_at"])
-                if "opened_at" in circuit_data and circuit_data["opened_at"]
-                else None
+            state, failure_count, success_count, last_failure_time, opened_at = (
+                self._parse_circuit_data(circuit_data)
             )
 
             # State transition for check (OPEN -> HALF_OPEN after timeout)
-            if state == CircuitState.OPEN:
-                if (
-                    opened_at
-                    and (current_time - opened_at) >= self.config.timeout_seconds
-                ):
-                    state = CircuitState.HALF_OPEN
-                    success_count = 0
+            state, success_count, _transitioned = self._maybe_transition_half_open(
+                state, opened_at, success_count, current_time
+            )
 
         allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
 
@@ -348,15 +354,12 @@ class CircuitBreakerModule:
         )
 
         # Now record failure
-        if circuit_data:
-            # Check if failures are within window
-            if last_failure_time and (
-                current_time - last_failure_time > self.config.window_seconds
-            ):
-                failure_count = 1
-            else:
-                failure_count += 1
-        # else: failure_count already set to 1 above
+        failure_count = self._next_failure_count(
+            has_data=has_data,
+            last_failure_time=last_failure_time,
+            current_time=current_time,
+            failure_count=failure_count,
+        )
 
         # Check if we should open circuit
         if (
@@ -424,30 +427,26 @@ class CircuitBreakerModule:
 
         current_time = time.time()
         opened_at: Optional[float] = None
+        has_data = bool(circuit_data)
 
         if not circuit_data:
             # Initialize circuit data
             state = CircuitState.CLOSED
             failure_count = 1
             success_count = 0
+            last_failure_time = None
         else:
-            state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
-            failure_count = int(circuit_data.get("failure_count", 0))
-            success_count = int(circuit_data.get("success_count", 0))
-
-            # Check if failures are within window
-            last_failure_time = (
-                float(circuit_data["last_failure_time"])
-                if "last_failure_time" in circuit_data
-                else None
+            state, failure_count, success_count, last_failure_time, opened_at = (
+                self._parse_circuit_data(circuit_data)
             )
-            if last_failure_time and (
-                current_time - last_failure_time > self.config.window_seconds
-            ):
-                # Outside window, reset count
-                failure_count = 1
-            else:
-                failure_count += 1
+
+        # Check if failures are within window
+        failure_count = self._next_failure_count(
+            has_data=has_data,
+            last_failure_time=last_failure_time,
+            current_time=current_time,
+            failure_count=failure_count,
+        )
 
         # Check if we should open circuit
         if (
@@ -474,13 +473,7 @@ class CircuitBreakerModule:
                 extra={"target_id": target_id, "state": state, "reason": reason},
             )
         else:
-            opened_at = (
-                float(circuit_data["opened_at"])
-                if circuit_data
-                and "opened_at" in circuit_data
-                and circuit_data["opened_at"]
-                else None
-            )
+            opened_at = opened_at if has_data else None
 
         # Update circuit state
         await self.redis.hset(
@@ -632,6 +625,7 @@ class CircuitBreakerModule:
 
     @staticmethod
     def _normalize_hash(raw: Mapping[str, str] | None) -> dict[str, str]:
+        """Normalize Redis hash responses to a plain dict."""
         if not raw:
             return {}
         return dict(raw)

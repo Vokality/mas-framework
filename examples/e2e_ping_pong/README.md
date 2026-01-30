@@ -30,3 +30,10 @@ Messages and policy decisions are logged by the server into Redis Streams:
 redis-cli XLEN audit:messages
 redis-cli XRANGE audit:messages - + COUNT 10
 ```
+
+Or tail them via the MAS CLI:
+
+```bash
+uv run mas audit tail --last 10
+# or: uv run python -m mas audit tail --last 10
+```

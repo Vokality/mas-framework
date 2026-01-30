@@ -134,17 +134,30 @@ class GatewaySettings(BaseSettings):
         If config_file is provided or GATEWAY_CONFIG_FILE env var is set,
         load configuration from YAML file and merge with other sources.
         """
-        # Check for config file in environment
-        config_file = data.get("config_file") or os.getenv("GATEWAY_CONFIG_FILE")
+        merged = data.pop("_merged", False)
+        if merged:
+            super().__init__(**data)
+            return
 
-        # Load from YAML if config file specified
+        config_file = self._resolve_config_file(data)
         if config_file:
-            yaml_data = self._load_yaml(config_file)
-            # Merge YAML data with passed data (passed data takes precedence)
-            merged_data = {**yaml_data, **data}
+            merged_data = self._merge_yaml(config_file, data)
             super().__init__(**merged_data)
         else:
             super().__init__(**data)
+
+    @classmethod
+    def _resolve_config_file(cls, data: dict[str, Any]) -> Optional[str]:
+        """Resolve config file from parameters or environment."""
+        return data.get("config_file") or os.getenv("GATEWAY_CONFIG_FILE")
+
+    @classmethod
+    def _merge_yaml(cls, config_file: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Load YAML config and merge with explicit parameters."""
+        yaml_data = cls._load_yaml(config_file)
+        merged_data = {**yaml_data, **data}
+        merged_data.setdefault("config_file", config_file)
+        return merged_data
 
     @staticmethod
     def _load_yaml(file_path: str) -> dict[str, Any]:
@@ -184,7 +197,8 @@ class GatewaySettings(BaseSettings):
         Returns:
             GatewaySettings instance
         """
-        return cls(config_file=file_path)
+        merged = cls._merge_yaml(file_path, {})
+        return cls(_merged=True, **merged)
 
     def to_yaml(self, file_path: str) -> None:
         """

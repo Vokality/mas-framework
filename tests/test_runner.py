@@ -8,7 +8,7 @@ from typing import cast, override
 import pytest
 
 from mas import Agent
-from mas.runner import AgentRunner, AgentSpec, load_runner_settings
+from mas.runner import AgentRunner, AgentSpec, RunnerSettings
 
 
 class NoopAgent(Agent[dict[str, object]]):
@@ -88,7 +88,7 @@ def test_settings_loads_mas_yaml_from_parent(tmp_path, monkeypatch) -> None:
     nested.mkdir(parents=True)
     monkeypatch.chdir(nested)
 
-    settings = load_runner_settings()
+    settings = RunnerSettings()
     assert settings.config_file == str(config_path)
     assert len(settings.agents) == 1
     assert settings.agents[0].agent_id == "test_agent"
@@ -100,7 +100,7 @@ def test_settings_requires_mas_yaml(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(project_root)
 
     with pytest.raises(FileNotFoundError, match="mas.yaml not found"):
-        load_runner_settings()
+        RunnerSettings()
 
 
 def test_settings_loads_gateway_from_mas_yaml(tmp_path) -> None:
@@ -109,7 +109,7 @@ def test_settings_loads_gateway_from_mas_yaml(tmp_path) -> None:
     config_path = project_root / "mas.yaml"
     _write_mas_yaml(config_path, gateway_url="redis://custom:6379")
 
-    settings = load_runner_settings(config_file=str(config_path))
+    settings = RunnerSettings(config_file=str(config_path))
     assert settings.gateway["redis"]["url"] == "redis://custom:6379"
 
 
@@ -126,7 +126,7 @@ def test_load_agent_class_validation() -> None:
 
 @pytest.mark.asyncio
 async def test_runner_start_respects_instances() -> None:
-    settings = load_runner_settings(
+    settings = RunnerSettings(
         agents=[
             AgentSpec(
                 agent_id="noop",
@@ -151,7 +151,7 @@ async def test_runner_start_respects_instances() -> None:
 
 @pytest.mark.asyncio
 async def test_runner_rejects_reserved_kwargs() -> None:
-    settings = load_runner_settings(
+    settings = RunnerSettings(
         agents=[
             AgentSpec(
                 agent_id="noop",
@@ -174,7 +174,7 @@ async def test_runner_rejects_reserved_kwargs() -> None:
 @pytest.mark.asyncio
 async def test_runner_starts_and_stops_server(monkeypatch) -> None:
     monkeypatch.setattr("mas.runner.MASServer", FakeServer)
-    settings = load_runner_settings(
+    settings = RunnerSettings(
         agents=[
             AgentSpec(
                 agent_id="noop",
@@ -206,7 +206,7 @@ async def test_runner_passes_gateway_redis_to_server(monkeypatch, tmp_path) -> N
     config_path = project_root / "mas.yaml"
     _write_mas_yaml(config_path, gateway_url="redis://custom:6380")
 
-    settings = load_runner_settings(config_file=str(config_path))
+    settings = RunnerSettings(config_file=str(config_path))
     runner = AgentRunner(settings)
 
     await runner._start_server()

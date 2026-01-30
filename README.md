@@ -72,6 +72,13 @@ class EchoAgent(Agent[dict[str, object]]):
 uv run python -m mas
 ```
 
+5) Tail audit logs (optional)
+
+```bash
+uv run mas audit tail --last 10
+# or: uv run python -m mas audit tail --last 10
+```
+
 ## Example
 
 End-to-end mTLS + request/reply:
@@ -90,5 +97,5 @@ uv sync
 uv run ruff check .
 uv run ruff format .
 uv run pytest
-uvx ty check
+uv run ty check
 ```

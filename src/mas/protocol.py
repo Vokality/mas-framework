@@ -54,6 +54,7 @@ class EnvelopeMessage(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     def attach_agent(self, agent: "Agent[Any]") -> None:
+        """Attach an agent instance for replies."""
         self._agent = agent
 
     async def reply(self, message_type: MessageType, payload: dict[str, Any]) -> None:

@@ -1,7 +1,7 @@
 """MAS Framework - secure multi-agent runtime (gRPC + mTLS)."""
 
 from .agent import Agent, AgentMessage, TlsClientConfig
-from .runner import AgentRunner, RunnerSettings, load_runner_settings
+from .runner import AgentRunner, RunnerSettings
 from .server import MASServer, MASServerSettings, TlsConfig
 from .state import StateType
 from .protocol import EnvelopeMessage as Message, MessageType, MessageMeta
@@ -20,6 +20,5 @@ __all__ = [
     "TlsConfig",
     "AgentRunner",
     "RunnerSettings",
-    "load_runner_settings",
     "__version__",
 ]

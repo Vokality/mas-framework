@@ -1,3 +1,5 @@
+"""Logging helpers for MAS."""
+
 import logging
 
 LOGGER_FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

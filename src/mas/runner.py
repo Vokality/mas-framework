@@ -95,6 +95,8 @@ PermissionSpec = Annotated[
 
 
 class _RunnerSettingsInit(TypedDict, total=False):
+    """Init payload for RunnerSettings after YAML merge."""
+
     config_file: Optional[str]
     server_listen_addr: str
     tls_ca_path: str
@@ -149,11 +151,15 @@ class RunnerSettings(BaseSettings):
     )
 
     def __init__(self, **data: Any) -> None:
-        config_file = (
-            data.get("config_file")
-            or os.getenv("MAS_RUNNER_CONFIG_FILE")
-            or self._default_config_file()
-        )
+        """Load configuration from YAML, env, and explicit settings."""
+        config_file = data.get("config_file") or os.getenv("MAS_RUNNER_CONFIG_FILE")
+        if config_file is None:
+            start = Path.cwd()
+            for current in (start, *start.parents):
+                candidate = current / "mas.yaml"
+                if candidate.exists():
+                    config_file = str(candidate)
+                    break
 
         if config_file is None and "agents" not in data:
             raise FileNotFoundError(
@@ -162,7 +168,16 @@ class RunnerSettings(BaseSettings):
             )
 
         if config_file:
-            yaml_data = self._load_yaml(config_file)
+            path = Path(config_file)
+            if not path.exists():
+                raise FileNotFoundError(f"Config file not found: {config_file}")
+
+            with path.open("r") as f:
+                yaml_data = yaml.safe_load(f)
+
+            if yaml_data is None:
+                yaml_data = {}
+
             merged_data: dict[str, Any] = {
                 **yaml_data,
                 **data,
@@ -174,12 +189,14 @@ class RunnerSettings(BaseSettings):
             super().__init__(**cast(_RunnerSettingsInit, data))
 
     def _resolve_config_paths(self) -> None:
+        """Resolve relative TLS and agent paths from config base."""
         if not self.config_file:
             return
 
         base = Path(self.config_file).resolve().parent
 
         def resolve_path(value: str) -> str:
+            """Resolve path relative to config directory."""
             path = Path(value)
             if path.is_absolute():
                 return value
@@ -199,34 +216,12 @@ class RunnerSettings(BaseSettings):
             for spec in self.agents
         ]
 
-    @staticmethod
-    def _default_config_file() -> Optional[str]:
-        start = Path.cwd()
-        for current in [start, *start.parents]:
-            candidate = current / "mas.yaml"
-            if candidate.exists():
-                return str(candidate)
-        return None
-
-    @staticmethod
-    def _load_yaml(file_path: str) -> dict[str, Any]:
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {file_path}")
-
-        with path.open("r") as f:
-            data = yaml.safe_load(f)
-
-        if data is None:
-            return {}
-
-        return data
-
 
 class AgentRunner:
     """Start and supervise agent instances from RunnerSettings."""
 
     def __init__(self, settings: RunnerSettings) -> None:
+        """Initialize the runner with settings."""
         self._settings = settings
         self._agents: list[Agent[Any]] = []
         self._server: MASServer | None = None
@@ -234,6 +229,7 @@ class AgentRunner:
         self._ensure_import_base()
 
     def _ensure_import_base(self) -> None:
+        """Add config directory to sys.path for class loading."""
         if not self._settings.config_file:
             return
         base = str(Path(self._settings.config_file).resolve().parent)
@@ -266,6 +262,7 @@ class AgentRunner:
             self._shutdown_event.set()
 
     async def _start_agents(self) -> None:
+        """Instantiate and start configured agents."""
         server_addr = (
             self._server.bound_addr
             if self._server is not None
@@ -299,6 +296,7 @@ class AgentRunner:
             await agent.start()
 
     async def _start_server(self) -> None:
+        """Start the MAS server and configure agents."""
         gateway_settings = self._load_gateway_settings()
         agents: dict[str, AgentDefinition] = {}
         for spec in self._settings.agents:
@@ -324,6 +322,7 @@ class AgentRunner:
         self._server = server
 
     async def _stop_agents(self) -> None:
+        """Stop all running agents."""
         if not self._agents:
             return
 
@@ -334,6 +333,7 @@ class AgentRunner:
         self._agents.clear()
 
     async def _stop_server(self) -> None:
+        """Stop the MAS server."""
         if self._server is None:
             return
 
@@ -341,6 +341,7 @@ class AgentRunner:
         self._server = None
 
     async def _apply_permissions(self) -> None:
+        """Apply permission rules to the server authz module."""
         if not self._server or not self._settings.permissions:
             return
 
@@ -368,6 +369,7 @@ class AgentRunner:
                     await authz.add_permission(spec.sender, target)
 
     def _setup_signals(self) -> None:
+        """Install signal handlers for graceful shutdown."""
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
@@ -377,6 +379,7 @@ class AgentRunner:
 
     @staticmethod
     def _load_agent_class(class_path: str) -> type[Agent[Any]]:
+        """Load and validate an Agent subclass from import path."""
         if ":" not in class_path:
             raise ValueError(
                 f"Invalid class_path '{class_path}'. Use module:ClassName format."
@@ -395,22 +398,16 @@ class AgentRunner:
         return cast(type[Agent[Any]], target)
 
     def _load_gateway_settings(self) -> GatewaySettings:
+        """Build GatewaySettings from runner configuration."""
         gateway_data = dict(self._settings.gateway)
         return GatewaySettings(**gateway_data)
 
 
-def load_runner_settings(
-    config_file: Optional[str] = None, **overrides: Any
-) -> RunnerSettings:
-    """Load runner settings with optional overrides."""
-    if config_file:
-        overrides["config_file"] = config_file
-    return RunnerSettings(**overrides)
-
-
 async def main(config_file: Optional[str] = None) -> None:
     """Run agents defined by RunnerSettings."""
-    settings = load_runner_settings(config_file=config_file)
+    settings = (
+        RunnerSettings(config_file=config_file) if config_file else RunnerSettings()
+    )
     runner = AgentRunner(settings)
     try:
         await runner.run()
@@ -419,10 +416,5 @@ async def main(config_file: Optional[str] = None) -> None:
         raise SystemExit(1) from exc
 
 
-def run(config_file: Optional[str] = None) -> None:
-    """Sync entrypoint for the runner."""
-    asyncio.run(main(config_file=config_file))
-
-
 if __name__ == "__main__":
-    run()
+    asyncio.run(main())
