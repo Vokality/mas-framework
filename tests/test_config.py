@@ -7,12 +7,13 @@ import pytest
 import yaml
 
 from mas.gateway.config import (
-    GatewaySettings,
-    RedisSettings,
-    RateLimitSettings,
-    FeaturesSettings,
     CircuitBreakerSettings,
+    FeaturesSettings,
+    GatewaySettings,
+    RateLimitSettings,
+    RedisSettings,
     load_settings,
+    validate_gateway_config,
 )
 
 
@@ -148,6 +149,11 @@ class TestGatewaySettings:
 
         assert settings.redis.url == "redis://dict:6379"
         assert settings.rate_limit.per_minute == 150
+
+    def test_unknown_gateway_key_rejected(self):
+        """Test unknown gateway keys are rejected."""
+        with pytest.raises(ValueError, match="Unknown keys in gateway"):
+            validate_gateway_config({"unknown_setting": True})
 
 
 class TestYAMLConfiguration:

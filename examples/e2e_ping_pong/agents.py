@@ -72,7 +72,7 @@ class PingAgent(Agent[dict[str, object]]):
         print(f"[ping] started (instance={self.instance_id})")
 
         patient_lines = [
-            "Hi Doctor. I have had a cough for about a week and it is keeping me up at night.",
+            "Hi Doctor. I have had a cough for about a week and it is keeping me up at night. james@gmail.com",
             "It started after a cold. The cough is dry and my throat feels scratchy.",
             "No fever or chest pain. I get a little winded when I climb stairs, but nothing severe.",
             "I have been drinking tea and using lozenges. I have not taken any medicines yet.",

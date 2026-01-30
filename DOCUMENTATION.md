@@ -83,6 +83,8 @@ Supported settings:
 - `redis`: connection parameters used by the server.
 - `rate_limit`: per-agent message limits per minute/hour.
 - `features`: toggles for DLP, RBAC, circuit breaker.
+- `dlp`: custom DLP rules and policy overrides.
+- `audit`: optional JSONL audit file sink settings.
 - `circuit_breaker`: failure/success thresholds and timeout window.
 
 ## End-to-end Example

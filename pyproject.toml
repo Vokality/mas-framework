@@ -13,8 +13,8 @@ dependencies = [
     "pydantic>=2.12.3",
     "pydantic-settings>=2.0.0",
     "grpcio>=1.76.0",
-    "protobuf>=6.33.4",
-    "redis[hiredis]>=5.2.1",
+    "protobuf>=6.33.5",
+    "redis[hiredis]>=7.1.0",
     "pyyaml>=6.0",
 ]
 readme = "README.md"

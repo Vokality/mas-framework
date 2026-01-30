@@ -1,11 +1,13 @@
 """Audit Module for Gateway Service."""
 
+import asyncio
 import csv
 import hashlib
 import io
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -34,6 +36,59 @@ class AuditEntry(BaseModel):
     previous_hash: Optional[str] = None
 
 
+class AuditFileSink:
+    """Append-only audit file sink with rotation."""
+
+    def __init__(self, file_path: str, *, max_bytes: int, backup_count: int) -> None:
+        self._path = Path(file_path)
+        self._max_bytes = max_bytes
+        self._backup_count = backup_count
+        self._lock = asyncio.Lock()
+
+    @property
+    def path(self) -> str:
+        return str(self._path)
+
+    async def write_entry(self, entry: AuditEntry) -> None:
+        data = entry.model_dump()
+        data["violations"] = entry.violations
+        line = json.dumps(data, sort_keys=True) + "\n"
+        async with self._lock:
+            await asyncio.to_thread(self._rotate_and_write, line)
+
+    def _rotate_and_write(self, line: str) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        if self._should_rotate(line):
+            self._rotate_files()
+        with self._path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+
+    def _should_rotate(self, line: str) -> bool:
+        if self._max_bytes <= 0:
+            return False
+        if not self._path.exists():
+            return False
+        return self._path.stat().st_size + len(line.encode("utf-8")) > self._max_bytes
+
+    def _rotate_files(self) -> None:
+        if self._backup_count <= 0:
+            try:
+                self._path.unlink()
+            except FileNotFoundError:
+                pass
+            return
+
+        for index in range(self._backup_count - 1, 0, -1):
+            src = self._path.with_suffix(self._path.suffix + f".{index}")
+            dest = self._path.with_suffix(self._path.suffix + f".{index + 1}")
+            if src.exists():
+                src.replace(dest)
+
+        rotated = self._path.with_suffix(self._path.suffix + ".1")
+        if self._path.exists():
+            self._path.replace(rotated)
+
+
 class AuditModule:
     """
     Audit module for immutable message logging.
@@ -53,7 +108,9 @@ class AuditModule:
         audit:last_hash → Last hash for chain integrity
     """
 
-    def __init__(self, redis: AsyncRedisProtocol):
+    def __init__(
+        self, redis: AsyncRedisProtocol, *, file_sink: AuditFileSink | None = None
+    ):
         """
         Initialize audit module.
 
@@ -61,6 +118,7 @@ class AuditModule:
             redis: Redis connection
         """
         self.redis = redis
+        self._file_sink = file_sink
 
     async def log_message(
         self,
@@ -153,6 +211,16 @@ class AuditModule:
                 "stream_id": main_stream_id,
             },
         )
+
+        if self._file_sink is not None:
+            try:
+                await self._file_sink.write_entry(entry)
+            except Exception as exc:
+                logger.error(
+                    "Failed to write audit file",
+                    exc_info=exc,
+                    extra={"path": self._file_sink.path},
+                )
 
         return main_stream_id
 

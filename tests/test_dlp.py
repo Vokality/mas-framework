@@ -5,6 +5,7 @@ import pytest
 from mas.gateway.dlp import (
     ActionPolicy,
     DLPModule,
+    DlpRule,
     ViolationType,
 )
 
@@ -310,6 +311,29 @@ class TestDLPModule:
 
         result = await dlp_custom.scan(payload)
 
+        assert result.action == ActionPolicy.BLOCK
+
+    async def test_custom_rule_append(self, dlp: DLPModule) -> None:
+        """Test custom rule appended to defaults."""
+        rules = [
+            DlpRule.model_validate(
+                {
+                    "id": "internal_account_id",
+                    "type": "internal_account_id",
+                    "pattern": r"\bACCT-[A-Z0-9]{10}\b",
+                    "action": ActionPolicy.BLOCK,
+                    "severity": "high",
+                    "description": "Internal account IDs",
+                }
+            )
+        ]
+        dlp_custom = DLPModule(custom_rules=rules, merge_strategy="append")
+        payload = {"account": "ACCT-ABCDEF1234"}
+
+        result = await dlp_custom.scan(payload)
+
+        assert result.clean is False
+        assert any(v.violation_type == "internal_account_id" for v in result.violations)
         assert result.action == ActionPolicy.BLOCK
 
     async def test_most_restrictive_policy_wins(self, dlp: DLPModule) -> None:

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .agent import Agent, TlsClientConfig
-from .gateway.config import GatewaySettings
+from .gateway.config import GatewaySettings, validate_gateway_config
 from .server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
 
 logger = logging.getLogger(__name__)
@@ -178,6 +178,11 @@ class RunnerSettings(BaseSettings):
             if yaml_data is None:
                 yaml_data = {}
 
+            self._validate_yaml_keys(yaml_data)
+            gateway_raw = yaml_data.get("gateway")
+            if isinstance(gateway_raw, dict):
+                validate_gateway_config(gateway_raw)
+
             merged_data: dict[str, Any] = {
                 **yaml_data,
                 **data,
@@ -187,6 +192,13 @@ class RunnerSettings(BaseSettings):
             self._resolve_config_paths()
         else:
             super().__init__(**cast(_RunnerSettingsInit, data))
+
+    @classmethod
+    def _validate_yaml_keys(cls, yaml_data: dict[str, Any]) -> None:
+        allowed = set(cls.model_fields) - {"config_file"}
+        unknown = set(yaml_data) - allowed
+        if unknown:
+            raise ValueError("Unknown keys in mas.yaml: " + ", ".join(sorted(unknown)))
 
     def _resolve_config_paths(self) -> None:
         """Resolve relative TLS and agent paths from config base."""
@@ -400,6 +412,19 @@ class AgentRunner:
     def _load_gateway_settings(self) -> GatewaySettings:
         """Build GatewaySettings from runner configuration."""
         gateway_data = dict(self._settings.gateway)
+        if self._settings.config_file:
+            audit_raw = gateway_data.get("audit")
+            if isinstance(audit_raw, dict):
+                file_path = audit_raw.get("file_path")
+                if isinstance(file_path, str) and file_path:
+                    path = Path(file_path)
+                    if not path.is_absolute():
+                        base = Path(self._settings.config_file).resolve().parent
+                        audit_raw = {
+                            **audit_raw,
+                            "file_path": str((base / path).resolve()),
+                        }
+                        gateway_data["audit"] = audit_raw
         return GatewaySettings(**gateway_data)
 
 

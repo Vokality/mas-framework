@@ -6,8 +6,9 @@ import logging
 import re
 import time
 from enum import Enum
-from typing import Any, cast
-from pydantic import BaseModel
+from typing import Any, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class ActionPolicy(str, Enum):
 class Violation(BaseModel):
     """A DLP violation detected in content."""
 
-    violation_type: ViolationType
+    violation_type: str
     description: str
     matched_text: str  # The actual matched content (for logging/alerting)
     start_pos: int
@@ -66,6 +67,21 @@ class ScanResult(BaseModel):
     action: ActionPolicy
     redacted_payload: dict[str, Any] | None = None
     payload_hash: str  # Hash of original payload
+
+
+class DlpRule(BaseModel):
+    """Custom DLP rule definition."""
+
+    rule_id: str = Field(alias="id")
+    violation_type: str = Field(alias="type")
+    pattern: str
+    action: ActionPolicy
+    severity: str = "medium"
+    description: str = ""
+    enabled: bool = True
+    case_insensitive: bool = False
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DLPModule:
@@ -92,106 +108,155 @@ class DLPModule:
     """
 
     # Pattern definitions
-    PATTERNS = {
+    DEFAULT_PATTERNS: dict[str, list[re.Pattern[str]]] = {
         # PII Patterns
-        ViolationType.SSN: re.compile(
-            r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b"  # SSN: XXX-XX-XXXX
-        ),
-        ViolationType.EMAIL: re.compile(
-            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-        ),
-        ViolationType.PHONE: re.compile(
-            r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
-        ),
+        ViolationType.SSN.value: [re.compile(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")],
+        ViolationType.EMAIL.value: [
+            re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+        ],
+        ViolationType.PHONE.value: [
+            re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
+        ],
         # PHI Patterns
-        ViolationType.MRN: re.compile(
-            r"\b(?:MRN|Medical\s+Record)[:\s]+\d{6,10}\b", re.IGNORECASE
-        ),
-        ViolationType.HEALTH_INSURANCE: re.compile(
-            r"\b(?:Health\s+Insurance|Policy)[:\s#]+\d{8,12}\b", re.IGNORECASE
-        ),
-        ViolationType.ICD10: re.compile(
-            r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b"  # ICD-10 codes like A00.1
-        ),
+        ViolationType.MRN.value: [
+            re.compile(r"\b(?:MRN|Medical\s+Record)[:\s]+\d{6,10}\b", re.IGNORECASE)
+        ],
+        ViolationType.HEALTH_INSURANCE.value: [
+            re.compile(
+                r"\b(?:Health\s+Insurance|Policy)[:\s#]+\d{8,12}\b",
+                re.IGNORECASE,
+            )
+        ],
+        ViolationType.ICD10.value: [re.compile(r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b")],
         # PCI Patterns
-        ViolationType.CREDIT_CARD: re.compile(
-            # Visa, MC, Amex, Discover patterns
-            r"\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6(?:011|5\d{2}))"
-            r"[-\s]?(?:\d{4}[-\s]?){2}\d{3,4}\b"
-        ),
-        ViolationType.CVV: re.compile(r"\b(?:CVV|CVC)[:\s]+\d{3,4}\b", re.IGNORECASE),
+        ViolationType.CREDIT_CARD.value: [
+            re.compile(
+                r"\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6(?:011|5\d{2}))"
+                r"[-\s]?(?:\d{4}[-\s]?){2}\d{3,4}\b"
+            )
+        ],
+        ViolationType.CVV.value: [
+            re.compile(r"\b(?:CVV|CVC)[:\s]+\d{3,4}\b", re.IGNORECASE)
+        ],
         # Secrets Patterns
-        ViolationType.API_KEY: re.compile(
-            r"\b(?:api[_-]?key|apikey)[:\s=]+['\"]?([A-Za-z0-9_\-]{32,})['\"]?",
-            re.IGNORECASE,
-        ),
-        ViolationType.AWS_KEY: re.compile(
-            r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"  # AWS Access Key ID
-        ),
-        ViolationType.PRIVATE_KEY: re.compile(
-            r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----", re.IGNORECASE
-        ),
-        ViolationType.JWT: re.compile(
-            r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"
-        ),
-        ViolationType.PASSWORD: re.compile(
-            r"\b(?:password|passwd|pwd)[:\s=]+['\"]?([^\s'\"]{6,})['\"]?",
-            re.IGNORECASE,
-        ),
+        ViolationType.API_KEY.value: [
+            re.compile(
+                r"\b(?:api[_-]?key|apikey)[:\s=]+['\"]?([A-Za-z0-9_\-]{32,})['\"]?",
+                re.IGNORECASE,
+            )
+        ],
+        ViolationType.AWS_KEY.value: [re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")],
+        ViolationType.PRIVATE_KEY.value: [
+            re.compile(r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----", re.IGNORECASE)
+        ],
+        ViolationType.JWT.value: [
+            re.compile(r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
+        ],
+        ViolationType.PASSWORD.value: [
+            re.compile(
+                r"\b(?:password|passwd|pwd)[:\s=]+['\"]?([^\s'\"]{6,})['\"]?",
+                re.IGNORECASE,
+            )
+        ],
     }
 
     # Default action policies by violation type
-    DEFAULT_POLICIES = {
+    DEFAULT_POLICIES: dict[str, ActionPolicy] = {
         # PII - Redact by default
-        ViolationType.SSN: ActionPolicy.REDACT,
-        ViolationType.EMAIL: ActionPolicy.ALERT,
-        ViolationType.PHONE: ActionPolicy.ALERT,
-        ViolationType.ADDRESS: ActionPolicy.ALERT,
+        ViolationType.SSN.value: ActionPolicy.REDACT,
+        ViolationType.EMAIL.value: ActionPolicy.ALERT,
+        ViolationType.PHONE.value: ActionPolicy.ALERT,
+        ViolationType.ADDRESS.value: ActionPolicy.ALERT,
         # PHI - Block by default (HIPAA compliance)
-        ViolationType.MRN: ActionPolicy.BLOCK,
-        ViolationType.HEALTH_INSURANCE: ActionPolicy.BLOCK,
-        ViolationType.ICD10: ActionPolicy.ALERT,
+        ViolationType.MRN.value: ActionPolicy.BLOCK,
+        ViolationType.HEALTH_INSURANCE.value: ActionPolicy.BLOCK,
+        ViolationType.ICD10.value: ActionPolicy.ALERT,
         # PCI - Block by default (PCI-DSS compliance)
-        ViolationType.CREDIT_CARD: ActionPolicy.BLOCK,
-        ViolationType.CVV: ActionPolicy.BLOCK,
+        ViolationType.CREDIT_CARD.value: ActionPolicy.BLOCK,
+        ViolationType.CVV.value: ActionPolicy.BLOCK,
         # Secrets - Block by default (security)
-        ViolationType.API_KEY: ActionPolicy.BLOCK,
-        ViolationType.AWS_KEY: ActionPolicy.BLOCK,
-        ViolationType.PRIVATE_KEY: ActionPolicy.BLOCK,
-        ViolationType.JWT: ActionPolicy.BLOCK,
-        ViolationType.PASSWORD: ActionPolicy.BLOCK,
+        ViolationType.API_KEY.value: ActionPolicy.BLOCK,
+        ViolationType.AWS_KEY.value: ActionPolicy.BLOCK,
+        ViolationType.PRIVATE_KEY.value: ActionPolicy.BLOCK,
+        ViolationType.JWT.value: ActionPolicy.BLOCK,
+        ViolationType.PASSWORD.value: ActionPolicy.BLOCK,
     }
 
     # Severity levels by violation type
-    SEVERITY_LEVELS = {
-        ViolationType.SSN: "high",
-        ViolationType.EMAIL: "low",
-        ViolationType.PHONE: "low",
-        ViolationType.ADDRESS: "medium",
-        ViolationType.MRN: "critical",
-        ViolationType.HEALTH_INSURANCE: "critical",
-        ViolationType.ICD10: "medium",
-        ViolationType.CREDIT_CARD: "critical",
-        ViolationType.CVV: "critical",
-        ViolationType.API_KEY: "critical",
-        ViolationType.AWS_KEY: "critical",
-        ViolationType.PRIVATE_KEY: "critical",
-        ViolationType.JWT: "high",
-        ViolationType.PASSWORD: "critical",
+    SEVERITY_LEVELS: dict[str, str] = {
+        ViolationType.SSN.value: "high",
+        ViolationType.EMAIL.value: "low",
+        ViolationType.PHONE.value: "low",
+        ViolationType.ADDRESS.value: "medium",
+        ViolationType.MRN.value: "critical",
+        ViolationType.HEALTH_INSURANCE.value: "critical",
+        ViolationType.ICD10.value: "medium",
+        ViolationType.CREDIT_CARD.value: "critical",
+        ViolationType.CVV.value: "critical",
+        ViolationType.API_KEY.value: "critical",
+        ViolationType.AWS_KEY.value: "critical",
+        ViolationType.PRIVATE_KEY.value: "critical",
+        ViolationType.JWT.value: "high",
+        ViolationType.PASSWORD.value: "critical",
     }
 
     def __init__(
-        self, custom_policies: dict[ViolationType, ActionPolicy] | None = None
+        self,
+        custom_policies: dict[str | ViolationType, ActionPolicy] | None = None,
+        custom_rules: list[DlpRule] | None = None,
+        merge_strategy: Literal["append", "replace"] = "append",
+        disable_defaults: list[str | ViolationType] | None = None,
     ):
         """
         Initialize DLP module.
 
         Args:
             custom_policies: Override default action policies per violation type
+            custom_rules: Additional regex rules to scan for
+            merge_strategy: Append to or replace default rules
+            disable_defaults: Default rule types to disable
         """
-        self.policies = {**self.DEFAULT_POLICIES}
+        if merge_strategy not in {"append", "replace"}:
+            raise ValueError("merge_strategy must be 'append' or 'replace'")
+
+        disabled = {
+            self._normalize_violation_type(value) for value in (disable_defaults or [])
+        }
+
+        if merge_strategy == "append":
+            self.patterns = {
+                key: list(patterns)
+                for key, patterns in self.DEFAULT_PATTERNS.items()
+                if key not in disabled
+            }
+            self.policies = {
+                key: policy
+                for key, policy in self.DEFAULT_POLICIES.items()
+                if key not in disabled
+            }
+            self.severity_levels = {
+                key: severity
+                for key, severity in self.SEVERITY_LEVELS.items()
+                if key not in disabled
+            }
+        else:
+            self.patterns = {}
+            self.policies = {}
+            self.severity_levels = {}
+
+        for rule in custom_rules or []:
+            if not rule.enabled:
+                continue
+            violation_type = self._normalize_violation_type(rule.violation_type)
+            pattern = self._compile_pattern(rule.pattern, rule.case_insensitive)
+            self.patterns.setdefault(violation_type, []).append(pattern)
+            self.policies[violation_type] = rule.action
+            self.severity_levels[violation_type] = rule.severity
+
         if custom_policies:
-            self.policies.update(custom_policies)
+            for violation_type, policy in custom_policies.items():
+                normalized = self._normalize_violation_type(violation_type)
+                self.policies[normalized] = policy
 
     async def scan(self, payload: dict[str, Any]) -> ScanResult:
         """
@@ -261,24 +326,25 @@ class DLPModule:
         """
         violations: list[Violation] = []
 
-        for violation_type, pattern in self.PATTERNS.items():
-            for match in pattern.finditer(text):
-                # Additional validation for credit cards (Luhn algorithm)
-                if violation_type == ViolationType.CREDIT_CARD:
-                    card_number = re.sub(r"[-\s]", "", match.group(0))
-                    if not self._validate_luhn(card_number):
-                        continue
+        for violation_type, patterns in self.patterns.items():
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    # Additional validation for credit cards (Luhn algorithm)
+                    if violation_type == ViolationType.CREDIT_CARD.value:
+                        card_number = re.sub(r"[-\s]", "", match.group(0))
+                        if not self._validate_luhn(card_number):
+                            continue
 
-                violations.append(
-                    Violation(
-                        violation_type=violation_type,
-                        description=self._get_violation_description(violation_type),
-                        matched_text=match.group(0),
-                        start_pos=match.start(),
-                        end_pos=match.end(),
-                        severity=self.SEVERITY_LEVELS.get(violation_type, "medium"),
+                    violations.append(
+                        Violation(
+                            violation_type=violation_type,
+                            description=self._get_violation_description(violation_type),
+                            matched_text=match.group(0),
+                            start_pos=match.start(),
+                            end_pos=match.end(),
+                            severity=self.severity_levels.get(violation_type, "medium"),
+                        )
                     )
-                )
 
         return violations
 
@@ -416,7 +482,7 @@ class DLPModule:
         else:
             return obj
 
-    def _get_redaction_mask(self, violation_type: ViolationType, text: str) -> str:
+    def _get_redaction_mask(self, violation_type: str, text: str) -> str:
         """
         Get redaction mask for violation type.
 
@@ -428,27 +494,27 @@ class DLPModule:
             Redacted/masked text
         """
         # Different masking strategies by type
-        if violation_type == ViolationType.SSN:
+        if violation_type == ViolationType.SSN.value:
             # Show last 4 digits: XXX-XX-1234
             if len(text) >= 4:
                 return "XXX-XX-" + text[-4:]
             return "XXX-XX-XXXX"
 
-        elif violation_type == ViolationType.CREDIT_CARD:
+        elif violation_type == ViolationType.CREDIT_CARD.value:
             # Show last 4 digits: **** **** **** 1234
             digits = re.sub(r"[-\s]", "", text)
             if len(digits) >= 4:
                 return "**** **** **** " + digits[-4:]
             return "**** **** **** ****"
 
-        elif violation_type == ViolationType.EMAIL:
+        elif violation_type == ViolationType.EMAIL.value:
             # Mask local part: r***@example.com
             if "@" in text:
                 local, domain = text.split("@", 1)
                 return f"{local[0]}***@{domain}"
             return "[REDACTED EMAIL]"
 
-        elif violation_type == ViolationType.PHONE:
+        elif violation_type == ViolationType.PHONE.value:
             # Show last 4 digits: (XXX) XXX-1234
             digits = re.sub(r"[^\d]", "", text)
             if len(digits) >= 4:
@@ -457,9 +523,9 @@ class DLPModule:
 
         else:
             # Generic redaction
-            return f"[REDACTED {violation_type.value.upper()}]"
+            return f"[REDACTED {violation_type.upper()}]"
 
-    def _get_violation_description(self, violation_type: ViolationType) -> str:
+    def _get_violation_description(self, violation_type: str) -> str:
         """
         Get human-readable description of violation type.
 
@@ -470,19 +536,30 @@ class DLPModule:
             Description string
         """
         descriptions = {
-            ViolationType.SSN: "Social Security Number detected",
-            ViolationType.EMAIL: "Email address detected",
-            ViolationType.PHONE: "Phone number detected",
-            ViolationType.ADDRESS: "Physical address detected",
-            ViolationType.MRN: "Medical Record Number detected",
-            ViolationType.HEALTH_INSURANCE: "Health insurance number detected",
-            ViolationType.ICD10: "ICD-10 diagnosis code detected",
-            ViolationType.CREDIT_CARD: "Credit card number detected",
-            ViolationType.CVV: "CVV code detected",
-            ViolationType.API_KEY: "API key detected",
-            ViolationType.AWS_KEY: "AWS access key detected",
-            ViolationType.PRIVATE_KEY: "Private key detected",
-            ViolationType.JWT: "JWT token detected",
-            ViolationType.PASSWORD: "Password detected",
+            ViolationType.SSN.value: "Social Security Number detected",
+            ViolationType.EMAIL.value: "Email address detected",
+            ViolationType.PHONE.value: "Phone number detected",
+            ViolationType.ADDRESS.value: "Physical address detected",
+            ViolationType.MRN.value: "Medical Record Number detected",
+            ViolationType.HEALTH_INSURANCE.value: "Health insurance number detected",
+            ViolationType.ICD10.value: "ICD-10 diagnosis code detected",
+            ViolationType.CREDIT_CARD.value: "Credit card number detected",
+            ViolationType.CVV.value: "CVV code detected",
+            ViolationType.API_KEY.value: "API key detected",
+            ViolationType.AWS_KEY.value: "AWS access key detected",
+            ViolationType.PRIVATE_KEY.value: "Private key detected",
+            ViolationType.JWT.value: "JWT token detected",
+            ViolationType.PASSWORD.value: "Password detected",
         }
-        return descriptions.get(violation_type, f"Violation: {violation_type.value}")
+        return descriptions.get(violation_type, f"Violation: {violation_type}")
+
+    @staticmethod
+    def _normalize_violation_type(value: str | ViolationType) -> str:
+        if isinstance(value, ViolationType):
+            return value.value
+        return value
+
+    @staticmethod
+    def _compile_pattern(pattern: str, case_insensitive: bool) -> re.Pattern[str]:
+        flags = re.IGNORECASE if case_insensitive else 0
+        return re.compile(pattern, flags)

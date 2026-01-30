@@ -18,6 +18,24 @@ gateway:
     dlp: true
     rbac: false
     circuit_breaker: true
+  dlp:
+    merge_strategy: append
+    disable_defaults: []
+    policy_overrides:
+      email: redact
+    rules:
+      - id: internal_account_id
+        type: internal_account_id
+        pattern: "\\bACCT-[A-Z0-9]{10}\\b"
+        action: block
+        severity: high
+        description: Internal account IDs
+        enabled: true
+        case_insensitive: false
+  audit:
+    file_path: audit.log
+    max_bytes: 10000000
+    backup_count: 5
   circuit_breaker:
     failure_threshold: 5
     success_threshold: 2

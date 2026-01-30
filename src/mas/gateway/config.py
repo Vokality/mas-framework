@@ -2,11 +2,13 @@
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .dlp import ActionPolicy, DlpRule
 
 
 class CircuitBreakerSettings(BaseSettings):
@@ -73,6 +75,50 @@ class FeaturesSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GATEWAY_FEATURES_")
 
 
+class DlpSettings(BaseSettings):
+    """DLP configuration settings."""
+
+    merge_strategy: Literal["append", "replace"] = Field(
+        default="append",
+        description="How to combine default and custom DLP rules",
+    )
+    disable_defaults: list[str] = Field(
+        default_factory=list,
+        description="Default rule types to disable",
+    )
+    policy_overrides: dict[str, ActionPolicy] = Field(
+        default_factory=dict,
+        description="Override action policies per violation type",
+    )
+    rules: list[DlpRule] = Field(
+        default_factory=list,
+        description="Additional DLP rules",
+    )
+
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_DLP_")
+
+
+class AuditSettings(BaseSettings):
+    """Audit log configuration settings."""
+
+    file_path: Optional[str] = Field(
+        default=None,
+        description="Optional JSONL audit log path",
+    )
+    max_bytes: int = Field(
+        default=10_000_000,
+        ge=1,
+        description="Max audit file size before rotation",
+    )
+    backup_count: int = Field(
+        default=5,
+        ge=0,
+        description="Number of rotated audit files to keep",
+    )
+
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_AUDIT_")
+
+
 class GatewaySettings(BaseSettings):
     """
     Gateway service configuration.
@@ -114,6 +160,8 @@ class GatewaySettings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     features: FeaturesSettings = Field(default_factory=FeaturesSettings)
+    dlp: DlpSettings = Field(default_factory=DlpSettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
     circuit_breaker: CircuitBreakerSettings = Field(
         default_factory=CircuitBreakerSettings
     )
@@ -183,6 +231,9 @@ class GatewaySettings(BaseSettings):
 
         if data is None:
             return {}
+
+        if isinstance(data, dict):
+            validate_gateway_config(data)
 
         return data
 
@@ -276,3 +327,38 @@ def load_settings(
         overrides["config_file"] = config_file
 
     return GatewaySettings(**overrides)
+
+
+def validate_gateway_config(data: dict[str, Any]) -> None:
+    """Validate gateway config keys against known settings."""
+
+    def validate_keys(value: dict[str, Any], allowed: set[str], path: str) -> None:
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"Unknown keys in {path}: {', '.join(sorted(unknown))}")
+
+    gateway_keys = set(GatewaySettings.model_fields) - {"config_file"}
+    validate_keys(data, gateway_keys, "gateway")
+
+    if isinstance(data.get("redis"), dict):
+        validate_keys(data["redis"], set(RedisSettings.model_fields), "gateway.redis")
+    if isinstance(data.get("rate_limit"), dict):
+        validate_keys(
+            data["rate_limit"],
+            set(RateLimitSettings.model_fields),
+            "gateway.rate_limit",
+        )
+    if isinstance(data.get("features"), dict):
+        validate_keys(
+            data["features"], set(FeaturesSettings.model_fields), "gateway.features"
+        )
+    if isinstance(data.get("dlp"), dict):
+        validate_keys(data["dlp"], set(DlpSettings.model_fields), "gateway.dlp")
+    if isinstance(data.get("audit"), dict):
+        validate_keys(data["audit"], set(AuditSettings.model_fields), "gateway.audit")
+    if isinstance(data.get("circuit_breaker"), dict):
+        validate_keys(
+            data["circuit_breaker"],
+            set(CircuitBreakerSettings.model_fields),
+            "gateway.circuit_breaker",
+        )

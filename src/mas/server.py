@@ -17,7 +17,7 @@ import grpc
 import grpc.aio as grpc_aio
 
 from ._proto.v1 import mas_pb2, mas_pb2_grpc
-from .gateway.audit import AuditModule
+from .gateway.audit import AuditFileSink, AuditModule
 from .gateway.authorization import AuthorizationModule
 from .gateway.circuit_breaker import CircuitBreakerConfig, CircuitBreakerModule
 from .gateway.config import GatewaySettings, RedisSettings
@@ -127,7 +127,15 @@ class MASServer:
         self._redis = redis_conn
 
         # Core modules
-        self._audit = AuditModule(redis_conn)
+        audit_settings = self._gateway_settings.audit
+        file_sink: AuditFileSink | None = None
+        if audit_settings.file_path:
+            file_sink = AuditFileSink(
+                audit_settings.file_path,
+                max_bytes=audit_settings.max_bytes,
+                backup_count=audit_settings.backup_count,
+            )
+        self._audit = AuditModule(redis_conn, file_sink=file_sink)
         self._authz = AuthorizationModule(
             redis_conn, enable_rbac=self._gateway_settings.features.rbac
         )
@@ -138,7 +146,13 @@ class MASServer:
         )
 
         if self._gateway_settings.features.dlp:
-            self._dlp = DLPModule()
+            dlp_settings = self._gateway_settings.dlp
+            self._dlp = DLPModule(
+                custom_policies=dlp_settings.policy_overrides,
+                custom_rules=dlp_settings.rules,
+                merge_strategy=dlp_settings.merge_strategy,
+                disable_defaults=dlp_settings.disable_defaults,
+            )
 
         if self._gateway_settings.features.circuit_breaker:
             cb_config = CircuitBreakerConfig(
@@ -723,11 +737,12 @@ class MASServer:
                 )
 
         # DLP
+        decision = "ALLOWED"
         violations: list[str] = []
         if self._dlp:
             scan = await self._dlp.scan(message.data)
             if not scan.clean:
-                violations.extend([v.violation_type.value for v in scan.violations])
+                violations.extend([v.violation_type for v in scan.violations])
 
                 if scan.action == ActionPolicy.BLOCK:
                     await log_and_raise(
@@ -735,6 +750,13 @@ class MASServer:
                         violations,
                         _PermissionDeniedError("dlp_blocked"),
                     )
+
+                if scan.action == ActionPolicy.ALERT:
+                    decision = "ALERT"
+                elif scan.action == ActionPolicy.REDACT:
+                    decision = "DLP_REDACTED"
+                elif scan.action == ActionPolicy.ENCRYPT:
+                    decision = "DLP_ENCRYPTED"
 
                 if scan.action == ActionPolicy.REDACT and scan.redacted_payload:
                     message.data = scan.redacted_payload
@@ -747,7 +769,7 @@ class MASServer:
             message.message_id,
             message.sender_id,
             message.target_id,
-            "ALLOWED",
+            decision,
             latency_ms,
             message.data,
             violations=violations,
@@ -815,6 +837,8 @@ class MASServer:
                             group,
                             consumer,
                             claim_start_ids[stream_name],
+                            agent_id=agent_id,
+                            instance_id=instance_id,
                             outbound=outbound,
                             inflight=inflight,
                         )
@@ -841,6 +865,8 @@ class MASServer:
                             continue
 
                         await self._deliver_entry(
+                            agent_id=agent_id,
+                            instance_id=instance_id,
                             outbound=outbound,
                             inflight=inflight,
                             stream_name=stream_name,
@@ -858,6 +884,8 @@ class MASServer:
         consumer: str,
         start_id: str,
         *,
+        agent_id: str,
+        instance_id: str,
         outbound: asyncio.Queue[mas_pb2.ServerEvent],
         inflight: dict[str, _InflightDelivery],
     ) -> str:
@@ -887,6 +915,8 @@ class MASServer:
 
             # Deliver reclaimed pending messages as normal.
             await self._deliver_entry(
+                agent_id=agent_id,
+                instance_id=instance_id,
                 outbound=outbound,
                 inflight=inflight,
                 stream_name=stream_name,
@@ -900,6 +930,8 @@ class MASServer:
     async def _deliver_entry(
         self,
         *,
+        agent_id: str,
+        instance_id: str,
         outbound: asyncio.Queue[mas_pb2.ServerEvent],
         inflight: dict[str, _InflightDelivery],
         stream_name: str,
@@ -909,6 +941,35 @@ class MASServer:
     ) -> None:
         """Send a single stream entry to the client."""
         delivery_id = uuid.uuid4().hex
+        event = mas_pb2.ServerEvent(
+            delivery=mas_pb2.Delivery(
+                delivery_id=delivery_id,
+                envelope_json=envelope_json,
+            )
+        )
+        dropped = self._drop_oldest_outbound(outbound, inflight)
+        if dropped:
+            logger.warning(
+                "Outbound queue full; dropped oldest deliveries",
+                extra={
+                    "agent_id": agent_id,
+                    "instance_id": instance_id,
+                    "dropped": dropped,
+                },
+            )
+        try:
+            outbound.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.warning(
+                "Outbound queue full; dropping new delivery",
+                extra={
+                    "agent_id": agent_id,
+                    "instance_id": instance_id,
+                    "delivery_id": delivery_id,
+                },
+            )
+            return
+
         inflight[delivery_id] = _InflightDelivery(
             stream_name=stream_name,
             group=group,
@@ -916,14 +977,27 @@ class MASServer:
             envelope_json=envelope_json,
             received_at=time.time(),
         )
-        await outbound.put(
-            mas_pb2.ServerEvent(
-                delivery=mas_pb2.Delivery(
-                    delivery_id=delivery_id,
-                    envelope_json=envelope_json,
-                )
-            )
-        )
+
+    @staticmethod
+    def _drop_oldest_outbound(
+        outbound: asyncio.Queue[mas_pb2.ServerEvent],
+        inflight: dict[str, _InflightDelivery],
+    ) -> int:
+        """Drop oldest outbound events to make room."""
+        if outbound.maxsize <= 0 or not outbound.full():
+            return 0
+
+        dropped = 0
+        while outbound.full():
+            try:
+                event = outbound.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            dropped += 1
+            if event.HasField("delivery"):
+                delivery_id = event.delivery.delivery_id
+                inflight.pop(delivery_id, None)
+        return dropped
 
 
 class _MasGrpcServicer(mas_pb2_grpc.MasServiceServicer):

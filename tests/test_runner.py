@@ -113,6 +113,33 @@ def test_settings_loads_gateway_from_mas_yaml(tmp_path) -> None:
     assert settings.gateway["redis"]["url"] == "redis://custom:6379"
 
 
+def test_settings_rejects_unknown_keys(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    config_path = project_root / "mas.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "tls_ca_path: tests/certs/ca.pem",
+                "tls_server_cert_path: tests/certs/server.pem",
+                "tls_server_key_path: tests/certs/server.key",
+                "unknown_key: true",
+                "agents:",
+                "  - agent_id: test_agent",
+                "    class_path: tests.test_runner:NoopAgent",
+                "    instances: 1",
+                "    tls_cert_path: tests/certs/sender.pem",
+                "    tls_key_path: tests/certs/sender.key",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Unknown keys in mas.yaml"):
+        RunnerSettings(config_file=str(config_path))
+
+
 def test_load_agent_class_validation() -> None:
     with pytest.raises(ValueError, match="module:ClassName"):
         AgentRunner._load_agent_class("tests.test_runner.NoopAgent")

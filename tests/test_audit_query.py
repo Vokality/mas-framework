@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+from mas.gateway.audit import AuditFileSink
+
 from mas.gateway.audit import AuditModule
 
 # Use anyio for async test support
@@ -148,6 +150,39 @@ class TestAuditQueryByViolation:
         results = await audit_module.query_by_violation("PHI_MRN")
 
         assert len(results) == 0
+
+
+class TestAuditFileSink:
+    """Test audit file sink behavior."""
+
+    async def test_audit_file_written(self, redis, tmp_path):
+        file_path = tmp_path / "audit.log"
+        sink = AuditFileSink(str(file_path), max_bytes=200, backup_count=1)
+        audit_module = AuditModule(redis, file_sink=sink)
+
+        await audit_module.log_message(
+            "msg-1",
+            "agent-a",
+            "agent-b",
+            "ALLOWED",
+            10.0,
+            {"test": "data"},
+        )
+        await audit_module.log_message(
+            "msg-2",
+            "agent-a",
+            "agent-b",
+            "ALLOWED",
+            10.0,
+            {"test": "data"},
+        )
+
+        rotated = file_path.with_suffix(file_path.suffix + ".1")
+        assert file_path.exists() or rotated.exists()
+
+        target = file_path if file_path.exists() else rotated
+        content = target.read_text(encoding="utf-8")
+        assert '"decision"' in content
 
 
 class TestAuditQueryAll:
