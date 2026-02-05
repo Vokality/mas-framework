@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 
 from ..protocol import EnvelopeMessage
 from ..redis_types import AsyncRedisProtocol
+
+logger = logging.getLogger(__name__)
 
 
 class MessageRouter:
@@ -43,6 +46,11 @@ class MessageRouter:
         try:
             msg = EnvelopeMessage.model_validate_json(envelope_json)
         except Exception:
+            logger.debug(
+                "Failed to parse envelope for DLQ write",
+                exc_info=True,
+                extra={"reason": reason},
+            )
             return
 
         envelope_hash = hashlib.sha256(envelope_json.encode()).hexdigest()
@@ -61,4 +69,11 @@ class MessageRouter:
         try:
             await self._redis.xadd("dlq:messages", fields)
         except Exception:
-            pass
+            logger.warning(
+                "Failed to write message to DLQ stream",
+                exc_info=True,
+                extra={
+                    "message_id": msg.message_id,
+                    "reason": reason,
+                },
+            )

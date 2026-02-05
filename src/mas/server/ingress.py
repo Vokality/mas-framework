@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from math import ceil
@@ -13,6 +14,8 @@ from ..redis_types import AsyncRedisProtocol
 from .errors import FailedPreconditionError, InvalidArgumentError
 from .policy import PolicyPipeline
 from .sessions import SessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class IngressService:
@@ -154,7 +157,14 @@ class IngressService:
             try:
                 await self._redis.delete(pending_key)
             except Exception:
-                pass
+                logger.debug(
+                    "Failed to delete expired pending request",
+                    exc_info=True,
+                    extra={
+                        "correlation_id": correlation_id,
+                        "pending_key": pending_key,
+                    },
+                )
             raise FailedPreconditionError("correlation_id_expired")
 
         message = self._build_message(
@@ -175,7 +185,14 @@ class IngressService:
         try:
             await self._redis.delete(pending_key)
         except Exception:
-            pass
+            logger.debug(
+                "Failed to delete fulfilled pending request",
+                exc_info=True,
+                extra={
+                    "correlation_id": correlation_id,
+                    "pending_key": pending_key,
+                },
+            )
 
         return message.message_id
 

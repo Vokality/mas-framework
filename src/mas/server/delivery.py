@@ -103,7 +103,16 @@ class DeliveryService:
                     inflight.stream_name, {"envelope": inflight.envelope_json}
                 )
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to requeue retryable delivery",
+                    exc_info=True,
+                    extra={
+                        "agent_id": agent_id,
+                        "instance_id": instance_id,
+                        "delivery_id": delivery_id,
+                        "stream_name": inflight.stream_name,
+                    },
+                )
         else:
             await self._router.write_dlq(
                 envelope_json=inflight.envelope_json, reason=reason
@@ -120,7 +129,15 @@ class DeliveryService:
                 inflight.stream_name, inflight.group, inflight.entry_id
             )
         except Exception:
-            pass
+            logger.debug(
+                "Failed to ACK inflight delivery",
+                exc_info=True,
+                extra={
+                    "stream_name": inflight.stream_name,
+                    "group": inflight.group,
+                    "entry_id": inflight.entry_id,
+                },
+            )
 
     async def _stream_loop(
         self,
@@ -187,7 +204,16 @@ class DeliveryService:
                             try:
                                 await self._redis.xack(stream_name, group, entry_id)
                             except Exception:
-                                pass
+                                logger.debug(
+                                    "Failed to ACK malformed stream entry",
+                                    exc_info=True,
+                                    extra={
+                                        "agent_id": agent_id,
+                                        "instance_id": instance_id,
+                                        "stream_name": stream_name,
+                                        "entry_id": entry_id,
+                                    },
+                                )
                             continue
 
                         await self._deliver_entry(
@@ -226,6 +252,16 @@ class DeliveryService:
                 count=self._settings.reclaim_batch_size,
             )
         except Exception:
+            logger.debug(
+                "Failed to reclaim pending entries",
+                exc_info=True,
+                extra={
+                    "stream_name": stream_name,
+                    "group": group,
+                    "consumer": consumer,
+                    "start_id": start_id,
+                },
+            )
             return start_id
 
         for entry_id, fields in messages:
@@ -234,7 +270,16 @@ class DeliveryService:
                 try:
                     await self._redis.xack(stream_name, group, entry_id)
                 except Exception:
-                    pass
+                    logger.debug(
+                        "Failed to ACK reclaimed malformed entry",
+                        exc_info=True,
+                        extra={
+                            "agent_id": agent_id,
+                            "instance_id": instance_id,
+                            "stream_name": stream_name,
+                            "entry_id": entry_id,
+                        },
+                    )
                 continue
 
             await self._deliver_entry(

@@ -16,7 +16,7 @@ The MAS server is the policy and routing boundary:
 
 ## Components
 
-- `src/mas/server.py`: gRPC+mTLS MAS server, owns all Redis responsibilities
+- `src/mas/server/`: gRPC+mTLS MAS server package (runtime, servicer, ingress, delivery, routing, sessions, registry, state)
 - `src/mas/agent.py`: agent client, speaks only gRPC
 - `src/mas/runner.py`: loads `mas.yaml`, starts the server and agent processes
 - `src/mas/gateway/*`: policy modules used by the server (audit, authz, rate limit, DLP, circuit breaker)
