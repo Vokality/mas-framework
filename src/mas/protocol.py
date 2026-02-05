@@ -29,6 +29,9 @@ class MessageMeta(BaseModel):
     sender_instance_id: Optional[str] = None
     # Instance ID to route replies to (set on reply messages).
     reply_to_instance_id: Optional[str] = None
+    # W3C Trace Context fields for distributed tracing across hops.
+    traceparent: Optional[str] = None
+    tracestate: Optional[str] = None
 
 
 class EnvelopeMessage(BaseModel):

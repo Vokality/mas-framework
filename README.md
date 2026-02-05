@@ -12,6 +12,7 @@ Secure multi-agent runtime:
 - Protect sensitive data in transit using DLP scanning with block/redact rules.
 - Reduce incident blast radius with centralized policy, rate limiting, and circuit breakers.
 - Support multi-team agent development without shared Redis credentials or direct data access.
+- Export distributed traces and metrics with OpenTelemetry for operational visibility.
 
 ## Architecture
 
@@ -24,6 +25,7 @@ Agent (mTLS)  ─┘        ├─ AuthN: SPIFFE URI SAN (spiffe://mas/agent/{ag
                          ├─ Rate limiting
                          ├─ Circuit breaker + DLQ
                          ├─ Audit log (Redis Streams, tamper-evident)
+                         ├─ OpenTelemetry traces + metrics (optional)
                          └─ Redis Streams for durable delivery + Redis hashes for state
 ```
 

@@ -12,6 +12,7 @@ from mas.gateway.config import (
     GatewaySettings,
     RateLimitSettings,
     RedisSettings,
+    TelemetrySettings,
     load_settings,
     validate_gateway_config,
 )
@@ -114,6 +115,48 @@ class TestCircuitBreakerSettings:
         assert settings.window_seconds == 600.0
 
 
+class TestTelemetrySettings:
+    """Test OpenTelemetry configuration."""
+
+    def test_default_telemetry_settings(self):
+        """Test telemetry defaults."""
+        settings = TelemetrySettings()
+
+        assert settings.enabled is False
+        assert settings.service_name == "mas-framework"
+        assert settings.service_namespace == "mas"
+        assert settings.environment == "dev"
+        assert settings.otlp_endpoint is None
+        assert settings.sample_ratio == 1.0
+        assert settings.export_metrics is True
+        assert settings.metrics_export_interval_ms == 60000
+        assert settings.headers == {}
+
+    def test_custom_telemetry_settings(self):
+        """Test custom telemetry settings."""
+        settings = TelemetrySettings(
+            enabled=True,
+            service_name="custom-mas",
+            service_namespace="platform",
+            environment="prod",
+            otlp_endpoint="http://otel-collector:4318",
+            sample_ratio=0.25,
+            export_metrics=False,
+            metrics_export_interval_ms=15000,
+            headers={"authorization": "Bearer token"},
+        )
+
+        assert settings.enabled is True
+        assert settings.service_name == "custom-mas"
+        assert settings.service_namespace == "platform"
+        assert settings.environment == "prod"
+        assert settings.otlp_endpoint == "http://otel-collector:4318"
+        assert settings.sample_ratio == 0.25
+        assert settings.export_metrics is False
+        assert settings.metrics_export_interval_ms == 15000
+        assert settings.headers == {"authorization": "Bearer token"}
+
+
 class TestGatewaySettings:
     """Test main gateway configuration."""
 
@@ -126,6 +169,7 @@ class TestGatewaySettings:
         assert settings.features.dlp is True
         assert settings.features.rbac is False
         assert settings.features.circuit_breaker is True
+        assert settings.telemetry.enabled is False
 
     def test_custom_gateway_settings(self):
         """Test custom gateway settings."""
@@ -154,6 +198,11 @@ class TestGatewaySettings:
         """Test unknown gateway keys are rejected."""
         with pytest.raises(ValueError, match="Unknown keys in gateway"):
             validate_gateway_config({"unknown_setting": True})
+
+    def test_unknown_telemetry_key_rejected(self):
+        """Test unknown telemetry keys are rejected."""
+        with pytest.raises(ValueError, match="Unknown keys in gateway.telemetry"):
+            validate_gateway_config({"telemetry": {"unknown": True}})
 
 
 class TestYAMLConfiguration:

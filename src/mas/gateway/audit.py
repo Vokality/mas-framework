@@ -13,6 +13,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from ..redis_types import AsyncRedisProtocol
+from ..telemetry import SpanKind, get_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -152,77 +153,83 @@ class AuditModule:
         Returns:
             Stream entry ID
         """
-        # Compute payload hash
-        payload_str = json.dumps(payload, sort_keys=True)
-        payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.gateway.audit.log_message",
+            kind=SpanKind.INTERNAL,
+            attributes={"mas.decision": decision},
+        ):
+            # Compute payload hash
+            payload_str = json.dumps(payload, sort_keys=True)
+            payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
 
-        # Get previous hash for chain (need this before pipeline)
-        previous_hash = await self.redis.get("audit:last_hash")
+            # Get previous hash for chain (need this before pipeline)
+            previous_hash = await self.redis.get("audit:last_hash")
 
-        # Create audit entry
-        entry = AuditEntry(
-            message_id=message_id,
-            timestamp=time.time(),
-            sender_id=sender_id,
-            sender_instance_id=sender_instance_id,
-            target_id=target_id,
-            message_type=message_type,
-            correlation_id=correlation_id,
-            decision=decision,
-            latency_ms=latency_ms,
-            payload_hash=payload_hash,
-            violations=violations or [],
-            previous_hash=previous_hash,
-        )
+            # Create audit entry
+            entry = AuditEntry(
+                message_id=message_id,
+                timestamp=time.time(),
+                sender_id=sender_id,
+                sender_instance_id=sender_instance_id,
+                target_id=target_id,
+                message_type=message_type,
+                correlation_id=correlation_id,
+                decision=decision,
+                latency_ms=latency_ms,
+                payload_hash=payload_hash,
+                violations=violations or [],
+                previous_hash=previous_hash,
+            )
 
-        # Compute entry hash for chain
-        entry_data = entry.model_dump_json(exclude={"previous_hash"})
-        entry_hash = hashlib.sha256(entry_data.encode()).hexdigest()
+            # Compute entry hash for chain
+            entry_data = entry.model_dump_json(exclude={"previous_hash"})
+            entry_hash = hashlib.sha256(entry_data.encode()).hexdigest()
 
-        # Prepare entry for Redis Stream
-        entry_dict = entry.model_dump()
-        entry_dict["violations"] = json.dumps(entry_dict["violations"])
-        # Remove None values (Redis doesn't accept them)
-        entry_dict = {k: v for k, v in entry_dict.items() if v is not None}
+            # Prepare entry for Redis Stream
+            entry_dict = entry.model_dump()
+            entry_dict["violations"] = json.dumps(entry_dict["violations"])
+            # Remove None values (Redis doesn't accept them)
+            entry_dict = {k: v for k, v in entry_dict.items() if v is not None}
 
-        # Coerce all to strings for Redis
-        fields: dict[str, str] = {k: str(v) for k, v in entry_dict.items()}
+            # Coerce all to strings for Redis
+            fields: dict[str, str] = {k: str(v) for k, v in entry_dict.items()}
 
-        # Batch all writes using pipeline (reduces 4 calls to 1)
-        sender_stream = f"audit:by_sender:{sender_id}"
-        target_stream = f"audit:by_target:{target_id}"
+            # Batch all writes using pipeline (reduces 4 calls to 1)
+            sender_stream = f"audit:by_sender:{sender_id}"
+            target_stream = f"audit:by_target:{target_id}"
 
-        pipe = self.redis.pipeline()
-        pipe.xadd("audit:messages", fields)
-        pipe.xadd(sender_stream, fields)
-        pipe.xadd(target_stream, fields)
-        pipe.set("audit:last_hash", entry_hash)
+            pipe = self.redis.pipeline()
+            pipe.xadd("audit:messages", fields)
+            pipe.xadd(sender_stream, fields)
+            pipe.xadd(target_stream, fields)
+            pipe.set("audit:last_hash", entry_hash)
 
-        results = await pipe.execute()
+            results = await pipe.execute()
 
-        # First result is the main stream ID
-        main_stream_id = results[0]
+            # First result is the main stream ID
+            main_stream_id = results[0]
 
-        logger.debug(
-            "Audit entry logged",
-            extra={
-                "message_id": message_id,
-                "decision": decision,
-                "stream_id": main_stream_id,
-            },
-        )
+            logger.debug(
+                "Audit entry logged",
+                extra={
+                    "message_id": message_id,
+                    "decision": decision,
+                    "stream_id": main_stream_id,
+                },
+            )
 
-        if self._file_sink is not None:
-            try:
-                await self._file_sink.write_entry(entry)
-            except Exception as exc:
-                logger.error(
-                    "Failed to write audit file",
-                    exc_info=exc,
-                    extra={"path": self._file_sink.path},
-                )
+            if self._file_sink is not None:
+                try:
+                    await self._file_sink.write_entry(entry)
+                except Exception as exc:
+                    logger.error(
+                        "Failed to write audit file",
+                        exc_info=exc,
+                        extra={"path": self._file_sink.path},
+                    )
 
-        return main_stream_id
+            return main_stream_id
 
     async def log_security_event(
         self,
@@ -362,41 +369,50 @@ class AuditModule:
         Returns:
             List of entries
         """
-        # Check if stream exists
-        exists = await self.redis.exists(stream)
-        if not exists:
-            return []
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.gateway.audit.query_stream",
+            kind=SpanKind.INTERNAL,
+            attributes={"mas.audit.stream": stream},
+        ):
+            # Check if stream exists
+            exists = await self.redis.exists(stream)
+            if not exists:
+                return []
 
-        # Convert timestamps to Redis Stream IDs
-        start_id = self._timestamp_to_stream_id(start_time) if start_time else "-"
-        end_id = self._timestamp_to_stream_id(end_time) if end_time else "+"
+            # Convert timestamps to Redis Stream IDs
+            start_id = self._timestamp_to_stream_id(start_time) if start_time else "-"
+            end_id = self._timestamp_to_stream_id(end_time) if end_time else "+"
 
-        # Read from stream
-        try:
-            entries = await self.redis.xrange(stream, start_id, end_id, count)
-            result: list[AuditRecord] = []
-            for stream_id, raw in entries:
-                # Work with a mutable, more general-typed copy
-                data: AuditRecord = {str(k): v for k, v in raw.items()}
-                # Parse violations JSON if present
-                if "violations" in data:
-                    try:
-                        data["violations"] = json.loads(data["violations"])
-                    except (json.JSONDecodeError, TypeError):
-                        data["violations"] = []
-                # Parse details JSON if present (for security events)
-                if "details" in data:
-                    try:
-                        data["details"] = json.loads(data["details"])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                # Add stream ID to entry
-                data["stream_id"] = stream_id
-                result.append(data)
-            return result
-        except Exception as e:
-            logger.error("Failed to query stream", exc_info=e, extra={"stream": stream})
-            return []
+            # Read from stream
+            try:
+                entries = await self.redis.xrange(stream, start_id, end_id, count)
+                result: list[AuditRecord] = []
+                for stream_id, raw in entries:
+                    # Work with a mutable, more general-typed copy
+                    data: AuditRecord = {str(k): v for k, v in raw.items()}
+                    # Parse violations JSON if present
+                    if "violations" in data:
+                        try:
+                            data["violations"] = json.loads(data["violations"])
+                        except (json.JSONDecodeError, TypeError):
+                            data["violations"] = []
+                    # Parse details JSON if present (for security events)
+                    if "details" in data:
+                        try:
+                            data["details"] = json.loads(data["details"])
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    # Add stream ID to entry
+                    data["stream_id"] = stream_id
+                    result.append(data)
+                return result
+            except Exception as e:
+                telemetry.record_redis_error(component="audit", operation="xrange")
+                logger.error(
+                    "Failed to query stream", exc_info=e, extra={"stream": stream}
+                )
+                return []
 
     async def verify_integrity(self, message_id: str) -> bool:
         """
@@ -610,16 +626,24 @@ class AuditModule:
         Returns:
             Dictionary with audit statistics
         """
+        telemetry = get_telemetry()
+
         # Get total message count
         try:
             main_len = await self.redis.xlen("audit:messages")
         except Exception:
+            telemetry.record_redis_error(
+                component="audit", operation="xlen_audit_messages"
+            )
             main_len = 0
 
         # Get security event count
         try:
             security_len = await self.redis.xlen("audit:security_events")
         except Exception:
+            telemetry.record_redis_error(
+                component="audit", operation="xlen_audit_security_events"
+            )
             security_len = 0
 
         return {

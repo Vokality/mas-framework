@@ -11,6 +11,7 @@ The MAS server is the policy and routing boundary:
 - Enforces deny-by-default authorization
 - Applies security policies (DLP, rate limits, circuit breaker)
 - Writes a tamper-evident audit trail
+- Emits OpenTelemetry traces and metrics (optional)
 - Uses Redis Streams for durable, at-least-once delivery
 - Uses Redis hashes for agent state
 

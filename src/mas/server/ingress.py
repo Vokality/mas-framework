@@ -11,6 +11,7 @@ from typing import Any
 
 from ..protocol import EnvelopeMessage, MessageMeta
 from ..redis_types import AsyncRedisProtocol
+from ..telemetry import SpanKind, get_telemetry
 from .errors import FailedPreconditionError, InvalidArgumentError
 from .policy import PolicyPipeline
 from .sessions import SessionManager
@@ -43,17 +44,29 @@ class IngressService:
         data_json: str,
     ) -> str:
         """Send a one-way message through policy checks and routing."""
-        self._sessions.ensure_connected(sender_id, sender_instance_id)
-        payload = self._parse_payload_json(data_json)
-        message = self._build_message(
-            sender_id=sender_id,
-            target_id=target_id,
-            message_type=message_type,
-            data=payload,
-            meta=MessageMeta(sender_instance_id=sender_instance_id),
-        )
-        await self._policy.ingest_and_route(message)
-        return message.message_id
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.server.ingress.send",
+            kind=SpanKind.PRODUCER,
+            attributes={
+                "mas.sender_id": sender_id,
+                "mas.target_id": target_id,
+                "mas.message_type": message_type,
+            },
+        ):
+            self._sessions.ensure_connected(sender_id, sender_instance_id)
+            payload = self._parse_payload_json(data_json)
+            meta = MessageMeta(sender_instance_id=sender_instance_id)
+            telemetry.inject_message_meta(meta)
+            message = self._build_message(
+                sender_id=sender_id,
+                target_id=target_id,
+                message_type=message_type,
+                data=payload,
+                meta=meta,
+            )
+            await self._policy.ingest_and_route(message)
+            return message.message_id
 
     async def request_message(
         self,
@@ -66,37 +79,51 @@ class IngressService:
         timeout_ms: int,
     ) -> tuple[str, str]:
         """Send a request and register correlation tracking."""
-        self._sessions.ensure_connected(sender_id, sender_instance_id)
-        payload = self._parse_payload_json(data_json)
-        correlation_id = uuid.uuid4().hex
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.server.ingress.request",
+            kind=SpanKind.PRODUCER,
+            attributes={
+                "mas.sender_id": sender_id,
+                "mas.target_id": target_id,
+                "mas.message_type": message_type,
+            },
+        ):
+            self._sessions.ensure_connected(sender_id, sender_instance_id)
+            payload = self._parse_payload_json(data_json)
+            correlation_id = uuid.uuid4().hex
 
-        ttl_seconds = max(1, int(ceil(timeout_ms / 1000.0))) if timeout_ms > 0 else 60
-        expires_at = time.time() + float(ttl_seconds)
-        await self._redis.setex(
-            f"mas.pending_request:{correlation_id}",
-            ttl_seconds,
-            json.dumps(
-                {
-                    "agent_id": sender_id,
-                    "instance_id": sender_instance_id,
-                    "expires_at": expires_at,
-                }
-            ),
-        )
+            ttl_seconds = (
+                max(1, int(ceil(timeout_ms / 1000.0))) if timeout_ms > 0 else 60
+            )
+            expires_at = time.time() + float(ttl_seconds)
+            await self._redis.setex(
+                f"mas.pending_request:{correlation_id}",
+                ttl_seconds,
+                json.dumps(
+                    {
+                        "agent_id": sender_id,
+                        "instance_id": sender_instance_id,
+                        "expires_at": expires_at,
+                    }
+                ),
+            )
 
-        message = self._build_message(
-            sender_id=sender_id,
-            target_id=target_id,
-            message_type=message_type,
-            data=payload,
-            meta=MessageMeta(
+            meta = MessageMeta(
                 sender_instance_id=sender_instance_id,
                 correlation_id=correlation_id,
                 expects_reply=True,
-            ),
-        )
-        await self._policy.ingest_and_route(message)
-        return message.message_id, correlation_id
+            )
+            telemetry.inject_message_meta(meta)
+            message = self._build_message(
+                sender_id=sender_id,
+                target_id=target_id,
+                message_type=message_type,
+                data=payload,
+                meta=meta,
+            )
+            await self._policy.ingest_and_route(message)
+            return message.message_id, correlation_id
 
     async def reply_message(
         self,
@@ -108,93 +135,110 @@ class IngressService:
         data_json: str,
     ) -> str:
         """Send a reply to a pending request."""
-        self._sessions.ensure_connected(sender_id, sender_instance_id)
-        payload = self._parse_payload_json(data_json)
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.server.ingress.reply",
+            kind=SpanKind.PRODUCER,
+            attributes={
+                "mas.sender_id": sender_id,
+                "mas.message_type": message_type,
+            },
+        ):
+            self._sessions.ensure_connected(sender_id, sender_instance_id)
+            payload = self._parse_payload_json(data_json)
 
-        if not correlation_id:
-            raise InvalidArgumentError("missing_correlation_id")
+            if not correlation_id:
+                raise InvalidArgumentError("missing_correlation_id")
 
-        pending_key = f"mas.pending_request:{correlation_id}"
-        origin_raw = await self._redis.get(pending_key)
-        if not origin_raw:
-            raise InvalidArgumentError("unknown_correlation_id")
+            pending_key = f"mas.pending_request:{correlation_id}"
+            origin_raw = await self._redis.get(pending_key)
+            if not origin_raw:
+                raise InvalidArgumentError("unknown_correlation_id")
 
-        if isinstance(origin_raw, bytes):
+            if isinstance(origin_raw, bytes):
+                try:
+                    origin_text = origin_raw.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise InvalidArgumentError("unknown_correlation_id") from exc
+            else:
+                origin_text = str(origin_raw)
+
             try:
-                origin_text = origin_raw.decode("utf-8")
-            except UnicodeDecodeError as exc:
+                origin_obj = json.loads(origin_text)
+            except json.JSONDecodeError as exc:
                 raise InvalidArgumentError("unknown_correlation_id") from exc
-        else:
-            origin_text = str(origin_raw)
 
-        try:
-            origin_obj = json.loads(origin_text)
-        except json.JSONDecodeError as exc:
-            raise InvalidArgumentError("unknown_correlation_id") from exc
+            if not isinstance(origin_obj, dict):
+                raise InvalidArgumentError("unknown_correlation_id")
 
-        if not isinstance(origin_obj, dict):
-            raise InvalidArgumentError("unknown_correlation_id")
-
-        origin_agent_id = str(origin_obj.get("agent_id", ""))
-        origin_instance_id = str(origin_obj.get("instance_id", ""))
-        expires_at_raw = origin_obj.get("expires_at")
-        if expires_at_raw is None:
-            raise InvalidArgumentError("unknown_correlation_id")
-        if isinstance(expires_at_raw, (int, float)):
-            expires_at = float(expires_at_raw)
-        elif isinstance(expires_at_raw, str):
-            try:
+            origin_agent_id = str(origin_obj.get("agent_id", ""))
+            origin_instance_id = str(origin_obj.get("instance_id", ""))
+            expires_at_raw = origin_obj.get("expires_at")
+            if expires_at_raw is None:
+                raise InvalidArgumentError("unknown_correlation_id")
+            if isinstance(expires_at_raw, (int, float)):
                 expires_at = float(expires_at_raw)
-            except ValueError as exc:
-                raise InvalidArgumentError("unknown_correlation_id") from exc
-        else:
-            raise InvalidArgumentError("unknown_correlation_id")
+            elif isinstance(expires_at_raw, str):
+                try:
+                    expires_at = float(expires_at_raw)
+                except ValueError as exc:
+                    raise InvalidArgumentError("unknown_correlation_id") from exc
+            else:
+                raise InvalidArgumentError("unknown_correlation_id")
 
-        if not origin_agent_id or not origin_instance_id:
-            raise InvalidArgumentError("unknown_correlation_id")
+            if not origin_agent_id or not origin_instance_id:
+                raise InvalidArgumentError("unknown_correlation_id")
 
-        if time.time() > expires_at:
+            if time.time() > expires_at:
+                try:
+                    await self._redis.delete(pending_key)
+                except Exception:
+                    telemetry.record_redis_error(
+                        component="ingress", operation="delete_pending_expired"
+                    )
+                    logger.debug(
+                        "Failed to delete expired pending request",
+                        exc_info=True,
+                        extra={
+                            "correlation_id": correlation_id,
+                            "pending_key": pending_key,
+                        },
+                    )
+                raise FailedPreconditionError("correlation_id_expired")
+
+            meta = MessageMeta(
+                sender_instance_id=sender_instance_id,
+                correlation_id=correlation_id,
+                is_reply=True,
+                expects_reply=False,
+                reply_to_instance_id=origin_instance_id,
+            )
+            telemetry.inject_message_meta(meta)
+            message = self._build_message(
+                sender_id=sender_id,
+                target_id=origin_agent_id,
+                message_type=message_type,
+                data=payload,
+                meta=meta,
+            )
+            await self._policy.ingest_and_route(message)
+
             try:
                 await self._redis.delete(pending_key)
             except Exception:
+                telemetry.record_redis_error(
+                    component="ingress", operation="delete_pending_fulfilled"
+                )
                 logger.debug(
-                    "Failed to delete expired pending request",
+                    "Failed to delete fulfilled pending request",
                     exc_info=True,
                     extra={
                         "correlation_id": correlation_id,
                         "pending_key": pending_key,
                     },
                 )
-            raise FailedPreconditionError("correlation_id_expired")
 
-        message = self._build_message(
-            sender_id=sender_id,
-            target_id=origin_agent_id,
-            message_type=message_type,
-            data=payload,
-            meta=MessageMeta(
-                sender_instance_id=sender_instance_id,
-                correlation_id=correlation_id,
-                is_reply=True,
-                expects_reply=False,
-                reply_to_instance_id=origin_instance_id,
-            ),
-        )
-        await self._policy.ingest_and_route(message)
-
-        try:
-            await self._redis.delete(pending_key)
-        except Exception:
-            logger.debug(
-                "Failed to delete fulfilled pending request",
-                exc_info=True,
-                extra={
-                    "correlation_id": correlation_id,
-                    "pending_key": pending_key,
-                },
-            )
-
-        return message.message_id
+            return message.message_id
 
     @staticmethod
     def _build_message(

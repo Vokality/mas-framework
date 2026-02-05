@@ -24,6 +24,16 @@ gateway:
     success_threshold: 2
     timeout_seconds: 60
     window_seconds: 300
+  telemetry:
+    enabled: true
+    service_name: mas-e2e-ping-pong
+    service_namespace: mas-examples
+    environment: local
+    otlp_endpoint: http://localhost:4319
+    sample_ratio: 1.0
+    export_metrics: true
+    metrics_export_interval_ms: 5000
+    headers: {}
 
 # Deny-by-default: explicitly allow agent-to-agent traffic.
 permissions:

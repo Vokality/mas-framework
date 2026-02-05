@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .agent import Agent, TlsClientConfig
 from .gateway.config import GatewaySettings, validate_gateway_config
 from .server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
+from .telemetry import TelemetryConfig, configure_telemetry, get_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,7 @@ class AgentRunner:
         finally:
             await self._stop_agents()
             await self._stop_server()
+            get_telemetry().shutdown()
 
     def request_shutdown(self) -> None:
         """Signal the runner to shutdown."""
@@ -310,6 +312,19 @@ class AgentRunner:
     async def _start_server(self) -> None:
         """Start the MAS server and configure agents."""
         gateway_settings = self._load_gateway_settings()
+        configure_telemetry(
+            TelemetryConfig(
+                enabled=gateway_settings.telemetry.enabled,
+                service_name=gateway_settings.telemetry.service_name,
+                service_namespace=gateway_settings.telemetry.service_namespace,
+                environment=gateway_settings.telemetry.environment,
+                otlp_endpoint=gateway_settings.telemetry.otlp_endpoint,
+                sample_ratio=gateway_settings.telemetry.sample_ratio,
+                export_metrics=gateway_settings.telemetry.export_metrics,
+                metrics_export_interval_ms=gateway_settings.telemetry.metrics_export_interval_ms,
+                headers=dict(gateway_settings.telemetry.headers),
+            )
+        )
         agents: dict[str, AgentDefinition] = {}
         for spec in self._settings.agents:
             agents[spec.agent_id] = AgentDefinition(

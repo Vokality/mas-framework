@@ -36,6 +36,16 @@ gateway:
     file_path: audit.log
     max_bytes: 10000000
     backup_count: 5
+  telemetry:
+    enabled: false
+    service_name: mas-framework
+    service_namespace: mas
+    environment: dev
+    otlp_endpoint: null
+    sample_ratio: 1.0
+    export_metrics: true
+    metrics_export_interval_ms: 60000
+    headers: {}
   circuit_breaker:
     failure_threshold: 5
     success_threshold: 2

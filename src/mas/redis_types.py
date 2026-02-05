@@ -295,6 +295,10 @@ class AsyncRedisProtocol(Protocol):
         """Create a consumer group for a stream."""
         ...
 
+    def xinfo_groups(self, name: str) -> Awaitable[list[dict[str, Any]]]:
+        """Return metadata for groups on a stream."""
+        ...
+
     def xreadgroup(
         self,
         groupname: str,

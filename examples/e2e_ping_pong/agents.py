@@ -1,12 +1,30 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import signal
 from typing import Any, override
 
 from pydantic import BaseModel, Field
 
 from mas import Agent, AgentMessage
+
+
+def _configure_logging() -> None:
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s trace_id=%(trace_id)s span_id=%(span_id)s %(message)s",
+        defaults={"trace_id": "", "span_id": ""},
+    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+_configure_logging()
 
 
 class PatientMessage(BaseModel):

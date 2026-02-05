@@ -17,6 +17,7 @@ from ..gateway.dlp import DLPModule
 from ..gateway.rate_limit import RateLimitModule
 from ..redis_client import create_redis_client
 from ..redis_types import AsyncRedisProtocol
+from ..telemetry import SpanKind, TelemetryConfig, configure_telemetry, get_telemetry
 from .delivery import DeliveryService
 from .ingress import IngressService
 from .registry import RegistryService
@@ -65,6 +66,24 @@ class MASServer:
 
     async def start(self) -> None:
         """Start Redis connection, modules, and gRPC server."""
+        telemetry = configure_telemetry(
+            TelemetryConfig(
+                enabled=self._gateway_settings.telemetry.enabled,
+                service_name=self._gateway_settings.telemetry.service_name,
+                service_namespace=self._gateway_settings.telemetry.service_namespace,
+                environment=self._gateway_settings.telemetry.environment,
+                otlp_endpoint=self._gateway_settings.telemetry.otlp_endpoint,
+                sample_ratio=self._gateway_settings.telemetry.sample_ratio,
+                export_metrics=self._gateway_settings.telemetry.export_metrics,
+                metrics_export_interval_ms=self._gateway_settings.telemetry.metrics_export_interval_ms,
+                headers=dict(self._gateway_settings.telemetry.headers),
+            )
+        )
+        with telemetry.start_span("mas.server.start", kind=SpanKind.INTERNAL):
+            await self._start_runtime()
+
+    async def _start_runtime(self) -> None:
+        """Start runtime internals after telemetry setup."""
         redis_conn = create_redis_client(
             url=self._gateway_settings.redis.url,
             decode_responses=self._gateway_settings.redis.decode_responses,
@@ -159,6 +178,12 @@ class MASServer:
 
     async def stop(self) -> None:
         """Stop gRPC server, Redis connection, and sessions."""
+        telemetry = get_telemetry()
+        with telemetry.start_span("mas.server.stop", kind=SpanKind.INTERNAL):
+            await self._stop_runtime()
+
+    async def _stop_runtime(self) -> None:
+        """Stop runtime internals."""
         self._running = False
         if self._delivery:
             self._delivery.set_running(False)
@@ -181,6 +206,8 @@ class MASServer:
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None
+
+        get_telemetry().shutdown()
 
         logger.info("MAS server stopped")
 
@@ -214,6 +241,7 @@ class MASServer:
             instance_id=instance_id,
             task_factory=delivery.start_stream_task,
         )
+        get_telemetry().update_active_sessions(delta=1)
         await registry.set_agent_status(agent_id, "ACTIVE")
         return session
 
@@ -229,6 +257,7 @@ class MASServer:
         if session is not None:
             session.task.cancel()
             await asyncio.gather(session.task, return_exceptions=True)
+            get_telemetry().update_active_sessions(delta=-1)
 
         if not remaining:
             await registry.set_agent_status(agent_id, "INACTIVE")

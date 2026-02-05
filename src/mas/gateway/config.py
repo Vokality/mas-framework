@@ -119,6 +119,46 @@ class AuditSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GATEWAY_AUDIT_")
 
 
+class TelemetrySettings(BaseSettings):
+    """OpenTelemetry configuration settings."""
+
+    enabled: bool = Field(default=False, description="Enable OpenTelemetry")
+    service_name: str = Field(
+        default="mas-framework", description="OTel service.name resource attribute"
+    )
+    service_namespace: str = Field(
+        default="mas", description="OTel service.namespace resource attribute"
+    )
+    environment: str = Field(
+        default="dev", description="OTel deployment.environment resource attribute"
+    )
+    otlp_endpoint: Optional[str] = Field(
+        default=None,
+        description="OTLP/HTTP endpoint (for example http://localhost:4318)",
+    )
+    sample_ratio: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Trace sampling ratio",
+    )
+    export_metrics: bool = Field(
+        default=True,
+        description="Export OTel metrics via OTLP",
+    )
+    metrics_export_interval_ms: int = Field(
+        default=60_000,
+        ge=1_000,
+        description="OTLP metric export interval in milliseconds",
+    )
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional OTLP exporter headers",
+    )
+
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_TELEMETRY_")
+
+
 class GatewaySettings(BaseSettings):
     """
     Gateway service configuration.
@@ -162,6 +202,7 @@ class GatewaySettings(BaseSettings):
     features: FeaturesSettings = Field(default_factory=FeaturesSettings)
     dlp: DlpSettings = Field(default_factory=DlpSettings)
     audit: AuditSettings = Field(default_factory=AuditSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     circuit_breaker: CircuitBreakerSettings = Field(
         default_factory=CircuitBreakerSettings
     )
@@ -276,6 +317,7 @@ class GatewaySettings(BaseSettings):
             "Gateway Configuration:",
             f"  Redis: {self.redis.url}",
             f"  Rate Limits: {self.rate_limit.per_minute}/min, {self.rate_limit.per_hour}/hour",
+            f"  Telemetry: {'enabled' if self.telemetry.enabled else 'disabled'}",
             "",
             "Features:",
             f"  DLP: {'✓' if self.features.dlp else '✗'}",
@@ -356,6 +398,12 @@ def validate_gateway_config(data: dict[str, Any]) -> None:
         validate_keys(data["dlp"], set(DlpSettings.model_fields), "gateway.dlp")
     if isinstance(data.get("audit"), dict):
         validate_keys(data["audit"], set(AuditSettings.model_fields), "gateway.audit")
+    if isinstance(data.get("telemetry"), dict):
+        validate_keys(
+            data["telemetry"],
+            set(TelemetrySettings.model_fields),
+            "gateway.telemetry",
+        )
     if isinstance(data.get("circuit_breaker"), dict):
         validate_keys(
             data["circuit_breaker"],

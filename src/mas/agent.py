@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from ._proto.v1 import mas_pb2, mas_pb2_grpc
 from .protocol import EnvelopeMessage
 from .state import StateType
+from .telemetry import SpanKind, get_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -101,53 +102,65 @@ class Agent(Generic[StateType]):
                 "TLS config required. Agents must connect via mTLS to MAS server."
             )
 
-        with open(self.tls.root_ca_path, "rb") as f:
-            root_certificates = f.read()
-        with open(self.tls.client_key_path, "rb") as f:
-            private_key = f.read()
-        with open(self.tls.client_cert_path, "rb") as f:
-            certificate_chain = f.read()
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.start",
+            kind=SpanKind.INTERNAL,
+            attributes={"mas.agent_id": self.id, "mas.instance_id": self.instance_id},
+        ):
+            with open(self.tls.root_ca_path, "rb") as f:
+                root_certificates = f.read()
+            with open(self.tls.client_key_path, "rb") as f:
+                private_key = f.read()
+            with open(self.tls.client_cert_path, "rb") as f:
+                certificate_chain = f.read()
 
-        creds = grpc.ssl_channel_credentials(
-            root_certificates=root_certificates,
-            private_key=private_key,
-            certificate_chain=certificate_chain,
-        )
-        channel = grpc_aio.secure_channel(self.server_addr, creds)
-        self._channel = channel
-        self._stub = mas_pb2_grpc.MasServiceStub(channel)
+            creds = grpc.ssl_channel_credentials(
+                root_certificates=root_certificates,
+                private_key=private_key,
+                certificate_chain=certificate_chain,
+            )
+            channel = grpc_aio.secure_channel(self.server_addr, creds)
+            self._channel = channel
+            self._stub = mas_pb2_grpc.MasServiceStub(channel)
 
-        self._running = True
-        self._transport_task = asyncio.create_task(self._transport_loop())
+            self._running = True
+            self._transport_task = asyncio.create_task(self._transport_loop())
 
-        await self.wait_transport_ready(timeout=10)
-        await self._load_state()
-        await self.on_start()
+            await self.wait_transport_ready(timeout=10)
+            await self._load_state()
+            await self.on_start()
 
-        logger.info(
-            "Agent started",
-            extra={"agent_id": self.id, "instance_id": self.instance_id},
-        )
+            logger.info(
+                "Agent started",
+                extra={"agent_id": self.id, "instance_id": self.instance_id},
+            )
 
     async def stop(self) -> None:
         """Stop the transport loop and close the channel."""
-        self._running = False
-        await self.on_stop()
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.stop",
+            kind=SpanKind.INTERNAL,
+            attributes={"mas.agent_id": self.id, "mas.instance_id": self.instance_id},
+        ):
+            self._running = False
+            await self.on_stop()
 
-        if self._transport_task is not None:
-            self._transport_task.cancel()
-            await asyncio.gather(self._transport_task, return_exceptions=True)
-            self._transport_task = None
+            if self._transport_task is not None:
+                self._transport_task.cancel()
+                await asyncio.gather(self._transport_task, return_exceptions=True)
+                self._transport_task = None
 
-        if self._channel is not None:
-            await self._channel.close()
-            self._channel = None
-            self._stub = None
+            if self._channel is not None:
+                await self._channel.close()
+                self._channel = None
+                self._stub = None
 
-        logger.info(
-            "Agent stopped",
-            extra={"agent_id": self.id, "instance_id": self.instance_id},
-        )
+            logger.info(
+                "Agent stopped",
+                extra={"agent_id": self.id, "instance_id": self.instance_id},
+            )
 
     async def wait_transport_ready(self, timeout: float | None = None) -> None:
         """Wait until the server transport is ready."""
@@ -160,15 +173,26 @@ class Agent(Generic[StateType]):
         self, target_id: str, message_type: str, data: Mapping[str, Any]
     ) -> None:
         """Send a one-way message to another agent."""
-        stub = self._require_stub()
-        await stub.Send(
-            mas_pb2.SendRequest(
-                target_id=target_id,
-                message_type=message_type,
-                data_json=json.dumps(dict(data)),
-                instance_id=self.instance_id,
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.send",
+            kind=SpanKind.CLIENT,
+            attributes={
+                "mas.agent_id": self.id,
+                "mas.target_id": target_id,
+                "mas.message_type": message_type,
+            },
+        ):
+            stub = self._require_stub()
+            await stub.Send(
+                mas_pb2.SendRequest(
+                    target_id=target_id,
+                    message_type=message_type,
+                    data_json=json.dumps(dict(data)),
+                    instance_id=self.instance_id,
+                ),
+                metadata=telemetry.grpc_metadata(),
             )
-        )
 
     async def request(
         self,
@@ -178,34 +202,45 @@ class Agent(Generic[StateType]):
         timeout: float | None = None,
     ) -> AgentMessage:
         """Send a request and await a reply."""
-        stub = self._require_stub()
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.request",
+            kind=SpanKind.CLIENT,
+            attributes={
+                "mas.agent_id": self.id,
+                "mas.target_id": target_id,
+                "mas.message_type": message_type,
+            },
+        ):
+            stub = self._require_stub()
 
-        timeout_ms = int(timeout * 1000) if timeout is not None else 0
-        resp = await stub.Request(
-            mas_pb2.RequestRequest(
-                target_id=target_id,
-                message_type=message_type,
-                data_json=json.dumps(dict(data)),
-                timeout_ms=timeout_ms,
-                instance_id=self.instance_id,
+            timeout_ms = int(timeout * 1000) if timeout is not None else 0
+            resp = await stub.Request(
+                mas_pb2.RequestRequest(
+                    target_id=target_id,
+                    message_type=message_type,
+                    data_json=json.dumps(dict(data)),
+                    timeout_ms=timeout_ms,
+                    instance_id=self.instance_id,
+                ),
+                metadata=telemetry.grpc_metadata(),
             )
-        )
 
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[AgentMessage] = loop.create_future()
-        self._pending_requests[resp.correlation_id] = fut
+            loop = asyncio.get_running_loop()
+            fut: asyncio.Future[AgentMessage] = loop.create_future()
+            self._pending_requests[resp.correlation_id] = fut
 
-        early = self._early_replies.pop(resp.correlation_id, None)
-        if early is not None and not fut.done():
-            fut.set_result(early)
+            early = self._early_replies.pop(resp.correlation_id, None)
+            if early is not None and not fut.done():
+                fut.set_result(early)
 
-        try:
-            if timeout is None:
-                return await fut
-            return await asyncio.wait_for(fut, timeout)
-        finally:
-            if resp.correlation_id in self._pending_requests and not fut.done():
-                self._pending_requests.pop(resp.correlation_id, None)
+            try:
+                if timeout is None:
+                    return await fut
+                return await asyncio.wait_for(fut, timeout)
+            finally:
+                if resp.correlation_id in self._pending_requests and not fut.done():
+                    self._pending_requests.pop(resp.correlation_id, None)
 
     async def send_reply_envelope(
         self, original: AgentMessage, message_type: str, payload: dict[str, Any]
@@ -213,69 +248,105 @@ class Agent(Generic[StateType]):
         """Send a reply for a previously received message."""
         if not original.meta.correlation_id:
             raise RuntimeError("Cannot reply: missing correlation_id")
-        stub = self._require_stub()
-        await stub.Reply(
-            mas_pb2.ReplyRequest(
-                correlation_id=original.meta.correlation_id,
-                message_type=message_type,
-                data_json=json.dumps(dict(payload)),
-                instance_id=self.instance_id,
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.reply",
+            kind=SpanKind.CLIENT,
+            attributes={
+                "mas.agent_id": self.id,
+                "mas.target_id": original.sender_id,
+                "mas.message_type": message_type,
+            },
+        ):
+            stub = self._require_stub()
+            await stub.Reply(
+                mas_pb2.ReplyRequest(
+                    correlation_id=original.meta.correlation_id,
+                    message_type=message_type,
+                    data_json=json.dumps(dict(payload)),
+                    instance_id=self.instance_id,
+                ),
+                metadata=telemetry.grpc_metadata(),
             )
-        )
 
     async def discover(
         self, capabilities: list[str] | None = None
     ) -> list[dict[str, Any]]:
         """Return matching agents with optional capability filters."""
-        stub = self._require_stub()
-        resp = await stub.Discover(
-            mas_pb2.DiscoverRequest(capabilities=list(capabilities or []))
-        )
-        records: list[dict[str, Any]] = []
-        for rec in resp.agents:
-            records.append(
-                {
-                    "id": rec.agent_id,
-                    "capabilities": list(rec.capabilities),
-                    "metadata": json.loads(rec.metadata_json)
-                    if rec.metadata_json
-                    else {},
-                    "status": rec.status,
-                }
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.discover",
+            kind=SpanKind.CLIENT,
+            attributes={"mas.agent_id": self.id},
+        ):
+            stub = self._require_stub()
+            resp = await stub.Discover(
+                mas_pb2.DiscoverRequest(capabilities=list(capabilities or [])),
+                metadata=telemetry.grpc_metadata(),
             )
-        return records
+            records: list[dict[str, Any]] = []
+            for rec in resp.agents:
+                records.append(
+                    {
+                        "id": rec.agent_id,
+                        "capabilities": list(rec.capabilities),
+                        "metadata": json.loads(rec.metadata_json)
+                        if rec.metadata_json
+                        else {},
+                        "status": rec.status,
+                    }
+                )
+            return records
 
     async def update_state(self, updates: Mapping[str, Any]) -> None:
         """Update the remote state with provided fields."""
-        stub = self._require_stub()
-        current = self.state
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.update_state",
+            kind=SpanKind.CLIENT,
+            attributes={"mas.agent_id": self.id},
+        ):
+            stub = self._require_stub()
+            current = self.state
 
-        if isinstance(current, BaseModel):
-            for k, v in updates.items():
-                setattr(current, k, v)
-            state_dict = current.model_dump()
-        else:
-            dict_state = cast(MutableMapping[str, Any], current)
-            dict_state.update(dict(updates))
-            state_dict = dict(dict_state)
-
-        redis_data: dict[str, str] = {}
-        for k, v in state_dict.items():
-            if isinstance(v, (dict, list)):
-                redis_data[k] = json.dumps(v)
+            if isinstance(current, BaseModel):
+                for k, v in updates.items():
+                    setattr(current, k, v)
+                state_dict = current.model_dump()
             else:
-                redis_data[k] = str(v)
+                dict_state = cast(MutableMapping[str, Any], current)
+                dict_state.update(dict(updates))
+                state_dict = dict(dict_state)
 
-        await stub.UpdateState(mas_pb2.UpdateStateRequest(updates=redis_data))
+            redis_data: dict[str, str] = {}
+            for k, v in state_dict.items():
+                if isinstance(v, (dict, list)):
+                    redis_data[k] = json.dumps(v)
+                else:
+                    redis_data[k] = str(v)
+
+            await stub.UpdateState(
+                mas_pb2.UpdateStateRequest(updates=redis_data),
+                metadata=telemetry.grpc_metadata(),
+            )
 
     async def reset_state(self) -> None:
         """Reset remote state to defaults."""
-        stub = self._require_stub()
-        await stub.ResetState(mas_pb2.ResetStateRequest())
-        if self._state_model is None:
-            self._state = cast(StateType, {})
-        else:
-            self._state = self._state_model()
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.reset_state",
+            kind=SpanKind.CLIENT,
+            attributes={"mas.agent_id": self.id},
+        ):
+            stub = self._require_stub()
+            await stub.ResetState(
+                mas_pb2.ResetStateRequest(),
+                metadata=telemetry.grpc_metadata(),
+            )
+            if self._state_model is None:
+                self._state = cast(StateType, {})
+            else:
+                self._state = self._state_model()
 
     async def refresh_state(self) -> None:
         """Reload state from the server."""
@@ -295,6 +366,7 @@ class Agent(Generic[StateType]):
     async def _transport_loop(self) -> None:
         """Stream client events and handle server deliveries."""
         stub = self._require_stub()
+        telemetry = get_telemetry()
 
         async def outgoing_iter() -> AsyncIterator[mas_pb2.ClientEvent]:
             """Yield outbound events from the client queue."""
@@ -306,27 +378,34 @@ class Agent(Generic[StateType]):
             mas_pb2.ClientEvent(hello=mas_pb2.Hello(instance_id=self.instance_id))
         )
 
-        call = stub.Transport(outgoing_iter())
+        call = stub.Transport(outgoing_iter(), metadata=telemetry.grpc_metadata())
 
-        try:
-            async for event in call:
-                if event.HasField("welcome"):
-                    self._transport_ready.set()
-                    continue
+        with telemetry.start_span(
+            "mas.agent.transport_loop",
+            kind=SpanKind.CLIENT,
+            attributes={"mas.agent_id": self.id, "mas.instance_id": self.instance_id},
+        ) as span:
+            try:
+                async for event in call:
+                    if event.HasField("welcome"):
+                        self._transport_ready.set()
+                        continue
 
-                if event.HasField("delivery"):
-                    await self._handle_delivery(event.delivery)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logger.error(
-                "Transport loop failed",
-                exc_info=exc,
-                extra={"agent_id": self.id, "instance_id": self.instance_id},
-            )
+                    if event.HasField("delivery"):
+                        await self._handle_delivery(event.delivery)
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                span.record_exception(exc)
+                logger.error(
+                    "Transport loop failed",
+                    exc_info=exc,
+                    extra={"agent_id": self.id, "instance_id": self.instance_id},
+                )
 
     async def _handle_delivery(self, delivery: mas_pb2.Delivery) -> None:
         """Validate and dispatch a delivery message."""
+        telemetry = get_telemetry()
         try:
             msg = AgentMessage.model_validate_json(delivery.envelope_json)
         except Exception as exc:
@@ -349,33 +428,57 @@ class Agent(Generic[StateType]):
             await self._send_ack(delivery.delivery_id)
             return
 
-        asyncio.create_task(self._handle_message_and_ack(delivery.delivery_id, msg))
+        parent_context = telemetry.extract_message_meta_context(msg.meta)
+        asyncio.create_task(
+            self._handle_message_and_ack(
+                delivery.delivery_id,
+                msg,
+                parent_context=parent_context,
+            )
+        )
 
     async def _handle_message_and_ack(
-        self, delivery_id: str, msg: AgentMessage
+        self,
+        delivery_id: str,
+        msg: AgentMessage,
+        *,
+        parent_context: object | None,
     ) -> None:
         """Run handlers and ACK/NACK as needed."""
-        try:
-            dispatched = await self._dispatch_typed(msg)
-            if not dispatched:
-                await self.on_message(msg)
-            await self._send_ack(delivery_id)
-        except Exception as exc:
-            logger.error(
-                "Failed to handle message",
-                exc_info=exc,
-                extra={
-                    "agent_id": self.id,
-                    "instance_id": self.instance_id,
-                    "message_id": msg.message_id,
-                    "sender_id": msg.sender_id,
-                },
-            )
-            await self._send_nack(
-                delivery_id,
-                reason=f"handler_error:{type(exc).__name__}",
-                retryable=False,
-            )
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.handle_message",
+            kind=SpanKind.CONSUMER,
+            context=parent_context,
+            attributes={
+                "mas.agent_id": self.id,
+                "mas.message_id": msg.message_id,
+                "mas.sender_id": msg.sender_id,
+                "mas.message_type": msg.message_type,
+            },
+        ) as span:
+            try:
+                dispatched = await self._dispatch_typed(msg)
+                if not dispatched:
+                    await self.on_message(msg)
+                await self._send_ack(delivery_id)
+            except Exception as exc:
+                span.record_exception(exc)
+                logger.error(
+                    "Failed to handle message",
+                    exc_info=exc,
+                    extra={
+                        "agent_id": self.id,
+                        "instance_id": self.instance_id,
+                        "message_id": msg.message_id,
+                        "sender_id": msg.sender_id,
+                    },
+                )
+                await self._send_nack(
+                    delivery_id,
+                    reason=f"handler_error:{type(exc).__name__}",
+                    retryable=False,
+                )
 
     async def _send_ack(self, delivery_id: str) -> None:
         """Send an ACK for a delivery."""
@@ -405,23 +508,32 @@ class Agent(Generic[StateType]):
 
     async def _load_state(self) -> None:
         """Load initial agent state from the server."""
-        stub = self._require_stub()
-        resp = await stub.GetState(mas_pb2.GetStateRequest())
-        data = dict(resp.state)
+        telemetry = get_telemetry()
+        with telemetry.start_span(
+            "mas.agent.load_state",
+            kind=SpanKind.CLIENT,
+            attributes={"mas.agent_id": self.id},
+        ):
+            stub = self._require_stub()
+            resp = await stub.GetState(
+                mas_pb2.GetStateRequest(),
+                metadata=telemetry.grpc_metadata(),
+            )
+            data = dict(resp.state)
 
-        if data:
-            if self._state_model is None:
-                self._state = cast(StateType, data)
+            if data:
+                if self._state_model is None:
+                    self._state = cast(StateType, data)
+                else:
+                    try:
+                        self._state = self._state_model(**data)
+                    except Exception:
+                        self._state = self._state_model()
             else:
-                try:
-                    self._state = self._state_model(**data)
-                except Exception:
+                if self._state_model is None:
+                    self._state = cast(StateType, {})
+                else:
                     self._state = self._state_model()
-        else:
-            if self._state_model is None:
-                self._state = cast(StateType, {})
-            else:
-                self._state = self._state_model()
 
     def _require_stub(self) -> mas_pb2_grpc.MasServiceStub:
         """Return the gRPC stub if connected."""

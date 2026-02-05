@@ -14,6 +14,8 @@ The MAS server runs a centralized policy pipeline on every message:
    - Block or redact based on policy
 6. Audit log
    - Server writes decision + metadata to Redis Streams
+7. Telemetry (optional)
+   - OpenTelemetry traces and metrics for server, gateway, and agent runtime paths
 
 Agents never connect to Redis.
 
@@ -35,6 +37,18 @@ Audit entries include a `decision` field that reflects the gateway outcome:
 You can optionally write audit entries to a local JSONL file with rotation using
 `gateway.audit` in `mas.yaml`. When `file_path` is relative, it resolves from
 the directory containing `mas.yaml`.
+
+## OpenTelemetry
+
+Configure telemetry under `gateway.telemetry` in `mas.yaml`.
+
+- `enabled`: turn OpenTelemetry on/off (default `false`)
+- `otlp_endpoint`: OTLP/HTTP collector endpoint (for example `http://localhost:4318`)
+- `service_name`, `service_namespace`, `environment`: resource attributes
+- `sample_ratio`: trace sampling ratio (0.0-1.0)
+- `export_metrics`: enable/disable OTLP metric export
+- `metrics_export_interval_ms`: export interval for metrics
+- `headers`: optional OTLP exporter headers
 
 ## Redis Streams / Keys
 
