@@ -452,6 +452,87 @@ class TestAuditComplianceReport:
             )
 
 
+class TestAuditIntegrity:
+    """Test audit hash-chain integrity verification behavior."""
+
+    async def test_verify_integrity_passes_for_valid_chain(self, audit_module):
+        await audit_module.log_message(
+            "msg-1", "agent-a", "agent-b", "ALLOWED", 10.0, {}
+        )
+        await audit_module.log_message(
+            "msg-2", "agent-a", "agent-b", "ALLOWED", 10.0, {}
+        )
+
+        assert await audit_module.verify_integrity("msg-2") is True
+
+    async def test_verify_integrity_fails_for_tampered_last_hash(self, audit_module):
+        await audit_module.log_message(
+            "msg-1", "agent-a", "agent-b", "ALLOWED", 10.0, {}
+        )
+        await audit_module.log_message(
+            "msg-2", "agent-a", "agent-b", "ALLOWED", 10.0, {}
+        )
+
+        await audit_module.redis.set("audit:last_hash", "tampered")
+
+        assert await audit_module.verify_integrity("msg-2") is False
+
+    async def test_concurrent_writes_keep_single_chain_head(self, audit_module):
+        async def write(index: int) -> None:
+            await audit_module.log_message(
+                f"msg-{index}", "agent-a", "agent-b", "ALLOWED", 10.0, {}
+            )
+
+        await asyncio.gather(*(write(i) for i in range(25)))
+        results = await audit_module.query_all(count=100)
+
+        assert len(results) == 25
+        assert sum(1 for entry in results if entry.get("previous_hash") is None) == 1
+        assert await audit_module.verify_integrity("msg-0") is True
+
+
+class TestAuditFilteredQueries:
+    """Test correctness of filtered queries on long streams."""
+
+    async def test_query_by_decision_scans_entire_stream(self, audit_module):
+        for i in range(500):
+            await audit_module.log_message(
+                f"allowed-{i}", "agent-a", "agent-b", "ALLOWED", 10.0, {}
+            )
+        for i in range(30):
+            await audit_module.log_message(
+                f"rate-{i}", "agent-a", "agent-b", "RATE_LIMITED", 10.0, {}
+            )
+
+        results = await audit_module.query_by_decision("RATE_LIMITED", count=10)
+
+        assert len(results) == 10
+        assert all(result["decision"] == "RATE_LIMITED" for result in results)
+        assert results[0]["message_id"] == "rate-0"
+
+    async def test_query_by_violation_scans_entire_stream(self, audit_module):
+        for i in range(500):
+            await audit_module.log_message(
+                f"clean-{i}", "agent-a", "agent-b", "ALLOWED", 10.0, {}
+            )
+        for i in range(30):
+            await audit_module.log_message(
+                f"viol-{i}",
+                "agent-a",
+                "agent-b",
+                "DLP_BLOCKED",
+                10.0,
+                {},
+                violations=["PII_SSN"],
+            )
+
+        results = await audit_module.query_by_violation("PII_SSN", count=10)
+
+        assert len(results) == 10
+        assert all("PII_SSN" in result["violations"] for result in results)
+        assert results[0]["message_id"] == "viol-0"
+
+
 class TestAuditIntegration:
     """Integration tests for audit query API."""
 

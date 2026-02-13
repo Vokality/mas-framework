@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mas-framework"
-dynamic = ["version"]
+version = "0.4.4"
 authors = [{ name = "Lemuel Boyce", email = "lemuel@vokality.com" }]
 keywords = ["multi-agent", "AI", "agent", "framework"]
 description = "A Multi-Agent System Framework"
@@ -45,9 +45,6 @@ exclude = ["./tests/", "./examples/", "./src/mas/_proto/"]
 
 [tool.ty.environment]
 root = ["./src/"]
-
-[tool.hatch.version]
-path = "src/mas/__version__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mas"]

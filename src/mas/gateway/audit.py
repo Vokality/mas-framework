@@ -111,7 +111,7 @@ class AuditModule:
 
     def __init__(
         self, redis: AsyncRedisProtocol, *, file_sink: AuditFileSink | None = None
-    ):
+    ) -> None:
         """
         Initialize audit module.
 
@@ -120,6 +120,7 @@ class AuditModule:
         """
         self.redis = redis
         self._file_sink = file_sink
+        self._chain_lock = asyncio.Lock()
 
     async def log_message(
         self,
@@ -159,56 +160,42 @@ class AuditModule:
             kind=SpanKind.INTERNAL,
             attributes={"mas.decision": decision},
         ):
-            # Compute payload hash
-            payload_str = json.dumps(payload, sort_keys=True)
-            payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
+            async with self._chain_lock:
+                # Compute payload hash
+                payload_str = json.dumps(payload, sort_keys=True)
+                payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
 
-            # Get previous hash for chain (need this before pipeline)
-            previous_hash = await self.redis.get("audit:last_hash")
+                # Read the current chain tail and append atomically for this process.
+                previous_hash = await self.redis.get("audit:last_hash")
+                entry = AuditEntry(
+                    message_id=message_id,
+                    timestamp=time.time(),
+                    sender_id=sender_id,
+                    sender_instance_id=sender_instance_id,
+                    target_id=target_id,
+                    message_type=message_type,
+                    correlation_id=correlation_id,
+                    decision=decision,
+                    latency_ms=latency_ms,
+                    payload_hash=payload_hash,
+                    violations=violations or [],
+                    previous_hash=previous_hash,
+                )
+                entry_hash = self._hash_entry(entry)
+                fields = self._entry_to_stream_fields(entry)
 
-            # Create audit entry
-            entry = AuditEntry(
-                message_id=message_id,
-                timestamp=time.time(),
-                sender_id=sender_id,
-                sender_instance_id=sender_instance_id,
-                target_id=target_id,
-                message_type=message_type,
-                correlation_id=correlation_id,
-                decision=decision,
-                latency_ms=latency_ms,
-                payload_hash=payload_hash,
-                violations=violations or [],
-                previous_hash=previous_hash,
-            )
+                sender_stream = f"audit:by_sender:{sender_id}"
+                target_stream = f"audit:by_target:{target_id}"
 
-            # Compute entry hash for chain
-            entry_data = entry.model_dump_json(exclude={"previous_hash"})
-            entry_hash = hashlib.sha256(entry_data.encode()).hexdigest()
+                pipe = self.redis.pipeline()
+                pipe.xadd("audit:messages", fields)
+                pipe.xadd(sender_stream, fields)
+                pipe.xadd(target_stream, fields)
+                pipe.set("audit:last_hash", entry_hash)
+                results = await pipe.execute()
 
-            # Prepare entry for Redis Stream
-            entry_dict = entry.model_dump()
-            entry_dict["violations"] = json.dumps(entry_dict["violations"])
-            # Remove None values (Redis doesn't accept them)
-            entry_dict = {k: v for k, v in entry_dict.items() if v is not None}
-
-            # Coerce all to strings for Redis
-            fields: dict[str, str] = {k: str(v) for k, v in entry_dict.items()}
-
-            # Batch all writes using pipeline (reduces 4 calls to 1)
-            sender_stream = f"audit:by_sender:{sender_id}"
-            target_stream = f"audit:by_target:{target_id}"
-
-            pipe = self.redis.pipeline()
-            pipe.xadd("audit:messages", fields)
-            pipe.xadd(sender_stream, fields)
-            pipe.xadd(target_stream, fields)
-            pipe.set("audit:last_hash", entry_hash)
-
-            results = await pipe.execute()
-
-            # First result is the main stream ID
-            main_stream_id = results[0]
+            # First pipeline result is the main stream ID.
+            main_stream_id = str(results[0])
 
             logger.debug(
                 "Audit entry logged",
@@ -345,7 +332,7 @@ class AuditModule:
         self,
         start_time: Optional[float],
         end_time: Optional[float],
-        count: int,
+        count: int | None,
     ) -> list[AuditRecord]:
         """Query the main audit message stream."""
         return await self._query_stream("audit:messages", start_time, end_time, count)
@@ -355,7 +342,7 @@ class AuditModule:
         stream: str,
         start_time: Optional[float],
         end_time: Optional[float],
-        count: int,
+        count: int | None,
     ) -> list[AuditRecord]:
         """
         Query Redis Stream with time range.
@@ -384,28 +371,39 @@ class AuditModule:
             start_id = self._timestamp_to_stream_id(start_time) if start_time else "-"
             end_id = self._timestamp_to_stream_id(end_time) if end_time else "+"
 
-            # Read from stream
             try:
-                entries = await self.redis.xrange(stream, start_id, end_id, count)
+                if count is not None:
+                    entries = await self.redis.xrange(stream, start_id, end_id, count)
+                    return [
+                        self._stream_entry_to_record(stream_id, raw)
+                        for stream_id, raw in entries
+                    ]
+
+                # Full-scan mode (paged) for filtered queries to avoid false negatives.
                 result: list[AuditRecord] = []
-                for stream_id, raw in entries:
-                    # Work with a mutable, more general-typed copy
-                    data: AuditRecord = {str(k): v for k, v in raw.items()}
-                    # Parse violations JSON if present
-                    if "violations" in data:
-                        try:
-                            data["violations"] = json.loads(data["violations"])
-                        except (json.JSONDecodeError, TypeError):
-                            data["violations"] = []
-                    # Parse details JSON if present (for security events)
-                    if "details" in data:
-                        try:
-                            data["details"] = json.loads(data["details"])
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    # Add stream ID to entry
-                    data["stream_id"] = stream_id
-                    result.append(data)
+                batch_size = 500
+                cursor = start_id
+
+                while True:
+                    entries = await self.redis.xrange(
+                        stream, cursor, end_id, count=batch_size
+                    )
+                    if not entries:
+                        break
+
+                    result.extend(
+                        self._stream_entry_to_record(stream_id, raw)
+                        for stream_id, raw in entries
+                    )
+
+                    if len(entries) < batch_size:
+                        break
+
+                    next_cursor = self._next_stream_id(entries[-1][0])
+                    if next_cursor == cursor:
+                        break
+                    cursor = next_cursor
+
                 return result
             except Exception as e:
                 telemetry.record_redis_error(component="audit", operation="xrange")
@@ -424,14 +422,28 @@ class AuditModule:
         Returns:
             True if integrity check passes
         """
-        # This is a simplified implementation
-        # Full implementation would reconstruct the entire hash chain
-        # For now, just verify the entry exists
         entries = await self.redis.xrange("audit:messages", "-", "+")
-        for _, data in entries:
-            if data.get("message_id") == message_id:
-                return True
-        return False
+        if not entries:
+            return False
+
+        found = False
+        expected_previous_hash: str | None = None
+
+        for _, fields in entries:
+            entry = self._record_to_entry(fields)
+            if entry is None:
+                return False
+            if entry.previous_hash != expected_previous_hash:
+                return False
+
+            expected_previous_hash = self._hash_entry(entry)
+            if entry.message_id == message_id:
+                found = True
+
+        if not found:
+            return False
+
+        return await self.redis.get("audit:last_hash") == expected_previous_hash
 
     @staticmethod
     def _timestamp_to_stream_id(timestamp: float) -> str:
@@ -466,8 +478,7 @@ class AuditModule:
         Returns:
             List of audit entries matching decision
         """
-        # Query main stream and filter by decision
-        all_entries = await self._query_messages(start_time, end_time, count * 2)
+        all_entries = await self._query_messages(start_time, end_time, count=None)
 
         # Filter by decision
         filtered = [entry for entry in all_entries if entry.get("decision") == decision]
@@ -492,8 +503,7 @@ class AuditModule:
         Returns:
             List of audit entries with specified violation
         """
-        # Query main stream and filter by violation
-        all_entries = await self._query_messages(start_time, end_time, count * 2)
+        all_entries = await self._query_messages(start_time, end_time, count=None)
 
         # Filter by violation type
         filtered: list[AuditRecord] = []
@@ -650,3 +660,100 @@ class AuditModule:
             "total_messages": main_len,
             "security_events": security_len,
         }
+
+    @staticmethod
+    def _entry_to_stream_fields(entry: AuditEntry) -> dict[str, str]:
+        """Serialize an audit entry to Redis Stream fields."""
+        entry_dict = entry.model_dump()
+        entry_dict["violations"] = json.dumps(entry_dict["violations"])
+        cleaned = {k: v for k, v in entry_dict.items() if v is not None}
+        return {k: str(v) for k, v in cleaned.items()}
+
+    @staticmethod
+    def _hash_entry(entry: AuditEntry) -> str:
+        """Compute the entry hash used by the audit chain."""
+        entry_data = entry.model_dump_json(exclude={"previous_hash"})
+        return hashlib.sha256(entry_data.encode()).hexdigest()
+
+    @staticmethod
+    def _next_stream_id(stream_id: str) -> str:
+        """Return the next stream id after a concrete id."""
+        ms_text, sep, seq_text = stream_id.partition("-")
+        if not sep:
+            return stream_id
+        try:
+            ms = int(ms_text)
+            seq = int(seq_text)
+        except ValueError:
+            return stream_id
+        return f"{ms}-{seq + 1}"
+
+    @staticmethod
+    def _stream_entry_to_record(stream_id: str, raw: dict[str, str]) -> AuditRecord:
+        """Convert a Redis Stream entry to an API record."""
+        data: AuditRecord = {str(k): v for k, v in raw.items()}
+        if "violations" in data:
+            try:
+                parsed = json.loads(str(data["violations"]))
+                data["violations"] = parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                data["violations"] = []
+        if "details" in data:
+            try:
+                data["details"] = json.loads(str(data["details"]))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        data["stream_id"] = stream_id
+        return data
+
+    @staticmethod
+    def _record_to_entry(raw: dict[str, str]) -> AuditEntry | None:
+        """Parse stored stream fields back into an AuditEntry."""
+        message_id = raw.get("message_id")
+        sender_id = raw.get("sender_id")
+        target_id = raw.get("target_id")
+        decision = raw.get("decision")
+        payload_hash = raw.get("payload_hash")
+        timestamp_raw = raw.get("timestamp")
+        latency_raw = raw.get("latency_ms")
+
+        if (
+            message_id is None
+            or sender_id is None
+            or target_id is None
+            or decision is None
+            or payload_hash is None
+            or timestamp_raw is None
+            or latency_raw is None
+        ):
+            return None
+
+        try:
+            timestamp = float(timestamp_raw)
+            latency_ms = float(latency_raw)
+        except ValueError:
+            return None
+
+        violations_raw = raw.get("violations", "[]")
+        try:
+            violations_loaded = json.loads(violations_raw)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(violations_loaded, list):
+            return None
+        violations = [str(item) for item in violations_loaded]
+
+        return AuditEntry(
+            message_id=message_id,
+            timestamp=timestamp,
+            sender_id=sender_id,
+            sender_instance_id=raw.get("sender_instance_id"),
+            target_id=target_id,
+            message_type=raw.get("message_type"),
+            correlation_id=raw.get("correlation_id"),
+            decision=decision,
+            latency_ms=latency_ms,
+            payload_hash=payload_hash,
+            violations=violations,
+            previous_hash=raw.get("previous_hash"),
+        )

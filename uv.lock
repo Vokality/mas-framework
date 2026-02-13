@@ -1347,6 +1347,7 @@ wheels = [
 
 [[package]]
 name = "mas-framework"
+version = "0.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "grpcio" },

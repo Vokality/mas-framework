@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Mapping
 
 import yaml
+
+os.environ.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
 
 from .gateway.config import GatewaySettings
 from .redis_client import create_redis_client

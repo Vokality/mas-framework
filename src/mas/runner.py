@@ -282,6 +282,7 @@ class AgentRunner:
             if self._server is not None
             else self._settings.server_listen_addr
         )
+        server_addr = self._normalize_agent_server_addr(server_addr)
         for spec in self._settings.agents:
             agent_cls = self._load_agent_class(spec.class_path)
             reserved_keys = {"agent_id", "server_addr", "tls"}
@@ -308,6 +309,24 @@ class AgentRunner:
 
         for agent in self._agents:
             await agent.start()
+
+    @staticmethod
+    def _normalize_agent_server_addr(server_addr: str) -> str:
+        """
+        Normalize listen addresses for in-process agent client connections.
+
+        A server listen host of 0.0.0.0/:: is valid for binding but not for
+        client TLS verification. For runner-managed in-process agents, we
+        resolve wildcard hosts to loopback.
+        """
+        if ":" not in server_addr:
+            return server_addr
+
+        host, port = server_addr.rsplit(":", 1)
+        if host in {"0.0.0.0", "*", "::", "[::]"}:
+            return f"localhost:{port}"
+
+        return server_addr
 
     async def _start_server(self) -> None:
         """Start the MAS server and configure agents."""

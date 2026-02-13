@@ -239,7 +239,10 @@ class Agent(Generic[StateType]):
                     return await fut
                 return await asyncio.wait_for(fut, timeout)
             finally:
-                if resp.correlation_id in self._pending_requests and not fut.done():
+                # Always clear this request's correlation slot. The future may be
+                # done (early reply) or pending (timeout/cancel), and keeping it
+                # around leaks memory over long runtimes.
+                if self._pending_requests.get(resp.correlation_id) is fut:
                     self._pending_requests.pop(resp.correlation_id, None)
 
     async def send_reply_envelope(

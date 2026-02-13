@@ -23,6 +23,18 @@ class NoopAgent(Agent[dict[str, object]]):
         self._running = False
 
 
+class AddressCaptureAgent(Agent[dict[str, object]]):
+    """Agent used to assert server address normalization."""
+
+    @override
+    async def start(self) -> None:
+        self._running = True
+
+    @override
+    async def stop(self) -> None:
+        self._running = False
+
+
 class NotAnAgent:
     """Dummy class for validation tests."""
 
@@ -172,6 +184,33 @@ async def test_runner_start_respects_instances() -> None:
     await runner._start_agents()
     try:
         assert len(runner._agents) == 2
+    finally:
+        await runner._stop_agents()
+
+
+@pytest.mark.asyncio
+async def test_runner_normalizes_wildcard_server_addr_for_agents() -> None:
+    settings = RunnerSettings(
+        server_listen_addr="0.0.0.0:50051",
+        agents=[
+            AgentSpec(
+                agent_id="addr",
+                class_path="tests.test_runner:AddressCaptureAgent",
+                instances=1,
+                tls_cert_path="tests/certs/sender.pem",
+                tls_key_path="tests/certs/sender.key",
+            )
+        ],
+        tls_ca_path="tests/certs/ca.pem",
+        tls_server_cert_path="tests/certs/server.pem",
+        tls_server_key_path="tests/certs/server.key",
+    )
+    runner = AgentRunner(settings)
+
+    await runner._start_agents()
+    try:
+        assert len(runner._agents) == 1
+        assert runner._agents[0].server_addr == "localhost:50051"
     finally:
         await runner._stop_agents()
 

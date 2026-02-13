@@ -1,96 +1,113 @@
-name: Publish
+name: Release and Publish
+
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-    inputs:
-      bump:
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-        default: patch
+
 jobs:
-  bump:
-    name: bump-version
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+  bump-and-release:
+    name: bump-and-release
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-      - name: Bump version
+
+      - name: Bump patch version
+        id: bump
         run: |
-          uvx hatch version ${{ inputs.bump }}
-      - name: Commit and tag
-        run: |
-          git config user.name "rhymiz"
-          git config user.email "lemuelboyce@gmail.com"
-          VERSION="$(python - <<'PY'
+          python - <<'PY'
+          import os
           import re
           from pathlib import Path
-          version_file = Path("src/mas/__version__.py").read_text(encoding="utf-8")
-          match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', version_file)
-          if not match:
-            raise SystemExit("Unable to read __version__ from src/mas/__version__.py")
-          print(match.group(1))
+
+          pyproject_path = Path("pyproject.toml")
+          pyproject_text = pyproject_path.read_text(encoding="utf-8")
+          version_match = re.search(
+              r'^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"\s*$',
+              pyproject_text,
+              re.MULTILINE,
+          )
+          if version_match is None:
+              raise SystemExit("Expected [project].version in pyproject.toml")
+
+          major, minor, patch = map(int, version_match.groups())
+          new_version = f"{major}.{minor}.{patch + 1}"
+          pyproject_updated = (
+              pyproject_text[: version_match.start()]
+              + f'version = "{new_version}"'
+              + pyproject_text[version_match.end() :]
+          )
+          pyproject_path.write_text(pyproject_updated, encoding="utf-8")
+
+          version_file_path = Path("src/mas/__version__.py")
+          version_file_text = version_file_path.read_text(encoding="utf-8")
+          version_file_match = re.search(
+              r'(__version__\s*=\s*")(\d+\.\d+\.\d+)(")',
+              version_file_text,
+          )
+          if version_file_match is None:
+              raise SystemExit("Expected __version__ in src/mas/__version__.py")
+
+          version_file_updated = (
+              version_file_text[: version_file_match.start(2)]
+              + new_version
+              + version_file_text[version_file_match.end(2) :]
+          )
+          version_file_path.write_text(version_file_updated, encoding="utf-8")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"version={new_version}\n")
+              output.write(f"tag=v{new_version}\n")
           PY
-          )"
-          git add src/mas/__version__.py
-          git commit -m "chore(release): v$VERSION"
-          git tag "v$VERSION"
-          git push --follow-tags
+
+      - name: Commit bumped files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml src/mas/__version__.py
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:${{ github.ref_name }}
+
+      - name: Push release tag
+        run: |
+          git tag "${{ steps.bump.outputs.tag }}"
+          git push origin "${{ steps.bump.outputs.tag }}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.bump.outputs.tag }}
+          name: ${{ steps.bump.outputs.tag }}
+          generate_release_notes: true
+
   publish:
-    name: python
-    if: ${{ github.event_name == 'push' }}
+    name: publish-to-pypi
     runs-on: ubuntu-latest
+    needs: bump-and-release
     environment: pypi
     permissions:
       id-token: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-and-release.outputs.tag }}
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+
       - name: Build
-        run: |
-          uv build
+        run: uv build
+
       - name: Publish
-        run: |
-          uv publish
-  publish-dispatch:
-    name: python-dispatch
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs:
-      - bump
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: main
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-      - name: Build
-        run: |
-          uv build
-      - name: Publish
-        run: |
-          uv publish
+        run: uv publish

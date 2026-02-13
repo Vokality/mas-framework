@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+import sys
 import textwrap
 from typing import AsyncGenerator, Awaitable, Callable
 
@@ -14,7 +15,6 @@ from redis.asyncio import Redis
 from mas.agent import TlsClientConfig
 from mas.gateway.config import GatewaySettings, RedisSettings
 from mas.server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
-
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
 
