@@ -3,51 +3,42 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mas-framework"
+name = "mas-workspace"
 version = "0.4.5"
-authors = [{ name = "Lemuel Boyce", email = "lemuel@vokality.com" }]
-keywords = ["multi-agent", "AI", "agent", "framework"]
-description = "A Multi-Agent System Framework"
+description = "MAS workspace"
 requires-python = ">=3.13"
-dependencies = [
-    "pydantic>=2.12.3",
-    "pydantic-settings>=2.0.0",
-    "grpcio>=1.76.0",
-    "protobuf>=6.33.5",
-    "redis[hiredis]>=7.1.0",
-    "pyyaml>=6.0",
-    "opentelemetry-api>=1.38.0",
-    "opentelemetry-sdk>=1.38.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.38.0",
-]
-readme = "README.md"
-license = { text = "MIT" }
-classifiers = [
-    "Development Status :: 1 - Planning",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.14",
-    "Topic :: Software Development :: Libraries :: Application Frameworks",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
+dependencies = []
 
-[project.scripts]
-mas = "mas.cli:main"
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*", "apps/*"]
 
 [tool.ruff]
 line-length = 88
-exclude = ["src/mas/_proto"]
+exclude = ["packages/mas-proto/src/mas_proto/runtime/v1"]
 
 [tool.ty.src]
-exclude = ["./tests/", "./examples/", "./src/mas/_proto/"]
+exclude = [
+    "./examples/",
+    "./packages/mas-proto/src/mas_proto/runtime/v1/",
+    "./packages/*/tests/",
+    "./apps/*/tests/",
+    "./integration_tests/",
+]
 
 [tool.ty.rules]
 
 [tool.ty.environment]
-root = ["./src/"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/mas"]
+root = [
+    "./packages/mas-proto/src/",
+    "./packages/mas-core/src/",
+    "./packages/mas-gateway/src/",
+    "./packages/mas-agent/src/",
+    "./packages/mas-server/src/",
+    "./apps/mas-runtime/src/",
+]
 
 [dependency-groups]
 dev = [

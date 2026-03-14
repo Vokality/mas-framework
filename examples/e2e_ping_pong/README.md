@@ -42,7 +42,8 @@ bash make_certs.sh
 bash reset_redis.sh
 
 # Run the runner (auto-loads ./mas.yaml)
-uv run python -m mas
+uv sync --all-groups --all-packages
+uv run --package mas-runtime python -m mas_runtime
 ```
 
 When done:
@@ -69,6 +70,6 @@ redis-cli XRANGE audit:messages - + COUNT 10
 Or tail them via the MAS CLI:
 
 ```bash
-uv run mas audit tail --last 10
-# or: uv run python -m mas audit tail --last 10
+uv run mas-runtime audit tail --last 10
+# or: uv run --package mas-runtime python -m mas_runtime audit tail --last 10
 ```

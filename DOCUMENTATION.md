@@ -5,7 +5,8 @@
 The canonical entrypoint is the runner:
 
 ```bash
-uv run python -m mas
+uv sync --all-groups --all-packages
+uv run --package mas-runtime python -m mas_runtime
 ```
 
 The runner searches upward from the current working directory for `mas.yaml`.
@@ -53,7 +54,7 @@ Handlers:
 Runner injects `server_addr` and `tls` into your constructor. Accept `**kwargs` and pass through:
 
 ```python
-from mas import Agent
+from mas_agent import Agent, AgentMessage
 
 
 class MyAgent(Agent[dict[str, object]]):

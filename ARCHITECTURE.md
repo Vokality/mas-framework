@@ -17,10 +17,10 @@ The MAS server is the policy and routing boundary:
 
 ## Components
 
-- `src/mas/server/`: gRPC+mTLS MAS server package (runtime, servicer, ingress, delivery, routing, sessions, registry, state)
-- `src/mas/agent.py`: agent client, speaks only gRPC
-- `src/mas/runner.py`: loads `mas.yaml`, starts the server and agent processes
-- `src/mas/gateway/*`: policy modules used by the server (audit, authz, rate limit, DLP, circuit breaker)
+- `packages/mas-server/src/mas_server/`: gRPC+mTLS MAS server package (runtime, servicer, ingress, delivery, routing, sessions, registry, state)
+- `packages/mas-agent/src/mas_agent/agent.py`: agent client, speaks only gRPC
+- `apps/mas-runtime/src/mas_runtime/runner.py`: loads `mas.yaml`, starts the server and agent processes
+- `packages/mas-gateway/src/mas_gateway/*`: policy modules used by the server (audit, authz, rate limit, DLP, circuit breaker)
 
 ## Message Flow
 

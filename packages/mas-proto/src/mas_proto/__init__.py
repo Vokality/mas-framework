@@ -1,0 +1,1 @@
+"""MAS protobuf package."""

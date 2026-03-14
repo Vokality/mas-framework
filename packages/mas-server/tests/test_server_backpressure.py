@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+import asyncio
+
+from mas_proto.runtime.v1 import runtime_pb2 as mas_pb2
+from mas_server.sessions import SessionManager
+from mas_server.types import InflightDelivery
+
+
+def _event(delivery_id: str) -> mas_pb2.ServerEvent:
+    return mas_pb2.ServerEvent(
+        delivery=mas_pb2.Delivery(delivery_id=delivery_id, envelope_json="{}")
+    )
+
+
+def test_drop_oldest_outbound_removes_inflight() -> None:
+    outbound: asyncio.Queue[mas_pb2.ServerEvent] = asyncio.Queue(maxsize=2)
+    inflight: dict[str, InflightDelivery] = {
+        "d1": InflightDelivery(
+            stream_name="agent.stream:worker",
+            group="agents",
+            entry_id="1-0",
+            envelope_json="{}",
+            received_at=0.0,
+        ),
+        "d2": InflightDelivery(
+            stream_name="agent.stream:worker",
+            group="agents",
+            entry_id="2-0",
+            envelope_json="{}",
+            received_at=0.0,
+        ),
+    }
+
+    outbound.put_nowait(_event("d1"))
+    outbound.put_nowait(_event("d2"))
+
+    dropped = SessionManager.drop_oldest_outbound(outbound, inflight)
+
+    assert dropped == 1
+    assert "d1" not in inflight
+    assert outbound.qsize() == 1

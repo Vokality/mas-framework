@@ -1,0 +1,1 @@
+"""MAS runtime protobuf namespace."""

@@ -52,7 +52,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from mas import Agent, AgentMessage
+from mas_agent import Agent, AgentMessage
 
 
 class Ping(BaseModel):
@@ -71,14 +71,15 @@ class EchoAgent(Agent[dict[str, object]]):
 4) Run
 
 ```bash
-uv run python -m mas
+uv sync --all-groups --all-packages
+uv run --package mas-runtime python -m mas_runtime
 ```
 
 5) Tail audit logs (optional)
 
 ```bash
-uv run mas audit tail --last 10
-# or: uv run python -m mas audit tail --last 10
+uv run mas-runtime audit tail --last 10
+# or: uv run --package mas-runtime python -m mas_runtime audit tail --last 10
 ```
 
 ## Example
@@ -89,13 +90,13 @@ End-to-end mTLS + request/reply:
 redis-server
 cd examples/e2e_ping_pong
 bash make_certs.sh
-uv run python -m mas
+uv run --package mas-runtime python -m mas_runtime
 ```
 
 ## Development
 
 ```bash
-uv sync
+uv sync --all-groups --all-packages
 uv run ruff check .
 uv run ruff format .
 uv run pytest
