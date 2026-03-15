@@ -15,6 +15,7 @@ import type {
   ConfigDesiredStateInput,
   ConfigDesiredStateOutput,
   ConfigValidationResult,
+  IncidentDetailResponse,
   IncidentResponse,
   LoginRequest,
   SessionResponse,
@@ -293,8 +294,8 @@ export class MasOpsApiClient {
     });
   }
 
-  async getIncident(incidentId: string): Promise<IncidentResponse> {
-    return this.requestJson<IncidentResponse>({
+  async getIncident(incidentId: string): Promise<IncidentDetailResponse> {
+    return this.requestJson<IncidentDetailResponse>({
       method: 'GET',
       path: `/incidents/${encodeURIComponent(String(incidentId))}`,
     });

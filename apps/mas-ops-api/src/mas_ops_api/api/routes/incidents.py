@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mas_ops_api.api.dependencies import load_incident_for_user
-from mas_ops_api.api.schemas import ActivityEventResponse, IncidentResponse
+from mas_ops_api.api.schemas import (
+    ActivityEventResponse,
+    AssetResponse,
+    EvidenceBundleResponse,
+    IncidentResponse,
+    IncidentDetailResponse,
+)
 from mas_ops_api.auth.dependencies import get_current_user, get_db_session
 from mas_ops_api.auth.types import AuthenticatedUser
 from mas_ops_api.projections.repository import PortfolioQueries
@@ -15,12 +21,12 @@ from mas_ops_api.projections.repository import PortfolioQueries
 router = APIRouter(tags=["incidents"])
 
 
-@router.get("/incidents/{incident_id}", response_model=IncidentResponse)
+@router.get("/incidents/{incident_id}", response_model=IncidentDetailResponse)
 async def get_incident(
     incident_id: str,
     current_user: AuthenticatedUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
-) -> IncidentResponse:
+) -> IncidentDetailResponse:
     """Fetch one incident detail."""
 
     incident = await load_incident_for_user(
@@ -28,7 +34,17 @@ async def get_incident(
         session=session,
         user=current_user,
     )
-    return IncidentResponse.model_validate(incident)
+    assets = await PortfolioQueries.list_assets_for_incident(session, incident_id)
+    evidence_bundles = await PortfolioQueries.list_evidence_for_incident(
+        session, incident_id
+    )
+    return IncidentDetailResponse(
+        **IncidentResponse.model_validate(incident).model_dump(),
+        assets=[AssetResponse.model_validate(asset) for asset in assets],
+        evidence_bundles=[
+            EvidenceBundleResponse.model_validate(bundle) for bundle in evidence_bundles
+        ],
+    )
 
 
 @router.get(

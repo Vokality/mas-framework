@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -17,6 +18,7 @@ from mas_msp_contracts import (
 
 from mas_ops_api.db.models import (
     ConfigDesiredStateRecord,
+    OpsStreamEvent,
     PortfolioActivityEvent,
     PortfolioAsset,
     PortfolioClient,
@@ -41,9 +43,15 @@ class ProjectionWriteResult:
 class PortfolioIngestService:
     """Consume normalized portfolio events into ops-plane read models."""
 
-    def __init__(self, database: Database, stream_service: StreamService) -> None:
+    def __init__(
+        self,
+        database: Database,
+        stream_service: StreamService,
+        alert_dispatcher: Callable[[PortfolioEvent], Awaitable[None]] | None = None,
+    ) -> None:
         self._database = database
         self._stream_service = stream_service
+        self._alert_dispatcher = alert_dispatcher
 
     async def ingest_event(self, event: PortfolioEvent) -> ProjectionWriteResult:
         """Apply one portfolio event idempotently to the read models."""
@@ -102,6 +110,11 @@ class PortfolioIngestService:
 
         for stream_event in stream_events:
             await self._stream_service.publish(stream_event)
+        if (
+            event.event_type == "network.alert.raised"
+            and self._alert_dispatcher is not None
+        ):
+            await self._alert_dispatcher(event)
         return ProjectionWriteResult(applied=True)
 
     async def _activity_exists(
@@ -320,12 +333,12 @@ class PortfolioIngestService:
         asset: PortfolioAsset | None,
         activity: PortfolioActivityEvent,
         occurred_at,
-    ) -> list:
+    ) -> list[OpsStreamEvent]:
         stream_events = [
             self._stream_service.build_event(
                 event_name="activity.appended",
                 client_id=activity.client_id,
-                incident_id=None,
+                incident_id=activity.incident_id,
                 chat_session_id=None,
                 subject_type="portfolio_activity",
                 subject_id=str(activity.activity_id),

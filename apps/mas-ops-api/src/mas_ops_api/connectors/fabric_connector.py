@@ -5,7 +5,7 @@ from __future__ import annotations
 from mas_msp_contracts import PortfolioEvent
 from mas_msp_core import build_ops_plane_connector_id
 
-from mas_ops_api.projections import PortfolioIngestService
+from mas_ops_api.projections.portfolio_ingest import PortfolioIngestService
 
 
 class OpsPlaneFabricConnector:

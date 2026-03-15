@@ -23,6 +23,7 @@ from mas_ops_api.db.models import (
     PortfolioActivityEvent,
     PortfolioAsset,
     PortfolioClient,
+    PortfolioIncident,
 )
 from mas_ops_api.projections.source_ids import build_projection_source_id
 
@@ -228,6 +229,7 @@ async def test_portfolio_connector_ingests_visibility_events_idempotently(
     async with session_factory() as session:
         client = await session.get(PortfolioClient, CLIENT_A)
         asset = await session.get(PortfolioAsset, ASSET_ID)
+        incidents = list((await session.scalars(select(PortfolioIncident))).all())
         activity_rows = list(
             (
                 await session.scalars(
@@ -249,9 +251,14 @@ async def test_portfolio_connector_ingests_visibility_events_idempotently(
     assert asset.health_observed_at == datetime(2026, 3, 15, 14, 11, tzinfo=UTC)
     assert asset.last_alert_at == datetime(2026, 3, 15, 14, 5, tzinfo=UTC)
 
+    assert len(incidents) == 1
+    assert incidents[0].summary == "Primary uplink changed state to down"
+    assert incidents[0].state == "open"
+
     assert [row.source_event_id for row in activity_rows] == [
         build_projection_source_id(asset_upsert_event),
         build_projection_source_id(alert_event),
+        f"incident-alert:{ALERT_ID}",
         build_projection_source_id(health_event),
         build_projection_source_id(snapshot_event),
         build_projection_source_id(
@@ -264,8 +271,8 @@ async def test_portfolio_connector_ingests_visibility_events_idempotently(
         ),
     ]
     assert all(row.asset_id == ASSET_ID for row in activity_rows)
-    assert len(stream_rows) == 13
-    assert len(activity_rows) == 5
+    assert len(stream_rows) == 15
+    assert len(activity_rows) == 6
     assert stream_rows[0].payload["updated_at"] == "2026-03-15T14:00:00Z"
     assert stream_rows[1].payload["source_event_id"] == build_projection_source_id(
         asset_upsert_event
@@ -305,6 +312,7 @@ async def test_phase_2_routes_expose_client_and_asset_activity(
     assert client_activity.status_code == 200
     assert [item["event_type"] for item in client_activity.json()] == [
         "network.snapshot.recorded",
+        "incident.updated",
         "network.alert.raised",
         "asset.upserted",
     ]
@@ -320,6 +328,7 @@ async def test_phase_2_routes_expose_client_and_asset_activity(
     assert asset_activity.status_code == 200
     assert [item["event_type"] for item in asset_activity.json()] == [
         "network.snapshot.recorded",
+        "incident.updated",
         "network.alert.raised",
         "asset.upserted",
     ]

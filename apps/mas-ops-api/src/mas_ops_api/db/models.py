@@ -116,8 +116,55 @@ class PortfolioIncident(Base):
     state: Mapped[str] = mapped_column(String(32), default=IncidentState.OPEN.value)
     severity: Mapped[str] = mapped_column(String(32), default=Severity.INFO.value)
     summary: Mapped[str] = mapped_column(Text())
+    recommended_actions: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list
+    )
     opened_at: Mapped[Any] = mapped_column(UtcDateTime())
     updated_at: Mapped[Any] = mapped_column(UtcDateTime())
+
+
+class PortfolioIncidentAsset(Base):
+    """Asset membership for one incident projection."""
+
+    __tablename__ = "portfolio_incident_assets"
+    __table_args__ = (
+        Index("ix_portfolio_incident_assets_asset_id", "asset_id"),
+        UniqueConstraint("incident_id", "asset_id"),
+    )
+
+    incident_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("portfolio_incidents.incident_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("portfolio_assets.asset_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
+class IncidentEvidenceBundleRecord(Base):
+    """Persisted evidence bundle for one incident."""
+
+    __tablename__ = "incident_evidence_bundles"
+
+    evidence_bundle_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    incident_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("portfolio_incidents.incident_id", ondelete="CASCADE"),
+        index=True,
+    )
+    asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("portfolio_assets.asset_id", ondelete="CASCADE"),
+        index=True,
+    )
+    client_id: Mapped[str] = mapped_column(String(36), index=True)
+    fabric_id: Mapped[str] = mapped_column(String(36), index=True)
+    collected_at: Mapped[Any] = mapped_column(UtcDateTime())
+    summary: Mapped[str] = mapped_column(Text())
+    items: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
 class PortfolioAsset(Base):
@@ -346,8 +393,10 @@ __all__ = [
     "OpsUser",
     "OpsUserClientAccess",
     "OpsUserPassword",
+    "PortfolioIncidentAsset",
     "PortfolioActivityEvent",
     "PortfolioAsset",
     "PortfolioClient",
+    "IncidentEvidenceBundleRecord",
     "PortfolioIncident",
 ]

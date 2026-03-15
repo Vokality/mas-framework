@@ -4,16 +4,22 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from mas_msp_contracts import OperatorChatRequest, OperatorChatResponse, PortfolioEvent
+
 
 class FabricConnector(Protocol):
     """Least-privilege per-client command connector interface."""
 
-    async def dispatch_chat_turn(
+    async def dispatch_chat_request(
         self,
         *,
-        client_id: str,
-        chat_session_id: str,
-        turn_id: str,
+        request: OperatorChatRequest,
+    ) -> OperatorChatResponse: ...
+
+    async def dispatch_visibility_event(
+        self,
+        *,
+        event: PortfolioEvent,
     ) -> None: ...
 
     async def request_config_validation(

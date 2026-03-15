@@ -26,6 +26,7 @@ from mas_ops_api.db.base import utc_now
 from mas_ops_api.db.models import (
     ApprovalRequestRecord,
     ConfigDesiredStateRecord,
+    PortfolioIncidentAsset,
     OpsSession,
     OpsUser,
     OpsUserClientAccess,
@@ -154,6 +155,7 @@ def seed_portfolio(session_factory):
                         state=IncidentState.INVESTIGATING.value,
                         severity=Severity.MAJOR.value,
                         summary="Primary uplink is unstable",
+                        recommended_actions=[],
                         opened_at=now - timedelta(hours=1),
                         updated_at=now,
                     ),
@@ -164,6 +166,7 @@ def seed_portfolio(session_factory):
                         state=IncidentState.OPEN.value,
                         severity=Severity.WARNING.value,
                         summary="WAN latency is elevated",
+                        recommended_actions=[],
                         opened_at=now - timedelta(hours=2),
                         updated_at=now,
                     ),
@@ -205,6 +208,14 @@ def seed_portfolio(session_factory):
                         subject_id=INCIDENT_A,
                         payload={"summary": "Investigation started"},
                         occurred_at=now,
+                    ),
+                    PortfolioIncidentAsset(
+                        incident_id=INCIDENT_A,
+                        asset_id=ASSET_A,
+                    ),
+                    PortfolioIncidentAsset(
+                        incident_id=INCIDENT_B,
+                        asset_id=ASSET_B,
                     ),
                     ApprovalRequestRecord(
                         approval_id=APPROVAL_A,
