@@ -84,6 +84,8 @@ class ChatService:
             state=ChatTurnState.RUNNING.value,
             submitted_at=now,
         )
+        session.add(turn)
+        await session.flush()
         message = ChatMessage(
             message_id=str(uuid4()),
             chat_session_id=chat_session.chat_session_id,
@@ -92,7 +94,6 @@ class ChatService:
             content=content,
             created_at=now,
         )
-        session.add(turn)
         session.add(message)
         stream_event = self._stream_service.build_event(
             event_name="chat.delta",

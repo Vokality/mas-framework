@@ -251,9 +251,6 @@ class AgentRunner:
 
     async def run(self) -> None:
         """Start agents and wait for shutdown."""
-        if not self._settings.agents:
-            raise RuntimeError("No agents configured. Provide mas.yaml or settings.")
-
         self._setup_signals()
         try:
             await self._start_server()

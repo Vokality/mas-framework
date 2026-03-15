@@ -8,11 +8,13 @@ from .routes.auth import router as auth_router
 from .routes.chat import router as chat_router
 from .routes.clients import router as clients_router
 from .routes.config import router as config_router
+from .routes.health import router as health_router
 from .routes.incidents import router as incidents_router
 from .routes.streams import router as streams_router
 
 
 api_router = APIRouter()
+api_router.include_router(health_router)
 api_router.include_router(auth_router)
 api_router.include_router(clients_router)
 api_router.include_router(incidents_router)

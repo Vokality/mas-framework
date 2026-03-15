@@ -237,6 +237,28 @@ async def test_runner_starts_and_stops_server(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_runner_allows_server_only_runtime(monkeypatch) -> None:
+    monkeypatch.setattr("mas_runtime.runner.MASServer", FakeServer)
+    settings = RunnerSettings(
+        agents=[],
+        tls_ca_path="tests/certs/ca.pem",
+        tls_server_cert_path="tests/certs/server.pem",
+        tls_server_key_path="tests/certs/server.key",
+    )
+    runner = AgentRunner(settings)
+
+    await runner._start_server()
+    try:
+        assert runner._server is not None
+        assert runner._agents == []
+        await runner._start_agents()
+        assert runner._agents == []
+    finally:
+        await runner._stop_agents()
+        await runner._stop_server()
+
+
+@pytest.mark.asyncio
 async def test_runner_passes_gateway_redis_to_server(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("mas_runtime.runner.MASServer", FakeServer)
     project_root = tmp_path / "project"

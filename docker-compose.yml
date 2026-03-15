@@ -1,0 +1,177 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: mas_ops
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mas_ops"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  mas-runtime-bootstrap:
+    image: redis:7-alpine
+    command:
+      [
+        "sh",
+        "-lc",
+        "apk add --no-cache openssl >/dev/null && sh /bootstrap/bootstrap.sh /runtime",
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      MAS_RUNTIME_REDIS_URL: redis://redis:6379
+    volumes:
+      - mas-runtime-data:/runtime
+      - ./docker/mas-runtime:/bootstrap:ro
+    restart: "no"
+
+  mas-runtime:
+    container_name: mas-runtime
+    build:
+      context: .
+      dockerfile: docker/mas-runtime/Dockerfile
+    command: ["mas-runtime", "run", "--config-file", "/runtime/mas.yaml"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      mas-runtime-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - mas-runtime-data:/runtime:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s = socket.create_connection(('127.0.0.1', 50051), 2); s.close()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "50051:50051"
+
+  ops-migrate:
+    build:
+      context: .
+      dockerfile: docker/ops-api/Dockerfile
+    command: ["mas-ops-api", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &ops-api-environment
+      MAS_OPS_API_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/mas_ops
+      MAS_OPS_API_AUTO_CREATE_SCHEMA: "false"
+      MAS_OPS_API_ENVIRONMENT: development
+      MAS_OPS_API_PUBLIC_BASE_URL: http://localhost:${MAS_OPS_API_PORT:-8080}
+      MAS_OPS_API_APPROVAL_EXPIRY_POLL_SECONDS: "5"
+      MAS_OPS_API_LINUX_DIAGNOSTICS_BACKEND: docker
+      MAS_OPS_API_DOGFOOD_ENABLED: "true"
+      MAS_OPS_API_DOGFOOD_POLL_SECONDS: "10"
+      MAS_OPS_API_DOGFOOD_CONTAINER_NAME: mas-runtime
+      MAS_OPS_API_DOGFOOD_HOSTNAME: mas-runtime
+      MAS_OPS_API_DOGFOOD_MGMT_ADDRESS: docker://mas-runtime
+      MAS_OPS_API_DOGFOOD_DISTRIBUTION: Docker Linux
+      MAS_OPS_API_DOGFOOD_SITE: docker-compose
+    restart: "no"
+
+  ops-bootstrap:
+    build:
+      context: .
+      dockerfile: docker/ops-api/Dockerfile
+    command: ["mas-ops-api", "bootstrap-admin"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ops-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *ops-api-environment
+      MAS_OPS_BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      MAS_OPS_BOOTSTRAP_ADMIN_PASSWORD: admin123
+      MAS_OPS_BOOTSTRAP_ADMIN_DISPLAY_NAME: Local Admin
+    restart: "no"
+
+  ops-api:
+    build:
+      context: .
+      dockerfile: docker/ops-api/Dockerfile
+    command: ["mas-ops-api", "serve", "--host", "0.0.0.0", "--port", "8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mas-runtime:
+        condition: service_healthy
+      ops-migrate:
+        condition: service_completed_successfully
+      ops-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *ops-api-environment
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "${MAS_OPS_API_PORT:-8080}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  ops-ui:
+    build:
+      context: .
+      dockerfile: docker/ops-ui/Dockerfile
+      args:
+        VITE_MAS_OPS_API_BASE_URL: http://localhost:${MAS_OPS_API_PORT:-8080}
+    depends_on:
+      ops-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:4173').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "4173:4173"
+
+volumes:
+  mas-runtime-data:
+  postgres-data:
+  redis-data:

@@ -56,6 +56,51 @@ class OpsApiSettings(BaseSettings):
         ge=0.0,
         description="Polling interval for expiring pending approvals; set to 0 to disable.",
     )
+    linux_diagnostics_backend: Literal["registry", "docker"] = Field(
+        default="registry",
+        description="Transport backing Linux diagnostics execution.",
+    )
+    dogfood_enabled: bool = Field(
+        default=False,
+        description="Enable local Docker-backed monitoring of the MAS runtime.",
+    )
+    dogfood_poll_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        description="Polling interval for Docker-backed MAS dogfood monitoring.",
+    )
+    dogfood_client_id: str = Field(
+        default="11111111-1111-4111-8111-111111111111",
+        description="Stable client id for the local MAS dogfood tenant.",
+    )
+    dogfood_fabric_id: str = Field(
+        default="33333333-3333-4333-8333-333333333333",
+        description="Stable fabric id for the local MAS dogfood tenant.",
+    )
+    dogfood_container_name: str = Field(
+        default="mas-runtime",
+        description="Docker container name monitored as the local MAS system host.",
+    )
+    dogfood_hostname: str = Field(
+        default="mas-runtime",
+        description="Hostname projected for the monitored local MAS system asset.",
+    )
+    dogfood_mgmt_address: str = Field(
+        default="docker://mas-runtime",
+        description="Stable management address projected for the monitored MAS asset.",
+    )
+    dogfood_distribution: str = Field(
+        default="Docker Linux",
+        description="Model/distribution label for the monitored MAS system asset.",
+    )
+    dogfood_site: str = Field(
+        default="docker-compose",
+        description="Logical site for the monitored MAS system asset.",
+    )
+    dogfood_tags: list[str] = Field(
+        default_factory=lambda: ["docker", "mas-system"],
+        description="Tags projected onto the monitored MAS system asset.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="MAS_OPS_API_",

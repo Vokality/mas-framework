@@ -58,10 +58,10 @@ export function LoginPage() {
     <div className="login">
       <div className="login-panel">
         <span className="eyebrow">Local Auth</span>
-        <h2>Ops Plane Login</h2>
+        <h2>MAS Ops Console</h2>
         <p>
-          This screen uses the Phase 1 server-side session flow exposed by
-          `mas-ops-api`.
+          Sign in to the MSP operator console. The normal flow is portfolio queue,
+          then client workspace, then incident cockpit.
         </p>
         <form className="login-form" onSubmit={handleSubmit}>
           <label>

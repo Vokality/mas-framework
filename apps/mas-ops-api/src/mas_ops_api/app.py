@@ -36,6 +36,7 @@ from mas_ops_api.connectors import (
 )
 from mas_ops_api.db.bootstrap import create_schema
 from mas_ops_api.db.session import Database
+from mas_ops_api.dogfood import DockerDogfoodMonitorService
 from mas_ops_api.incidents import IncidentProjectionService, OpsPlaneIncidentGateway
 from mas_ops_api.projections.portfolio_ingest import PortfolioIngestService
 from mas_ops_api.services import OpsApiServices
@@ -52,6 +53,7 @@ from mas_msp_ai import (
 from mas_msp_core import ApprovalController, ConfigDeployerAgent
 from mas_msp_core import NotifierTransportAgent, OpsBridgeAgent
 from mas_msp_hosts import (
+    DockerLinuxDiagnosticsBackend,
     HostServiceRegistry,
     LinuxDiagnosticsAgent,
     LinuxExecutorAgent,
@@ -95,7 +97,16 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
     host_service_registry = HostServiceRegistry()
     network_diagnostics_agent = NetworkDiagnosticsAgent()
     linux_diagnostics_agent = LinuxDiagnosticsAgent(
-        service_registry=host_service_registry
+        backend=(
+            DockerLinuxDiagnosticsBackend()
+            if app_settings.linux_diagnostics_backend == "docker"
+            else None
+        ),
+        service_registry=(
+            host_service_registry
+            if app_settings.linux_diagnostics_backend == "registry"
+            else None
+        ),
     )
     linux_executor_agent = LinuxExecutorAgent(service_registry=host_service_registry)
     windows_diagnostics_agent = WindowsDiagnosticsAgent(
@@ -252,6 +263,10 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         portfolio_ingest_service=portfolio_ingest_service,
         stream_service=stream_service,
     )
+    dogfood_monitor_service = DockerDogfoodMonitorService(
+        settings=app_settings,
+        portfolio_ingress_registry=services.portfolio_ingress_registry,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -259,7 +274,9 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         if app_settings.auto_create_schema:
             await create_schema(database.engine)
         approval_service.start()
+        dogfood_monitor_service.start()
         yield
+        await dogfood_monitor_service.stop()
         await approval_service.stop()
         await durable_task_runner.drain()
         await database.dispose()

@@ -8,6 +8,11 @@ import {
 } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { useManagedStream } from "../streams";
+import { ClientQueueRow } from "./ClientQueueRow";
+import {
+  compareClientsByAttention,
+  getClientNextActionLabel,
+} from "./dashboard";
 import {
   initialPortfolioState,
   portfolioReducer,
@@ -78,77 +83,126 @@ export function PortfolioPage() {
     (sum, client) => sum + client.critical_asset_count,
     0,
   );
+  const orderedClients = [...state.clients].sort(compareClientsByAttention);
+  const priorityClient = orderedClients[0] ?? null;
+  const clientsNeedingAttention = orderedClients.filter(
+    (client) => client.open_alert_count > 0 || client.critical_asset_count > 0,
+  ).length;
+  const stableClients = state.clients.length - clientsNeedingAttention;
 
   return (
     <>
-      <section className="hero">
-        <span className="eyebrow">Portfolio</span>
-        <h2>Authorized client summaries</h2>
-        <p>
-          This dashboard is backed by `GET /clients` and the portfolio SSE stream.
-        </p>
-        <p className="muted-copy">Stream: {streamState}</p>
-        {state.status === "ready" && state.errorMessage ? (
-          <p className="form-error">{state.errorMessage}</p>
-        ) : null}
+      <section className="portfolio-toolbar card">
+        <div className="portfolio-toolbar-copy">
+          <span className="eyebrow">Portfolio Queue</span>
+          <h2>Client triage</h2>
+          <p>
+            Use the queue to decide which client to open next. The operational
+            path is queue, then client workspace, then incident cockpit.
+          </p>
+        </div>
+        <div className="portfolio-toolbar-status">
+          <div className="portfolio-status-pill">
+            <span className="portfolio-status-label">Next up</span>
+            <strong>{priorityClient?.name ?? "No active client"}</strong>
+            <span className="muted-copy">
+              {priorityClient
+                ? getClientNextActionLabel(priorityClient)
+                : "Waiting for projected client data"}
+            </span>
+          </div>
+          <p className="muted-copy">Stream: {streamState}</p>
+          {state.status === "ready" && state.errorMessage ? (
+            <p className="form-error">{state.errorMessage}</p>
+          ) : null}
+        </div>
+        <div className="card-actions portfolio-toolbar-actions">
+          {priorityClient ? (
+            <Link to={`/clients/${priorityClient.client_id}`}>
+              Open Priority Client
+            </Link>
+          ) : null}
+          <Link className="secondary-link" to="/approvals">
+            Approvals
+          </Link>
+          <Link className="secondary-link" to="/chat">
+            Portfolio Chat
+          </Link>
+        </div>
       </section>
-      <section className="grid">
-        <article className="card">
-          <h3>Authorized Clients</h3>
-          <p className="metric-copy">{state.clients.length}</p>
+      <section className="portfolio-summary-strip">
+        <article className="summary-tile">
+          <span>Clients</span>
+          <strong>{state.clients.length}</strong>
         </article>
-        <article className="card">
-          <h3>Open Alerts</h3>
-          <p className="metric-copy">{totalAlerts}</p>
+        <article className="summary-tile">
+          <span>Need attention</span>
+          <strong>{clientsNeedingAttention}</strong>
         </article>
-        <article className="card">
-          <h3>Critical Assets</h3>
-          <p className="metric-copy">{totalCriticalAssets}</p>
+        <article className="summary-tile">
+          <span>Alerts</span>
+          <strong>{totalAlerts}</strong>
+        </article>
+        <article className="summary-tile">
+          <span>Critical assets</span>
+          <strong>{totalCriticalAssets}</strong>
+        </article>
+        <article className="summary-tile">
+          <span>Stable clients</span>
+          <strong>{stableClients}</strong>
         </article>
       </section>
-      <section className="grid">
-        {state.status === "loading" ? (
-          <article className="card">
-            <h3>Loading portfolio</h3>
-            <p>Fetching authorized client summaries from the ops API.</p>
-          </article>
-        ) : null}
-        {state.status === "error" ? (
-          <article className="card">
-            <h3>Portfolio unavailable</h3>
-            <p>{state.errorMessage}</p>
-          </article>
-        ) : null}
-        {state.status === "ready" && state.clients.length === 0 ? (
-          <article className="card">
-            <h3>No visible clients</h3>
-            <p>No client grants are currently available for this session.</p>
-          </article>
-        ) : null}
-        {state.status === "ready"
-          ? state.clients.map((client) => (
-              <article className="card" key={client.client_id}>
-                <span className="eyebrow">Client</span>
-                <h3>{client.name}</h3>
-                <p className="muted-copy">Client ID: {client.client_id}</p>
-                <p className="muted-copy">Fabric ID: {client.fabric_id}</p>
-                <div className="card-stat-grid">
-                  <div>
-                    <strong>{client.open_alert_count}</strong>
-                    <span>Open Alerts</span>
-                  </div>
-                  <div>
-                    <strong>{client.critical_asset_count}</strong>
-                    <span>Critical Assets</span>
-                  </div>
-                </div>
-                <div className="card-actions">
-                  <Link to={`/clients/${client.client_id}`}>Open Client</Link>
-                  <Link to={`/clients/${client.client_id}/config`}>Config</Link>
-                </div>
-              </article>
-            ))
-          : null}
+      <section className="queue-table-card card">
+        <div className="queue-table-toolbar">
+          <div>
+            <span className="eyebrow">Client Queue</span>
+            <h3>Dense triage view</h3>
+          </div>
+          <p className="muted-copy">
+            Sort order is automatic: clients with critical assets and more alerts
+            rise to the top.
+          </p>
+        </div>
+        <div className="queue-table-head">
+          <span>Client</span>
+          <span>Alerts</span>
+          <span>Critical</span>
+          <span>Fabric</span>
+          <span>Next Action</span>
+          <span>Actions</span>
+        </div>
+        <div className="queue-table-body">
+          {state.status === "loading" ? (
+            <article className="queue-empty-state">
+              <strong>Loading portfolio</strong>
+              <span>Fetching authorized client summaries from the ops API.</span>
+            </article>
+          ) : null}
+          {state.status === "error" ? (
+            <article className="queue-empty-state">
+              <strong>Portfolio unavailable</strong>
+              <span>{state.errorMessage}</span>
+            </article>
+          ) : null}
+          {state.status === "ready" && state.clients.length === 0 ? (
+            <article className="queue-empty-state">
+              <strong>No visible clients yet</strong>
+              <span>
+                No client grants are currently available for this session, so the
+                queue is empty.
+              </span>
+            </article>
+          ) : null}
+          {state.status === "ready"
+            ? orderedClients.map((client, index) => (
+                <ClientQueueRow
+                  client={client}
+                  isPriorityClient={index === 0}
+                  key={client.client_id}
+                />
+              ))
+            : null}
+        </div>
       </section>
     </>
   );

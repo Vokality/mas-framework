@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import argparse
 import json
+import os
 from pathlib import Path
 
 import uvicorn
 
 from mas_ops_api.app import create_app
+from mas_ops_api.bootstrap import AdminBootstrapConfig, ensure_admin_user
+from mas_ops_api.db.migrations import upgrade_to_head
 from mas_ops_api.settings import OpsApiSettings
 
 
@@ -25,6 +29,22 @@ def main() -> None:
     openapi_parser = subparsers.add_parser("openapi")
     openapi_parser.add_argument("output", type=Path)
 
+    subparsers.add_parser("migrate")
+
+    bootstrap_parser = subparsers.add_parser("bootstrap-admin")
+    bootstrap_parser.add_argument(
+        "--admin-email",
+        default=os.environ.get("MAS_OPS_BOOTSTRAP_ADMIN_EMAIL", "admin@example.com"),
+    )
+    bootstrap_parser.add_argument(
+        "--admin-password",
+        default=os.environ.get("MAS_OPS_BOOTSTRAP_ADMIN_PASSWORD", "admin123"),
+    )
+    bootstrap_parser.add_argument(
+        "--admin-display-name",
+        default=os.environ.get("MAS_OPS_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Local Admin"),
+    )
+
     args = parser.parse_args()
     command = args.command or "serve"
 
@@ -34,6 +54,19 @@ def main() -> None:
             json.dumps(app.openapi(), indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        return
+
+    if command == "migrate":
+        upgrade_to_head(OpsApiSettings())
+        return
+
+    if command == "bootstrap-admin":
+        config = AdminBootstrapConfig(
+            email=args.admin_email,
+            password=args.admin_password,
+            display_name=args.admin_display_name,
+        )
+        asyncio.run(ensure_admin_user(OpsApiSettings(), config=config))
         return
 
     uvicorn.run(

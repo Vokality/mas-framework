@@ -11,6 +11,7 @@ import {
 } from "../api/client";
 import { AssetDetailCard, AssetListPanel } from "../assets";
 import { type StreamFrame, useManagedStream } from "../streams";
+import { writeLastViewedClientId } from "./clientSelection";
 import { ClientActivityPanel } from "./ClientActivityPanel";
 import {
   clientDetailReducer,
@@ -74,6 +75,7 @@ export function ClientPage() {
       return;
     }
     dispatch({ type: "loading" });
+    writeLastViewedClientId(clientId);
     void loadClientView(clientId, state.selectedAssetId);
   }, [clientId]);
 

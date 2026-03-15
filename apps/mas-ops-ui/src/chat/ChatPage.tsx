@@ -7,11 +7,13 @@ export function ChatPage() {
   return (
     <>
       <section className="hero">
-        <span className="eyebrow">Global Chat</span>
-        <h2>Portfolio assistant</h2>
+        <span className="eyebrow">Portfolio Chat</span>
+        <h2>Read-only portfolio summary</h2>
         <p>
-          Global chat sessions are persisted through the ops-plane chat API and
-          answered from authorized Postgres-backed portfolio read models.
+          Use this as a helper when you want a summary across authorized clients.
+          It is not the main investigation workspace and it does not run
+          diagnostics or remediation. For active work, open a client and then the
+          incident cockpit.
         </p>
       </section>
       <ChatSessionPanel

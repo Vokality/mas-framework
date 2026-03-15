@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+dist
+build
+apps/mas-ops-ui/node_modules
+apps/mas-ops-ui/dist
+apps/mas-ops-ui/*.tsbuildinfo
+packages/*/src/**/*.pyc

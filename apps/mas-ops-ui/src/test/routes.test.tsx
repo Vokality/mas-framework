@@ -78,7 +78,12 @@ describe("MAS Ops UI Phase 1 routes", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(await screen.findByText("Acme Corp")).toBeInTheDocument();
+    expect(await screen.findByText("Client triage")).toBeInTheDocument();
+    expect(await screen.findAllByText("Acme Corp")).toHaveLength(2);
+    expect(
+      await screen.findByRole("link", { name: "Open Priority Client" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Dense triage view")).toBeInTheDocument();
   });
 
   test("portfolio stream updates the current view without polling", async () => {
@@ -120,7 +125,7 @@ describe("MAS Ops UI Phase 1 routes", () => {
     ]);
 
     renderOpsUi("/");
-    expect(await screen.findByText("Acme Corp")).toBeInTheDocument();
+    expect(await screen.findAllByText("Acme Corp")).toHaveLength(2);
 
     const portfolioStream = MockEventSource.instances[0];
     await act(async () => {
@@ -145,7 +150,7 @@ describe("MAS Ops UI Phase 1 routes", () => {
       );
     });
 
-    expect(await screen.findByText("Acme Corp Updated")).toBeInTheDocument();
+    expect(await screen.findAllByText("Acme Corp Updated")).toHaveLength(2);
   });
 
   test("client drill-in loads incidents and asset detail", async () => {
@@ -1266,7 +1271,7 @@ describe("MAS Ops UI Phase 1 routes", () => {
 
     renderOpsUi("/chat");
 
-    expect(await screen.findByText("Portfolio assistant")).toBeInTheDocument();
+    expect(await screen.findByText("Read-only portfolio summary")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Create Session" })).toBeInTheDocument();
   });
 });

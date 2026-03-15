@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -26,6 +27,8 @@ class Database:
             future=True,
             connect_args=connect_args,
         )
+        if settings.database_url.startswith("sqlite+aiosqlite://"):
+            event.listen(self.engine.sync_engine, "connect", _enable_sqlite_foreign_keys)
         self.session_factory = async_sessionmaker(
             bind=self.engine,
             expire_on_commit=False,
@@ -42,6 +45,14 @@ class Database:
         """Dispose the underlying SQLAlchemy engine."""
 
         await self.engine.dispose()
+
+
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
+    """Enable SQLite foreign-key enforcement for every new connection."""
+
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 __all__ = ["Database"]

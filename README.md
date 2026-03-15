@@ -93,6 +93,31 @@ bash make_certs.sh
 uv run --package mas-runtime python -m mas_runtime
 ```
 
+## Docker Compose
+
+Run the local stack with UI, API, Postgres, Redis, and a containerized
+`mas-runtime` control plane:
+
+```bash
+docker compose up --build
+```
+
+Endpoints:
+- UI: [http://localhost:4173](http://localhost:4173)
+- API: [http://localhost:8080/healthz](http://localhost:8080/healthz)
+- MAS Runtime: `localhost:50051`
+- Postgres: `localhost:5432`
+- Redis: `localhost:6379`
+
+Default admin credentials:
+- email: `admin@example.com`
+- password: `admin123`
+
+The compose stack runs idempotent database migration and admin-bootstrap jobs
+before the API starts. It also enables Docker-backed Phase 5 monitoring so the
+containerized `mas-runtime` shows up as a real `linux_host` asset in the UI
+instead of loading pre-seeded demo incidents.
+
 ## Development
 
 ```bash

@@ -23,6 +23,13 @@ from .conftest import (
 
 
 @pytest.mark.asyncio
+async def test_healthz(api_client) -> None:
+    response = await api_client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
 async def test_auth_login_restore_logout(
     api_client, seed_user, login, session_cookie_name
 ) -> None:
