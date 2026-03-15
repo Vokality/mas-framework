@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from mas_msp_ai import DurableTaskRunner
-from mas_msp_contracts import ChatScope, OperatorChatRequest
+from mas_msp_contracts import ChatScope, ChatTurnState, OperatorChatRequest
 
 from mas_ops_api.auth.types import AuthenticatedUser, UserRole
 from mas_ops_api.chat.portfolio_assistant import PortfolioAssistant
@@ -137,14 +137,28 @@ class ChatExecutionService:
                 chat_session = await session.get(ChatSession, chat_session_id)
                 if chat_session is None:
                     raise LookupError("chat session was not found")
-                await self._chat_service.complete_turn(
-                    session,
-                    chat_session=chat_session,
-                    turn_id=turn_id,
-                    assistant_content=response.markdown_summary,
-                    stream_service=self._stream_service,
-                    approval_id=response.approval_id,
-                )
+                if response.state is ChatTurnState.WAITING_FOR_APPROVAL:
+                    if response.approval_id is None:
+                        raise LookupError(
+                            "approval-backed chat response did not include an approval_id"
+                        )
+                    await self._chat_service.pause_turn_for_approval(
+                        session,
+                        chat_session=chat_session,
+                        turn_id=turn_id,
+                        assistant_content=response.markdown_summary,
+                        stream_service=self._stream_service,
+                        approval_id=response.approval_id,
+                    )
+                else:
+                    await self._chat_service.complete_turn(
+                        session,
+                        chat_session=chat_session,
+                        turn_id=turn_id,
+                        assistant_content=response.markdown_summary,
+                        stream_service=self._stream_service,
+                        approval_id=response.approval_id,
+                    )
         except Exception as exc:
             await self._fail_turn(
                 chat_session_id=chat_session_id, turn_id=turn_id, error=exc

@@ -2,6 +2,7 @@ import { useEffect, useReducer } from "react";
 import { useParams } from "react-router-dom";
 
 import { ApiError, masOpsApiClient } from "../api/client";
+import { useAuth } from "../auth/AuthProvider";
 import { IncidentChatPanel } from "../chat";
 import { useManagedStream } from "../streams";
 import {
@@ -11,6 +12,7 @@ import {
 
 export function IncidentPage() {
   const { incidentId = "" } = useParams();
+  const auth = useAuth();
   const [state, dispatch] = useReducer(
     incidentPageReducer,
     initialIncidentPageState,
@@ -18,13 +20,23 @@ export function IncidentPage() {
 
   async function loadIncidentView(targetIncidentId: string) {
     try {
-      const [incident, activity] = await Promise.all([
-        masOpsApiClient.getIncident(targetIncidentId),
-        masOpsApiClient.listIncidentActivity(targetIncidentId),
-      ]);
-      dispatch({ type: "loaded", activity, incident });
+      const incident = await masOpsApiClient.getIncident(targetIncidentId);
+      dispatch({ type: "loaded", incident });
     } catch (error) {
       console.error("Failed to load incident cockpit", error);
+      dispatch({ type: "failed", message: getIncidentErrorMessage(error) });
+    }
+  }
+
+  async function handleApprovalDecision(
+    approvalId: string,
+    decision: "approve" | "reject",
+  ) {
+    try {
+      await masOpsApiClient.submitApprovalDecision(approvalId, { decision });
+      await loadIncidentView(incidentId);
+    } catch (error) {
+      console.error("Failed to submit incident approval decision", error);
       dispatch({ type: "failed", message: getIncidentErrorMessage(error) });
     }
   }
@@ -48,6 +60,9 @@ export function IncidentPage() {
       "activity.appended",
       "approval.requested",
       "approval.resolved",
+      "approval.executed",
+      "approval.expired",
+      "approval.cancelled",
     ],
     liveUrl:
       incidentId.length > 0 ? masOpsApiClient.getIncidentStreamUrl(incidentId) : "",
@@ -90,8 +105,8 @@ export function IncidentPage() {
         <span className="eyebrow">Incident Cockpit</span>
         <h2>{state.incident?.summary ?? incidentId}</h2>
         <p>
-          Incident detail, evidence, recommendations, and incident-scoped chat are
-          loaded from the Phase 3 ops-plane API and incident stream.
+          Incident detail, evidence, approvals, recommendations, and incident-scoped
+          chat are loaded from the ops-plane incident API and stream.
         </p>
         {state.status === "ready" && state.errorMessage ? (
           <p className="form-error">{state.errorMessage}</p>
@@ -131,6 +146,42 @@ export function IncidentPage() {
           </div>
         </article>
       </section>
+      {state.incident && (state.incident.approvals?.length ?? 0) > 0 ? (
+        <section className="grid">
+          <article className="card full-width-card">
+            <h3>Approvals</h3>
+            <div className="list">
+              {state.incident.approvals?.map((approval) => (
+                <article className="list-item" key={approval.approval_id}>
+                  <strong>
+                    {approval.title} | {approval.state}
+                  </strong>
+                  <span>{approval.risk_summary}</span>
+                  {approval.state === "pending" && auth.session?.role !== "viewer" ? (
+                    <span className="card-actions">
+                      <button
+                        onClick={() => {
+                          void handleApprovalDecision(approval.approval_id, "approve");
+                        }}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          void handleApprovalDecision(approval.approval_id, "reject");
+                        }}
+                      >
+                        Reject
+                      </button>
+                    </span>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </article>
+        </section>
+      ) : null}
       <section className="grid two-up">
         <article className="card">
           <h3>Affected Assets</h3>

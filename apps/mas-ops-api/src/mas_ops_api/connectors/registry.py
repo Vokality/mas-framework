@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from mas_msp_contracts import (
+    ApprovalDecision,
     ChatTurnState,
+    ConfigValidationResult,
     OperatorChatRequest,
     OperatorChatResponse,
     PortfolioEvent,
 )
+from mas_msp_core import ApprovalCancellation
 
 from mas_ops_api.connectors.protocol import FabricConnector
 
@@ -42,13 +45,30 @@ class NullFabricConnector:
         del event
         return None
 
+    async def dispatch_approval_decision(
+        self,
+        *,
+        decision: ApprovalDecision,
+    ) -> None:
+        del decision
+        return None
+
+    async def dispatch_approval_cancellation(
+        self,
+        *,
+        cancellation: ApprovalCancellation,
+    ) -> None:
+        del cancellation
+        return None
+
     async def request_config_validation(
         self,
         *,
         client_id: str,
         config_apply_run_id: str,
-    ) -> None:
-        return None
+    ) -> ConfigValidationResult:
+        del client_id, config_apply_run_id
+        raise LookupError("no config validation connector is configured")
 
     async def request_config_apply(
         self,

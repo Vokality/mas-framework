@@ -66,7 +66,9 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
 
     async def list_assets_for_incident(self, incident_id: str) -> list[AssetRef]:
         async with self._database.session_factory() as session:
-            assets = await PortfolioQueries.list_assets_for_incident(session, incident_id)
+            assets = await PortfolioQueries.list_assets_for_incident(
+                session, incident_id
+            )
             return [_asset_ref(asset) for asset in assets]
 
     async def list_activity_for_incident(
@@ -74,7 +76,9 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
         incident_id: str,
     ) -> list[JSONObject]:
         async with self._database.session_factory() as session:
-            rows = await PortfolioQueries.list_activity_for_incident(session, incident_id)
+            rows = await PortfolioQueries.list_activity_for_incident(
+                session, incident_id
+            )
             return [
                 {
                     "activity_id": row.activity_id,
@@ -90,7 +94,9 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
         incident_id: str,
     ) -> list[EvidenceBundle]:
         async with self._database.session_factory() as session:
-            rows = await PortfolioQueries.list_evidence_for_incident(session, incident_id)
+            rows = await PortfolioQueries.list_evidence_for_incident(
+                session, incident_id
+            )
             return [
                 EvidenceBundle(
                     evidence_bundle_id=row.evidence_bundle_id,
@@ -135,7 +141,10 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
                     asset_ids=asset_ids,
                     opened_at=occurred_at,
                 )
-            incident, stream_events = await self._incident_projection_service.persist_summary(
+            (
+                incident,
+                stream_events,
+            ) = await self._incident_projection_service.persist_summary(
                 session,
                 incident_id=incident_id,
                 summary=summary,
@@ -175,7 +184,10 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
     ) -> IncidentRecord:
         stream_events = []
         async with self._database.session_factory() as session:
-            incident, stream_events = await self._incident_projection_service.persist_summary(
+            (
+                incident,
+                stream_events,
+            ) = await self._incident_projection_service.persist_summary(
                 session,
                 incident_id=incident_id,
                 summary=summary,
@@ -210,7 +222,10 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
     ) -> None:
         stream_events = []
         async with self._database.session_factory() as session:
-            _activity, stream_events = await self._incident_projection_service.append_activity(
+            (
+                _activity,
+                stream_events,
+            ) = await self._incident_projection_service.append_activity(
                 session,
                 incident_id=incident_id,
                 event_type=event_type,

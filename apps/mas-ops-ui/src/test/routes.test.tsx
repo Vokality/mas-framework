@@ -600,71 +600,89 @@ describe("MAS Ops UI Phase 1 routes", () => {
         path: `/incidents/${INCIDENT_ID}`,
         response: {
           body: {
-              incident_id: INCIDENT_ID,
-              client_id: CLIENT_ID,
-              fabric_id: FABRIC_ID,
-              state: "investigating",
-              severity: "major",
-              summary: "Primary uplink is unstable",
-              recommended_actions: [
-                {
-                  title: "Review the latest diagnostic evidence",
-                  details: "Use the newest evidence bundle before taking action.",
-                },
-              ],
-              assets: [
-                {
-                  asset_id: ASSET_ID,
-                  client_id: CLIENT_ID,
-                  fabric_id: FABRIC_ID,
-                  asset_kind: "network_device",
-                  vendor: "Cisco",
-                  model: "Catalyst 9300",
-                  hostname: "edge-sw-01",
-                  mgmt_address: "10.0.0.10",
-                  site: "nyc-1",
-                  tags: ["core"],
-                  health_state: "degraded",
-                  health_observed_at: "2026-03-15T00:00:00Z",
-                  last_alert_at: "2026-03-15T00:00:00Z",
-                  updated_at: "2026-03-15T00:00:00Z",
-                },
-              ],
-              evidence_bundles: [
-                {
-                  evidence_bundle_id: "evidence-1",
-                  incident_id: INCIDENT_ID,
-                  asset_id: ASSET_ID,
-                  client_id: CLIENT_ID,
-                  fabric_id: FABRIC_ID,
-                  collected_at: "2026-03-15T00:01:00Z",
-                  summary: "Diagnostics confirmed the primary uplink is down.",
-                  items: [],
-                },
-              ],
-              opened_at: "2026-03-15T00:00:00Z",
-              updated_at: "2026-03-15T00:00:00Z",
-            },
+            incident_id: INCIDENT_ID,
+            client_id: CLIENT_ID,
+            fabric_id: FABRIC_ID,
+            state: "awaiting_approval",
+            severity: "major",
+            summary: "Primary uplink is unstable",
+            recommended_actions: [
+              {
+                title: "Review the latest diagnostic evidence",
+                details: "Use the newest evidence bundle before taking action.",
+              },
+            ],
+            activity: [
+              {
+                activity_id: 1,
+                source_event_id: "activity-1",
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                incident_id: INCIDENT_ID,
+                event_type: "incident.updated",
+                subject_type: "incident",
+                subject_id: INCIDENT_ID,
+                payload: { summary: "Investigation started" },
+                occurred_at: "2026-03-15T00:00:00Z",
+              },
+            ],
+            approvals: [
+              {
+                approval_id: "approval-incident-1",
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                incident_id: INCIDENT_ID,
+                state: "pending",
+                action_kind: "network.remediation",
+                title: "Bounce primary uplink",
+                requested_at: "2026-03-15T00:02:00Z",
+                expires_at: "2026-03-15T01:02:00Z",
+                requested_by_agent: "core-orchestrator",
+                payload: { action_scope: "incident_remediation" },
+                risk_summary: "May briefly impact the primary uplink.",
+                decided_by_user_id: null,
+                decision_reason: null,
+                decided_at: null,
+                approved_at: null,
+                rejected_at: null,
+                expired_at: null,
+                cancelled_at: null,
+                executed_at: null,
+              },
+            ],
+            assets: [
+              {
+                asset_id: ASSET_ID,
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                asset_kind: "network_device",
+                vendor: "Cisco",
+                model: "Catalyst 9300",
+                hostname: "edge-sw-01",
+                mgmt_address: "10.0.0.10",
+                site: "nyc-1",
+                tags: ["core"],
+                health_state: "degraded",
+                health_observed_at: "2026-03-15T00:00:00Z",
+                last_alert_at: "2026-03-15T00:00:00Z",
+                updated_at: "2026-03-15T00:00:00Z",
+              },
+            ],
+            evidence_bundles: [
+              {
+                evidence_bundle_id: "evidence-1",
+                incident_id: INCIDENT_ID,
+                asset_id: ASSET_ID,
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                collected_at: "2026-03-15T00:01:00Z",
+                summary: "Diagnostics confirmed the primary uplink is down.",
+                items: [],
+              },
+            ],
+            opened_at: "2026-03-15T00:00:00Z",
+            updated_at: "2026-03-15T00:00:00Z",
           },
-      },
-      {
-        method: "GET",
-        path: `/incidents/${INCIDENT_ID}/activity`,
-        response: {
-          body: [
-            {
-              activity_id: 1,
-              source_event_id: "activity-1",
-              client_id: CLIENT_ID,
-              fabric_id: FABRIC_ID,
-              incident_id: INCIDENT_ID,
-              event_type: "incident.updated",
-              subject_type: "incident",
-              subject_id: INCIDENT_ID,
-              payload: { summary: "Investigation started" },
-              occurred_at: "2026-03-15T00:00:00Z",
-            },
-          ],
         },
       },
       {
@@ -679,6 +697,8 @@ describe("MAS Ops UI Phase 1 routes", () => {
     expect(await screen.findByText("Primary uplink is unstable")).toBeInTheDocument();
     expect(await screen.findByText("Diagnostics confirmed the primary uplink is down.")).toBeInTheDocument();
     expect(await screen.findByText("Review the latest diagnostic evidence")).toBeInTheDocument();
+    expect(await screen.findByText(/Bounce primary uplink/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Create Session" })).toBeInTheDocument();
   });
 
@@ -766,6 +786,42 @@ describe("MAS Ops UI Phase 1 routes", () => {
       },
       {
         method: "GET",
+        path: `/clients/${CLIENT_ID}/config/runs`,
+        response: {
+          body: {
+            validation_runs: [
+              {
+                config_apply_run_id: "validation-1",
+                client_id: CLIENT_ID,
+                desired_state_version: 2,
+                status: "valid",
+                errors: [],
+                warnings: [],
+                requested_by_user_id: "user-6",
+                requested_at: "2026-03-15T00:01:00Z",
+                validated_at: "2026-03-15T00:01:05Z",
+              },
+            ],
+            apply_runs: [
+              {
+                config_apply_run_id: "apply-1",
+                client_id: CLIENT_ID,
+                desired_state_version: 2,
+                status: "pending",
+                approval_id: "approval-config-1",
+                requested_by_user_id: "user-6",
+                requested_at: "2026-03-15T00:02:00Z",
+                started_at: null,
+                completed_at: null,
+                error_summary: null,
+                steps: [],
+              },
+            ],
+          },
+        },
+      },
+      {
+        method: "GET",
         path: `/streams/clients/${CLIENT_ID}?replay_only=true`,
         response: { text: "" },
       },
@@ -774,7 +830,116 @@ describe("MAS Ops UI Phase 1 routes", () => {
     renderOpsUi(`/clients/${CLIENT_ID}/config`);
 
     expect(await screen.findByText(/Version 2/)).toBeInTheDocument();
+    expect(await screen.findByText(/Apply: pending/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Save Desired State" })).toBeInTheDocument();
+  });
+
+  test("config console cancels a pending apply run", async () => {
+    installMockFetch([
+      {
+        method: "GET",
+        path: "/auth/session",
+        response: {
+          body: {
+            user_id: "user-6",
+            email: "admin@example.com",
+            display_name: "Admin User",
+            role: "admin",
+            client_ids: [],
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/clients/${CLIENT_ID}/config/desired-state`,
+        response: {
+          body: {
+            client_id: CLIENT_ID,
+            fabric_id: FABRIC_ID,
+            desired_state_version: 2,
+            tenant_metadata: { display_name: "Acme Corp" },
+            policy: { default_mode: "deny" },
+            inventory_sources: [{ kind: "snmp" }],
+            notification_routes: [{ kind: "email" }],
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/clients/${CLIENT_ID}/config/runs`,
+        response: {
+          body: {
+            validation_runs: [],
+            apply_runs: [
+              {
+                config_apply_run_id: "apply-1",
+                client_id: CLIENT_ID,
+                desired_state_version: 2,
+                status: "pending",
+                approval_id: "approval-config-1",
+                requested_by_user_id: "user-6",
+                requested_at: "2026-03-15T00:02:00Z",
+                started_at: null,
+                completed_at: null,
+                error_summary: null,
+                steps: [],
+              },
+            ],
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/streams/clients/${CLIENT_ID}?replay_only=true`,
+        response: { text: "" },
+      },
+      {
+        method: "POST",
+        path: `/clients/${CLIENT_ID}/config/runs/apply-1/cancel`,
+        response: {
+          body: {
+            config_apply_run_id: "apply-1",
+            client_id: CLIENT_ID,
+            desired_state_version: 2,
+            status: "cancelled",
+            started_at: null,
+            completed_at: "2026-03-15T00:03:00Z",
+            error_summary: "Cancelled from config console",
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/clients/${CLIENT_ID}/config/runs`,
+        response: {
+          body: {
+            validation_runs: [],
+            apply_runs: [
+              {
+                config_apply_run_id: "apply-1",
+                client_id: CLIENT_ID,
+                desired_state_version: 2,
+                status: "cancelled",
+                approval_id: "approval-config-1",
+                requested_by_user_id: "user-6",
+                requested_at: "2026-03-15T00:02:00Z",
+                started_at: null,
+                completed_at: "2026-03-15T00:03:00Z",
+                error_summary: "Cancelled from config console",
+                steps: [],
+              },
+            ],
+          },
+        },
+      },
+    ]);
+
+    renderOpsUi(`/clients/${CLIENT_ID}/config`);
+
+    expect(await screen.findByText(/Apply: pending/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Pending Apply" }));
+
+    expect(await screen.findByText(/Apply: cancelled/)).toBeInTheDocument();
   });
 
   test("global chat shell loads", async () => {

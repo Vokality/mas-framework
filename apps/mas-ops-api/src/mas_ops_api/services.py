@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mas_ops_api.approvals import ApprovalService
+from mas_ops_api.audit import AuditService
 from mas_ops_api.auth.service import AuthService
 from mas_ops_api.chat import ChatExecutionService, ChatService, PortfolioAssistant
 from mas_ops_api.config.service import ConfigService
@@ -21,7 +23,9 @@ class OpsApiServices:
     """Shared application services attached to FastAPI state."""
 
     settings: OpsApiSettings
+    approval_service: ApprovalService
     database: Database
+    audit_service: AuditService
     auth_service: AuthService
     chat_service: ChatService
     chat_execution_service: ChatExecutionService

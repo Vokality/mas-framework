@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from mas_msp_contracts import OperatorChatRequest, OperatorChatResponse, PortfolioEvent
+from mas_msp_contracts import (
+    ApprovalDecision,
+    ConfigValidationResult,
+    OperatorChatRequest,
+    OperatorChatResponse,
+    PortfolioEvent,
+)
+from mas_msp_core import ApprovalCancellation
 
 
 class FabricConnector(Protocol):
@@ -22,12 +29,24 @@ class FabricConnector(Protocol):
         event: PortfolioEvent,
     ) -> None: ...
 
+    async def dispatch_approval_decision(
+        self,
+        *,
+        decision: ApprovalDecision,
+    ) -> None: ...
+
+    async def dispatch_approval_cancellation(
+        self,
+        *,
+        cancellation: ApprovalCancellation,
+    ) -> None: ...
+
     async def request_config_validation(
         self,
         *,
         client_id: str,
         config_apply_run_id: str,
-    ) -> None: ...
+    ) -> ConfigValidationResult: ...
 
     async def request_config_apply(
         self,

@@ -6,9 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mas_msp_contracts import ApprovalDecisionValue, ApprovalState
+from mas_msp_contracts import ApprovalDecision, ApprovalDecisionValue, ApprovalState
 
-from mas_ops_api.api.dependencies import get_stream_service, load_approval_for_user
+from mas_ops_api.api.dependencies import (
+    get_command_connector_registry,
+    load_approval_for_user,
+)
 from mas_ops_api.api.schemas import ApprovalDecisionRequest, ApprovalResponse
 from mas_ops_api.auth.dependencies import (
     get_current_user,
@@ -18,7 +21,6 @@ from mas_ops_api.auth.dependencies import (
 from mas_ops_api.auth.types import AuthenticatedUser, UserRole
 from mas_ops_api.db.base import utc_now
 from mas_ops_api.db.models import ApprovalRequestRecord
-from mas_ops_api.streams.service import StreamService
 
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -50,7 +52,7 @@ async def submit_approval_decision(
         require_roles(UserRole.ADMIN, UserRole.OPERATOR)
     ),
     session: AsyncSession = Depends(get_db_session),
-    stream_service: StreamService = Depends(get_stream_service),
+    command_connector_registry=Depends(get_command_connector_registry),
 ) -> ApprovalResponse:
     """Submit a human approval decision for a pending approval."""
 
@@ -62,36 +64,24 @@ async def submit_approval_decision(
     if approval.state != ApprovalState.PENDING.value:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="not_pending")
 
-    now = utc_now()
-    approval.decided_by_user_id = current_user.user_id
-    approval.decision_reason = payload.reason
-    approval.decided_at = now
-    if payload.decision is ApprovalDecisionValue.APPROVE:
-        approval.state = ApprovalState.APPROVED.value
-        approval.approved_at = now
-    else:
-        approval.state = ApprovalState.REJECTED.value
-        approval.rejected_at = now
-
-    stream_event = stream_service.build_event(
-        event_name="approval.resolved",
-        client_id=approval.client_id,
-        incident_id=approval.incident_id,
-        chat_session_id=None,
-        subject_type="approval_request",
-        subject_id=approval.approval_id,
-        payload={
-            "approval_id": approval.approval_id,
-            "state": approval.state,
-            "decision": payload.decision.value,
-        },
-        occurred_at=now,
-    )
-    session.add(stream_event)
-    await session.commit()
+    try:
+        await command_connector_registry.get(
+            approval.client_id
+        ).dispatch_approval_decision(
+            decision=ApprovalDecision(
+                approval_id=approval.approval_id,
+                decided_by_user_id=current_user.user_id,
+                decision=ApprovalDecisionValue(payload.decision),
+                decided_at=utc_now(),
+                reason=payload.reason,
+            )
+        )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     await session.refresh(approval)
-    await session.refresh(stream_event)
-    await stream_service.publish(stream_event)
     return ApprovalResponse.model_validate(approval)
 
 

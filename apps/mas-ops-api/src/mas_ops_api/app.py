@@ -9,10 +9,24 @@ from starlette.middleware import Middleware
 from starlette.types import ASGIApp
 
 from mas_ops_api.api import api_router
+from mas_ops_api.audit import AuditService
+from mas_ops_api.approvals import (
+    ApprovalActionRouter,
+    ApprovalService,
+    ConfigApplyActionHandler,
+    IncidentRemediationActionHandler,
+    OpsPlaneApprovalStore,
+)
 from mas_ops_api.auth.passwords import PasswordService
 from mas_ops_api.auth.service import AuthService
 from mas_ops_api.chat import ChatExecutionService, ChatService, PortfolioAssistant
-from mas_ops_api.config.service import ConfigService
+from mas_ops_api.config import (
+    ConfigRunService,
+    ConfigService,
+    DesiredStateService,
+    OpsPlaneConfigRunStore,
+    OpsPlaneDesiredStateStore,
+)
 from mas_ops_api.connectors import (
     ConnectorRegistry,
     InProcessFabricConnector,
@@ -32,6 +46,7 @@ from mas_msp_ai import (
     FabricIncidentHandler,
     SummaryComposer,
 )
+from mas_msp_core import ApprovalController, ConfigDeployerAgent
 from mas_msp_core import NotifierTransportAgent, OpsBridgeAgent
 from mas_msp_network import NetworkDiagnosticsAgent
 
@@ -63,11 +78,13 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
     database = Database(app_settings)
     password_service = PasswordService()
     stream_service = StreamService(app_settings)
+    audit_service = AuditService()
     durable_task_runner = DurableTaskRunner()
     summary_composer = SummaryComposer()
     core_orchestrator = CoreOrchestratorAgent(summary_composer=summary_composer)
     network_diagnostics_agent = NetworkDiagnosticsAgent()
     incident_projection_service = IncidentProjectionService(stream_service)
+    chat_service = ChatService(stream_service)
     incident_gateway = OpsPlaneIncidentGateway(
         database=database,
         incident_projection_service=incident_projection_service,
@@ -77,8 +94,44 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         incident_context_reader=incident_gateway,
         transport=incident_gateway,
     )
+    approval_action_router = ApprovalActionRouter()
+    approval_controller = ApprovalController(
+        store=OpsPlaneApprovalStore(
+            database=database,
+            audit_service=audit_service,
+            stream_service=stream_service,
+        ),
+        outcome_handler=approval_action_router,
+    )
+    approval_service = ApprovalService(
+        approval_controller=approval_controller,
+        expiry_poll_seconds=app_settings.approval_expiry_poll_seconds,
+    )
+    config_deployer = ConfigDeployerAgent(
+        desired_state_store=OpsPlaneDesiredStateStore(database=database),
+        run_store=OpsPlaneConfigRunStore(
+            database=database,
+            audit_service=audit_service,
+            stream_service=stream_service,
+        ),
+        approval_controller=approval_controller,
+    )
+    approval_action_router.register(
+        "network.remediation",
+        IncidentRemediationActionHandler(
+            database=database,
+            chat_service=chat_service,
+            incident_projection_service=incident_projection_service,
+            stream_service=stream_service,
+        ),
+    )
+    approval_action_router.register(
+        "config.apply",
+        ConfigApplyActionHandler(config_deployer=config_deployer),
+    )
     fabric_incident_handler = FabricIncidentHandler(
         incident_context_reader=incident_gateway,
+        approval_controller=approval_controller,
         notifier=notifier_transport_agent,
         orchestrator=core_orchestrator,
         diagnostics_executor=network_diagnostics_agent,
@@ -86,6 +139,8 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
     ops_bridge_agent = OpsBridgeAgent(
         incident_chat_handler=fabric_incident_handler,
         visibility_alert_handler=fabric_incident_handler,
+        approval_controller=approval_controller,
+        config_deployer=config_deployer,
     )
     command_connector_registry = ConnectorRegistry(
         factory=lambda client_id: InProcessFabricConnector(
@@ -105,7 +160,6 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         alert_dispatcher=dispatch_alert,
     )
     portfolio_assistant = PortfolioAssistant()
-    chat_service = ChatService(stream_service)
     chat_execution_service = ChatExecutionService(
         database=database,
         chat_service=chat_service,
@@ -127,11 +181,22 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         )
     services = OpsApiServices(
         settings=app_settings,
+        approval_service=approval_service,
         database=database,
+        audit_service=audit_service,
         auth_service=AuthService(app_settings, password_service=password_service),
         chat_service=chat_service,
         chat_execution_service=chat_execution_service,
-        config_service=ConfigService(stream_service),
+        config_service=ConfigService(
+            desired_state_service=DesiredStateService(
+                audit_service=audit_service,
+                stream_service=stream_service,
+            ),
+            run_service=ConfigRunService(
+                audit_service=audit_service,
+                stream_service=stream_service,
+            ),
+        ),
         command_connector_registry=command_connector_registry,
         durable_task_runner=durable_task_runner,
         incident_projection_service=incident_projection_service,
@@ -151,7 +216,9 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         app.state.services = services
         if app_settings.auto_create_schema:
             await create_schema(database.engine)
+        approval_service.start()
         yield
+        await approval_service.stop()
         await durable_task_runner.drain()
         await database.dispose()
 

@@ -51,6 +51,11 @@ class OpsApiSettings(BaseSettings):
         ge=100,
         description="Retry hint for SSE clients.",
     )
+    approval_expiry_poll_seconds: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Polling interval for expiring pending approvals; set to 0 to disable.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="MAS_OPS_API_",

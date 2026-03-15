@@ -1,10 +1,16 @@
-"""In-process connector used for local Phase 3 fabric orchestration."""
+"""In-process connector used for local fabric orchestration."""
 
 from __future__ import annotations
 
-from mas_msp_contracts import OperatorChatRequest, OperatorChatResponse, PortfolioEvent
+from mas_msp_contracts import (
+    ApprovalDecision,
+    ConfigValidationResult,
+    OperatorChatRequest,
+    OperatorChatResponse,
+    PortfolioEvent,
+)
 
-from mas_msp_core import OpsBridgeAgent
+from mas_msp_core import ApprovalCancellation, OpsBridgeAgent
 
 
 class InProcessFabricConnector:
@@ -33,17 +39,42 @@ class InProcessFabricConnector:
         """Forward one visibility alert into fabric-local incident ownership."""
 
         if event.client_id != self._client_id:
-            raise ValueError("visibility event client_id must match connector client_id")
+            raise ValueError(
+                "visibility event client_id must match connector client_id"
+            )
         await self._bridge.dispatch_visibility_alert(event=event)
+
+    async def dispatch_approval_decision(
+        self,
+        *,
+        decision: ApprovalDecision,
+    ) -> None:
+        """Forward one approval decision into the local bridge."""
+
+        await self._bridge.dispatch_approval_decision(decision=decision)
+
+    async def dispatch_approval_cancellation(
+        self,
+        *,
+        cancellation: ApprovalCancellation,
+    ) -> None:
+        """Forward one approval cancellation into the local bridge."""
+
+        await self._bridge.dispatch_approval_cancellation(cancellation=cancellation)
 
     async def request_config_validation(
         self,
         *,
         client_id: str,
         config_apply_run_id: str,
-    ) -> None:
-        del client_id, config_apply_run_id
-        return None
+    ) -> ConfigValidationResult:
+        if client_id != self._client_id:
+            raise ValueError(
+                "config validation client_id must match connector client_id"
+            )
+        return await self._bridge.dispatch_config_validation(
+            config_apply_run_id=config_apply_run_id
+        )
 
     async def request_config_apply(
         self,
@@ -51,8 +82,11 @@ class InProcessFabricConnector:
         client_id: str,
         config_apply_run_id: str,
     ) -> None:
-        del client_id, config_apply_run_id
-        return None
+        if client_id != self._client_id:
+            raise ValueError("config apply client_id must match connector client_id")
+        await self._bridge.dispatch_config_apply(
+            config_apply_run_id=config_apply_run_id
+        )
 
 
 __all__ = ["InProcessFabricConnector"]

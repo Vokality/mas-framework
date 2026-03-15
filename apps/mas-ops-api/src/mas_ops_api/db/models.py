@@ -331,6 +331,8 @@ class ConfigValidationRun(Base):
     status: Mapped[str] = mapped_column(String(32))
     errors: Mapped[list[str]] = mapped_column(JSON, default=list)
     warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    requested_by_user_id: Mapped[str] = mapped_column(String(36))
+    requested_at: Mapped[Any] = mapped_column(UtcDateTime(), default=utc_now)
     validated_at: Mapped[Any] = mapped_column(UtcDateTime(), default=utc_now)
 
 
@@ -347,9 +349,74 @@ class ConfigApplyRun(Base):
     )
     requested_by_user_id: Mapped[str] = mapped_column(String(36))
     requested_at: Mapped[Any] = mapped_column(UtcDateTime(), default=utc_now)
+    approval_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("approval_requests.approval_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     started_at: Mapped[Any | None] = mapped_column(UtcDateTime(), nullable=True)
     completed_at: Mapped[Any | None] = mapped_column(UtcDateTime(), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text(), nullable=True)
+
+
+class ConfigApplyStepRecord(Base):
+    """Ordered step-level progress for one config apply run."""
+
+    __tablename__ = "config_apply_steps"
+    __table_args__ = (
+        UniqueConstraint("config_apply_run_id", "step_index"),
+        Index("ix_config_apply_steps_run_order", "config_apply_run_id", "step_index"),
+    )
+
+    config_apply_step_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    config_apply_run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("config_apply_runs.config_apply_run_id", ondelete="CASCADE"),
+        index=True,
+    )
+    client_id: Mapped[str] = mapped_column(String(36), index=True)
+    step_index: Mapped[int] = mapped_column(Integer)
+    step_name: Mapped[str] = mapped_column(String(64))
+    outcome: Mapped[str] = mapped_column(String(32))
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[Any] = mapped_column(UtcDateTime(), default=utc_now)
+
+
+class OpsAuditEntry(Base):
+    """Durable operator-visible audit entry for writes and config transitions."""
+
+    __tablename__ = "ops_audit_entries"
+    __table_args__ = (
+        Index("ix_ops_audit_entries_client_id_occurred_at", "client_id", "occurred_at"),
+        Index(
+            "ix_ops_audit_entries_incident_id_occurred_at",
+            "incident_id",
+            "occurred_at",
+        ),
+    )
+
+    audit_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(36), index=True)
+    incident_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    approval_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    config_apply_run_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    actor_type: Mapped[str] = mapped_column(String(32))
+    actor_id: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str] = mapped_column(String(64))
+    target_id: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    outcome: Mapped[str] = mapped_column(String(32))
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[Any] = mapped_column(UtcDateTime(), default=utc_now)
 
 
 class OpsStreamEvent(Base):
@@ -385,9 +452,11 @@ __all__ = [
     "ChatMessage",
     "ChatSession",
     "ChatTurn",
+    "ConfigApplyStepRecord",
     "ConfigApplyRun",
     "ConfigDesiredStateRecord",
     "ConfigValidationRun",
+    "OpsAuditEntry",
     "OpsSession",
     "OpsStreamEvent",
     "OpsUser",

@@ -52,6 +52,12 @@ OPERATIONS = [
         "GET", "/clients/{client_id}/config/desired-state", "getDesiredState"
     ),
     OperationDefinition(
+        "POST",
+        "/clients/{client_id}/config/runs/{config_apply_run_id}/cancel",
+        "cancelConfigApplyRun",
+    ),
+    OperationDefinition("GET", "/clients/{client_id}/config/runs", "listConfigRuns"),
+    OperationDefinition(
         "PUT", "/clients/{client_id}/config/desired-state", "replaceDesiredState"
     ),
     OperationDefinition(
@@ -329,7 +335,10 @@ def render_operation(
         operation_definition.method.lower()
     ]
     parameters = operation.get("parameters", [])
-    path_parameters = [item for item in parameters if item.get("in") == "path"]
+    path_parameters = order_path_parameters(
+        operation_definition.path,
+        [item for item in parameters if item.get("in") == "path"],
+    )
     request_body = (
         operation.get("requestBody", {})
         .get("content", {})
@@ -379,7 +388,10 @@ def render_stream_operation(
         operation_definition.method.lower()
     ]
     parameters = operation.get("parameters", [])
-    path_parameters = [item for item in parameters if item.get("in") == "path"]
+    path_parameters = order_path_parameters(
+        operation_definition.path,
+        [item for item in parameters if item.get("in") == "path"],
+    )
     signature_parts = [
         f"{to_camel_case(parameter['name'])}: {render_schema_type(parameter['schema'], indent=0)}"
         for parameter in path_parameters
@@ -440,6 +452,23 @@ def render_path_template(path: str, path_parameters: list[dict[str, Any]]) -> st
             "${encodeURIComponent(String(" + camel_name + "))}",
         )
     return f"`{rendered}`"
+
+
+def order_path_parameters(
+    path: str,
+    path_parameters: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return path parameters in URI-template order instead of schema order."""
+
+    ordered_names = re.findall(r"{([^}]+)}", path)
+    parameters_by_name = {
+        parameter["name"]: parameter
+        for parameter in path_parameters
+        if isinstance(parameter.get("name"), str)
+    }
+    return [
+        parameters_by_name[name] for name in ordered_names if name in parameters_by_name
+    ]
 
 
 def render_type_alias(type_name: str, schema: dict[str, Any]) -> str:

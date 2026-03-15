@@ -53,8 +53,8 @@ export function ApprovalsPage() {
         <span className="eyebrow">Approvals</span>
         <h2>Approval inbox</h2>
         <p>
-          Approval requests are listed from the Phase 1 API, and operators or
-          admins can resolve visible items.
+          Approval requests are listed with full phase-4 lifecycle state, and
+          operators or admins can resolve visible items.
         </p>
         {state.status === "ready" && state.errorMessage ? (
           <p className="form-error">{state.errorMessage}</p>

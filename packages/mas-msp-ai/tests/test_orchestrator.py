@@ -8,6 +8,7 @@ import pytest
 from mas_msp_ai import CoreOrchestratorAgent, SummaryComposer
 from mas_msp_ai.toolsets import CoreOrchestratorToolset
 from mas_msp_contracts import (
+    ApprovalRequested,
     AssetKind,
     AssetRef,
     ChatScope,
@@ -30,6 +31,7 @@ TURN_ID = "55555555-5555-4555-8555-555555555555"
 REQUEST_ID = "66666666-6666-4666-8666-666666666666"
 ASSET_ID = "77777777-7777-4777-8777-777777777777"
 EVIDENCE_ID = "88888888-8888-4888-8888-888888888888"
+APPROVAL_ID = "99999999-9999-4999-8999-999999999999"
 
 
 def _asset() -> AssetRef:
@@ -89,6 +91,7 @@ class FakeToolset(CoreOrchestratorToolset):
     persisted_summaries: list[tuple[str, list[dict[str, object]]]] = field(
         default_factory=list
     )
+    approvals: list[ApprovalRequested] = field(default_factory=list)
 
     async def get_incident_context(
         self,
@@ -166,13 +169,23 @@ class FakeToolset(CoreOrchestratorToolset):
         )
         return self.incident
 
+    async def request_approval(
+        self,
+        approval_request: ApprovalRequested,
+    ) -> ApprovalRequested:
+        self.approvals.append(approval_request)
+        return approval_request
+
 
 @pytest.mark.asyncio
 async def test_orchestrator_requests_diagnostics_when_operator_asks_for_evidence() -> (
     None
 ):
     toolset = FakeToolset()
-    orchestrator = CoreOrchestratorAgent(summary_composer=SummaryComposer())
+    orchestrator = CoreOrchestratorAgent(
+        summary_composer=SummaryComposer(),
+        approval_id_factory=lambda: APPROVAL_ID,
+    )
 
     response = await orchestrator.handle_chat_request(
         _request("Collect more evidence about the unstable uplink."),
@@ -203,7 +216,10 @@ async def test_orchestrator_uses_existing_evidence_without_new_diagnostics() -> 
             )
         ]
     )
-    orchestrator = CoreOrchestratorAgent(summary_composer=SummaryComposer())
+    orchestrator = CoreOrchestratorAgent(
+        summary_composer=SummaryComposer(),
+        approval_id_factory=lambda: APPROVAL_ID,
+    )
 
     response = await orchestrator.handle_chat_request(
         _request("Summarize the current evidence for the incident."),
@@ -214,3 +230,37 @@ async def test_orchestrator_uses_existing_evidence_without_new_diagnostics() -> 
     assert response.evidence_bundle_ids == [EVIDENCE_ID]
     assert toolset.requested_diagnostics == []
     assert toolset.persisted_summaries
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_pauses_turn_and_requests_approval_for_write_actions() -> (
+    None
+):
+    toolset = FakeToolset(
+        recent_evidence=[
+            EvidenceBundle(
+                evidence_bundle_id=EVIDENCE_ID,
+                incident_id=INCIDENT_ID,
+                asset_id=ASSET_ID,
+                collected_at=datetime(2026, 3, 15, 12, 1, tzinfo=UTC),
+                items=[{"kind": "snapshot", "health_state": "degraded"}],
+                summary="Recent evidence already shows uplink degradation.",
+            )
+        ]
+    )
+    orchestrator = CoreOrchestratorAgent(
+        summary_composer=SummaryComposer(),
+        approval_id_factory=lambda: APPROVAL_ID,
+    )
+
+    response = await orchestrator.handle_chat_request(
+        _request("Bounce the uplink to restore service."),
+        toolset=toolset,
+    )
+
+    assert response.state is ChatTurnState.WAITING_FOR_APPROVAL
+    assert response.approval_id == APPROVAL_ID
+    assert toolset.requested_diagnostics == []
+    assert toolset.approvals[0].action_kind == "network.remediation"
+    assert toolset.approvals[0].incident_id == INCIDENT_ID
+    assert toolset.incident.state is IncidentState.AWAITING_APPROVAL

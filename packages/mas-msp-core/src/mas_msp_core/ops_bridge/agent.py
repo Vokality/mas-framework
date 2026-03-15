@@ -1,4 +1,4 @@
-"""Ops bridge agent for Phase 2 visibility and Phase 3 incident routing."""
+"""Ops bridge agent for phase 2 visibility, phase 3 chat, and phase 4 control."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from uuid import uuid4
 
 from mas_agent import Agent, AgentMessage, TlsClientConfig
 from mas_msp_contracts import (
+    ApprovalDecision,
     AlertRaised,
+    ConfigValidationResult,
     HealthSnapshot,
     IncidentRecord,
     OperatorChatRequest,
@@ -16,6 +18,12 @@ from mas_msp_contracts import (
 )
 
 from mas_msp_core.agent_ids import OPS_BRIDGE_AGENT_ID, build_ops_plane_connector_id
+from mas_msp_core.approvals import (
+    ApprovalCancellation,
+    ApprovalController,
+    ApprovalRecord,
+)
+from mas_msp_core.config import ConfigDeployerAgent
 from mas_msp_core.incidents import IncidentChatHandler, VisibilityAlertHandler
 from mas_msp_core.messages import PortfolioPublish
 
@@ -30,6 +38,8 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         tls: TlsClientConfig | None = None,
         incident_chat_handler: IncidentChatHandler | None = None,
         visibility_alert_handler: VisibilityAlertHandler | None = None,
+        approval_controller: ApprovalController | None = None,
+        config_deployer: ConfigDeployerAgent | None = None,
     ) -> None:
         super().__init__(
             OPS_BRIDGE_AGENT_ID,
@@ -39,6 +49,8 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         )
         self._incident_chat_handler = incident_chat_handler
         self._visibility_alert_handler = visibility_alert_handler
+        self._approval_controller = approval_controller
+        self._config_deployer = config_deployer
 
     @Agent.on("portfolio.publish", model=PortfolioPublish)
     async def handle_portfolio_publish(
@@ -183,11 +195,57 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         """Route one visibility alert into fabric-local incident ownership."""
 
         if event.event_type != "network.alert.raised":
-            raise ValueError("visibility dispatch requires a network.alert.raised event")
+            raise ValueError(
+                "visibility dispatch requires a network.alert.raised event"
+            )
         if self._visibility_alert_handler is None:
             raise LookupError("no visibility alert handler is configured")
         alert = AlertRaised.model_validate(event.payload["alert"])
         return await self._visibility_alert_handler.handle_visibility_alert(alert)
+
+    async def dispatch_approval_decision(
+        self,
+        *,
+        decision: ApprovalDecision,
+    ) -> ApprovalRecord:
+        """Route one approval decision into the phase-4 approval controller."""
+
+        if self._approval_controller is None:
+            raise LookupError("no approval controller is configured")
+        return await self._approval_controller.apply_decision(decision)
+
+    async def dispatch_approval_cancellation(
+        self,
+        *,
+        cancellation: ApprovalCancellation,
+    ) -> ApprovalRecord:
+        """Route one approval cancellation into the phase-4 approval controller."""
+
+        if self._approval_controller is None:
+            raise LookupError("no approval controller is configured")
+        return await self._approval_controller.cancel_request(cancellation)
+
+    async def dispatch_config_validation(
+        self,
+        *,
+        config_apply_run_id: str,
+    ) -> ConfigValidationResult:
+        """Route one validation request into the config deployer."""
+
+        if self._config_deployer is None:
+            raise LookupError("no config deployer is configured")
+        return await self._config_deployer.validate_run(config_apply_run_id)
+
+    async def dispatch_config_apply(
+        self,
+        *,
+        config_apply_run_id: str,
+    ) -> ApprovalRecord:
+        """Route one config-apply request into the config deployer."""
+
+        if self._config_deployer is None:
+            raise LookupError("no config deployer is configured")
+        return await self._config_deployer.request_apply(config_apply_run_id)
 
 
 __all__ = ["OpsBridgeAgent"]

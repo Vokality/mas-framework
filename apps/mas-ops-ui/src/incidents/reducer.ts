@@ -1,7 +1,4 @@
-import type {
-  ActivityEventResponse,
-  IncidentDetailResponse,
-} from "../api/client";
+import type { ActivityEventResponse, IncidentDetailResponse } from "../api/client";
 
 export type IncidentPageState = {
   activity: Array<ActivityEventResponse>;
@@ -11,11 +8,7 @@ export type IncidentPageState = {
 };
 
 export type IncidentPageAction =
-  | {
-      type: "loaded";
-      activity: Array<ActivityEventResponse>;
-      incident: IncidentDetailResponse;
-    }
+  | { type: "loaded"; incident: IncidentDetailResponse }
   | { type: "loading" }
   | { type: "failed"; message: string };
 
@@ -33,7 +26,7 @@ export function incidentPageReducer(
   switch (action.type) {
     case "loaded":
       return {
-        activity: action.activity,
+        activity: action.incident.activity ?? [],
         errorMessage: null,
         incident: action.incident,
         status: "ready",

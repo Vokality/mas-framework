@@ -1,37 +1,38 @@
 import type {
-  ConfigApplyResult,
   ConfigDesiredStateOutput,
-  ConfigValidationResult,
+  ConfigRunHistoryResponse,
 } from "../api/client";
 
 export type ConfigPageState = {
-  applyResult: ConfigApplyResult | null;
   desiredState: ConfigDesiredStateOutput | null;
   editorValue: string;
   errorMessage: string | null;
+  runHistory: ConfigRunHistoryResponse | null;
   saveStatus: "idle" | "saving";
   status: "loading" | "ready" | "error";
-  validationResult: ConfigValidationResult | null;
 };
 
 export type ConfigPageAction =
   | { type: "loading" }
-  | { type: "loaded"; desiredState: ConfigDesiredStateOutput }
+  | {
+      type: "loaded";
+      desiredState: ConfigDesiredStateOutput;
+      runHistory: ConfigRunHistoryResponse;
+    }
+  | { type: "desired_state_loaded"; desiredState: ConfigDesiredStateOutput }
+  | { type: "run_history_loaded"; runHistory: ConfigRunHistoryResponse }
   | { type: "editor_changed"; value: string }
   | { type: "save_started" }
   | { type: "save_finished" }
-  | { type: "validation_loaded"; result: ConfigValidationResult }
-  | { type: "apply_loaded"; result: ConfigApplyResult }
   | { type: "failed"; message: string };
 
 export const initialConfigPageState: ConfigPageState = {
-  applyResult: null,
   desiredState: null,
   editorValue: "",
   errorMessage: null,
+  runHistory: null,
   saveStatus: "idle",
   status: "loading",
-  validationResult: null,
 };
 
 export function configPageReducer(
@@ -47,18 +48,25 @@ export function configPageReducer(
         desiredState: action.desiredState,
         editorValue: JSON.stringify(action.desiredState, null, 2),
         errorMessage: null,
+        runHistory: action.runHistory,
         status: "ready",
       };
+    case "desired_state_loaded":
+      return {
+        ...state,
+        desiredState: action.desiredState,
+        editorValue: JSON.stringify(action.desiredState, null, 2),
+        errorMessage: null,
+        status: "ready",
+      };
+    case "run_history_loaded":
+      return { ...state, errorMessage: null, runHistory: action.runHistory, status: "ready" };
     case "editor_changed":
       return { ...state, editorValue: action.value };
     case "save_started":
       return { ...state, errorMessage: null, saveStatus: "saving" };
     case "save_finished":
       return { ...state, saveStatus: "idle" };
-    case "validation_loaded":
-      return { ...state, validationResult: action.result };
-    case "apply_loaded":
-      return { ...state, applyResult: action.result };
     case "failed":
       return {
         ...state,

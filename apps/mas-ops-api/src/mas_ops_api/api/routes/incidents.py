@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mas_ops_api.api.dependencies import load_incident_for_user
 from mas_ops_api.api.schemas import (
     ActivityEventResponse,
+    ApprovalResponse,
     AssetResponse,
     EvidenceBundleResponse,
     IncidentResponse,
@@ -35,12 +36,16 @@ async def get_incident(
         user=current_user,
     )
     assets = await PortfolioQueries.list_assets_for_incident(session, incident_id)
+    activity = await PortfolioQueries.list_activity_for_incident(session, incident_id)
+    approvals = await PortfolioQueries.list_approvals_for_incident(session, incident_id)
     evidence_bundles = await PortfolioQueries.list_evidence_for_incident(
         session, incident_id
     )
     return IncidentDetailResponse(
         **IncidentResponse.model_validate(incident).model_dump(),
         assets=[AssetResponse.model_validate(asset) for asset in assets],
+        activity=[ActivityEventResponse.model_validate(row) for row in activity],
+        approvals=[ApprovalResponse.model_validate(row) for row in approvals],
         evidence_bundles=[
             EvidenceBundleResponse.model_validate(bundle) for bundle in evidence_bundles
         ],

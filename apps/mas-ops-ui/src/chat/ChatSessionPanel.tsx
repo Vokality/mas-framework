@@ -103,6 +103,9 @@ export function ChatSessionPanel({
       "chat.completed",
       "approval.requested",
       "approval.resolved",
+      "approval.executed",
+      "approval.expired",
+      "approval.cancelled",
     ],
     liveUrl:
       state.session === null

@@ -166,6 +166,72 @@ class ChatService:
             approval_id=approval_id,
         )
 
+    async def pause_turn_for_approval(
+        self,
+        session: AsyncSession,
+        *,
+        chat_session: ChatSession,
+        turn_id: str,
+        assistant_content: str,
+        stream_service: StreamService,
+        approval_id: str,
+    ) -> ChatTurn:
+        """Persist an approval-waiting message and pause the matching turn."""
+
+        return await self._finalize_turn(
+            session,
+            chat_session=chat_session,
+            turn_id=turn_id,
+            assistant_content=assistant_content,
+            stream_service=stream_service,
+            target_state=ChatTurnState.WAITING_FOR_APPROVAL,
+            approval_id=approval_id,
+        )
+
+    async def complete_waiting_turn(
+        self,
+        session: AsyncSession,
+        *,
+        chat_session: ChatSession,
+        turn_id: str,
+        assistant_content: str,
+        stream_service: StreamService,
+        approval_id: str,
+    ) -> ChatTurn:
+        """Complete a turn that is currently waiting for approval."""
+
+        return await self._resume_waiting_turn(
+            session,
+            chat_session=chat_session,
+            turn_id=turn_id,
+            assistant_content=assistant_content,
+            stream_service=stream_service,
+            target_state=ChatTurnState.COMPLETED,
+            approval_id=approval_id,
+        )
+
+    async def cancel_waiting_turn(
+        self,
+        session: AsyncSession,
+        *,
+        chat_session: ChatSession,
+        turn_id: str,
+        assistant_content: str,
+        stream_service: StreamService,
+        approval_id: str,
+    ) -> ChatTurn:
+        """Cancel a turn that is currently waiting for approval."""
+
+        return await self._resume_waiting_turn(
+            session,
+            chat_session=chat_session,
+            turn_id=turn_id,
+            assistant_content=assistant_content,
+            stream_service=stream_service,
+            target_state=ChatTurnState.CANCELLED,
+            approval_id=approval_id,
+        )
+
     async def fail_turn(
         self,
         session: AsyncSession,
@@ -254,6 +320,36 @@ class ChatService:
         await stream_service.publish(delta_event)
         await stream_service.publish(completed_event)
         return turn
+
+    async def _resume_waiting_turn(
+        self,
+        session: AsyncSession,
+        *,
+        chat_session: ChatSession,
+        turn_id: str,
+        assistant_content: str,
+        stream_service: StreamService,
+        target_state: ChatTurnState,
+        approval_id: str,
+    ) -> ChatTurn:
+        turn = await session.get(ChatTurn, turn_id)
+        if turn is None:
+            raise LookupError(f"chat turn {turn_id!r} was not found")
+        current_state = ChatTurnState(turn.state)
+        CHAT_TURN_STATE_MACHINE.require_transition(current_state, ChatTurnState.RUNNING)
+        turn.state = ChatTurnState.RUNNING.value
+        turn.completed_at = None
+        turn.approval_id = approval_id
+        await session.flush()
+        return await self._finalize_turn(
+            session,
+            chat_session=chat_session,
+            turn_id=turn_id,
+            assistant_content=assistant_content,
+            stream_service=stream_service,
+            target_state=target_state,
+            approval_id=approval_id,
+        )
 
 
 __all__ = ["ChatService", "ChatSessionCreateInput"]

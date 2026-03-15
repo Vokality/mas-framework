@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from mas_msp_contracts import (
+    ApprovalRequested,
     AlertRaised,
     AssetRef,
     DiagnosticsCollect,
@@ -17,7 +18,11 @@ from mas_msp_contracts import (
     OperatorChatResponse,
     Severity,
 )
-from mas_msp_core import IncidentContextReader, NotifierTransportAgent
+from mas_msp_core import (
+    ApprovalController,
+    IncidentContextReader,
+    NotifierTransportAgent,
+)
 
 from .orchestrator import CoreOrchestratorAgent
 from .toolsets import CoreOrchestratorToolset
@@ -48,11 +53,13 @@ class FabricIncidentHandler:
         self,
         *,
         incident_context_reader: IncidentContextReader,
+        approval_controller: ApprovalController,
         notifier: NotifierTransportAgent,
         orchestrator: CoreOrchestratorAgent,
         diagnostics_executor: DiagnosticsExecutor,
     ) -> None:
         self._incident_context_reader = incident_context_reader
+        self._approval_controller = approval_controller
         self._notifier = notifier
         self._orchestrator = orchestrator
         self._diagnostics_executor = diagnostics_executor
@@ -65,6 +72,7 @@ class FabricIncidentHandler:
 
         toolset = _FabricIncidentToolset(
             incident_context_reader=self._incident_context_reader,
+            approval_controller=self._approval_controller,
             notifier=self._notifier,
             diagnostics_executor=self._diagnostics_executor,
             request=request,
@@ -87,11 +95,13 @@ class _FabricIncidentToolset(CoreOrchestratorToolset):
         self,
         *,
         incident_context_reader: IncidentContextReader,
+        approval_controller: ApprovalController,
         notifier: NotifierTransportAgent,
         diagnostics_executor: DiagnosticsExecutor,
         request: OperatorChatRequest,
     ) -> None:
         self._incident_context_reader = incident_context_reader
+        self._approval_controller = approval_controller
         self._notifier = notifier
         self._diagnostics_executor = diagnostics_executor
         self._request = request
@@ -169,6 +179,25 @@ class _FabricIncidentToolset(CoreOrchestratorToolset):
             state=state,
             recommended_actions=recommended_actions,
             asset_ids=asset_ids,
+        )
+
+    async def request_approval(
+        self,
+        approval_request: ApprovalRequested,
+    ) -> ApprovalRequested:
+        approval = await self._approval_controller.request_approval(approval_request)
+        return ApprovalRequested(
+            approval_id=approval.approval_id,
+            client_id=approval.client_id,
+            fabric_id=approval.fabric_id,
+            incident_id=approval.incident_id,
+            action_kind=approval.action_kind,
+            title=approval.title,
+            requested_at=approval.requested_at,
+            expires_at=approval.expires_at,
+            requested_by_agent=approval.requested_by_agent,
+            payload=dict(approval.payload),
+            risk_summary=approval.risk_summary,
         )
 
     def _require_incident_id(self) -> str:

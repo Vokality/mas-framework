@@ -23,10 +23,26 @@ CLIENT_EVENT_NAMES = frozenset(
     {"client.updated", "incident.updated", "asset.updated", "activity.appended"}
 )
 INCIDENT_EVENT_NAMES = frozenset(
-    {"incident.updated", "activity.appended", "approval.requested", "approval.resolved"}
+    {
+        "incident.updated",
+        "activity.appended",
+        "approval.requested",
+        "approval.resolved",
+        "approval.executed",
+        "approval.expired",
+        "approval.cancelled",
+    }
 )
 CHAT_EVENT_NAMES = frozenset(
-    {"chat.delta", "chat.completed", "approval.requested", "approval.resolved"}
+    {
+        "chat.delta",
+        "chat.completed",
+        "approval.requested",
+        "approval.resolved",
+        "approval.executed",
+        "approval.expired",
+        "approval.cancelled",
+    }
 )
 
 

@@ -4,9 +4,7 @@ import { useParams } from "react-router-dom";
 import {
   ApiError,
   masOpsApiClient,
-  type ConfigApplyResult,
   type ConfigDesiredStateInput,
-  type ConfigValidationResult,
 } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { useManagedStream } from "../streams";
@@ -26,7 +24,30 @@ export function ConfigPage() {
   async function loadDesiredState(targetClientId: string) {
     try {
       const desiredState = await masOpsApiClient.getDesiredState(targetClientId);
-      dispatch({ type: "loaded", desiredState });
+      dispatch({ type: "desired_state_loaded", desiredState });
+    } catch (error) {
+      console.error("Failed to load desired-state configuration", error);
+      dispatch({ type: "failed", message: getConfigErrorMessage(error) });
+    }
+  }
+
+  async function loadRunHistory(targetClientId: string) {
+    try {
+      const runHistory = await masOpsApiClient.listConfigRuns(targetClientId);
+      dispatch({ type: "run_history_loaded", runHistory });
+    } catch (error) {
+      console.error("Failed to load config run history", error);
+      dispatch({ type: "failed", message: getConfigErrorMessage(error) });
+    }
+  }
+
+  async function loadConfigConsole(targetClientId: string) {
+    try {
+      const [desiredState, runHistory] = await Promise.all([
+        masOpsApiClient.getDesiredState(targetClientId),
+        masOpsApiClient.listConfigRuns(targetClientId),
+      ]);
+      dispatch({ type: "loaded", desiredState, runHistory });
     } catch (error) {
       console.error("Failed to load desired-state configuration", error);
       dispatch({ type: "failed", message: getConfigErrorMessage(error) });
@@ -42,7 +63,7 @@ export function ConfigPage() {
       return;
     }
     dispatch({ type: "loading" });
-    void loadDesiredState(clientId);
+    void loadConfigConsole(clientId);
   }, [clientId]);
 
   useManagedStream({
@@ -67,43 +88,12 @@ export function ConfigPage() {
         void loadDesiredState(clientId);
         return;
       }
-      if (frame.data.subject_type === "config_validation_run") {
-        dispatch({
-          type: "validation_loaded",
-          result: {
-            client_id: clientId,
-            config_apply_run_id: String(
-              frame.data.payload.config_apply_run_id ?? frame.data.subject_id,
-            ),
-            desired_state_version: Number(
-              frame.data.payload.desired_state_version ?? 0,
-            ),
-            status: String(frame.data.payload.status ?? "unknown"),
-            validated_at: frame.data.occurred_at,
-            errors: [],
-            warnings: [],
-          },
-        });
-        return;
-      }
-      if (frame.data.subject_type === "config_apply_run") {
-        dispatch({
-          type: "apply_loaded",
-          result: {
-            client_id: clientId,
-            completed_at: null,
-            config_apply_run_id: String(
-              frame.data.payload.config_apply_run_id ?? frame.data.subject_id,
-            ),
-            desired_state_version: Number(
-              frame.data.payload.desired_state_version ?? 0,
-            ),
-            error_summary: null,
-            started_at: frame.data.occurred_at,
-            status:
-              String(frame.data.payload.status ?? "pending") as ConfigApplyResult["status"],
-          },
-        });
+      if (
+        frame.data.subject_type === "config_validation_run" ||
+        frame.data.subject_type === "config_apply_run" ||
+        frame.data.subject_type === "config_apply_step"
+      ) {
+        void loadRunHistory(clientId);
       }
     },
     onForbidden() {
@@ -122,7 +112,7 @@ export function ConfigPage() {
     try {
       const payload = JSON.parse(state.editorValue) as ConfigDesiredStateInput;
       const desiredState = await masOpsApiClient.replaceDesiredState(clientId, payload);
-      dispatch({ type: "loaded", desiredState });
+      dispatch({ type: "desired_state_loaded", desiredState });
     } catch (error) {
       console.error("Failed to save desired-state configuration", error);
       dispatch({
@@ -142,8 +132,8 @@ export function ConfigPage() {
       return;
     }
     try {
-      const result = await masOpsApiClient.validateDesiredState(clientId);
-      dispatch({ type: "validation_loaded", result });
+      await masOpsApiClient.validateDesiredState(clientId);
+      await loadRunHistory(clientId);
     } catch (error) {
       console.error("Failed to start validation run", error);
       dispatch({ type: "failed", message: getConfigErrorMessage(error) });
@@ -155,10 +145,25 @@ export function ConfigPage() {
       return;
     }
     try {
-      const result = await masOpsApiClient.applyDesiredState(clientId);
-      dispatch({ type: "apply_loaded", result });
+      await masOpsApiClient.applyDesiredState(clientId);
+      await loadRunHistory(clientId);
     } catch (error) {
       console.error("Failed to start apply run", error);
+      dispatch({ type: "failed", message: getConfigErrorMessage(error) });
+    }
+  }
+
+  async function handleCancelApplyRun(configApplyRunId: string) {
+    if (!clientId) {
+      return;
+    }
+    try {
+      await masOpsApiClient.cancelConfigApplyRun(clientId, configApplyRunId, {
+        reason: "Cancelled from config console",
+      });
+      await loadRunHistory(clientId);
+    } catch (error) {
+      console.error("Failed to cancel config apply run", error);
       dispatch({ type: "failed", message: getConfigErrorMessage(error) });
     }
   }
@@ -176,6 +181,8 @@ export function ConfigPage() {
   }
 
   const isAdmin = auth.session?.role === "admin";
+  const latestValidation = state.runHistory?.validation_runs?.[0] ?? null;
+  const latestApply = state.runHistory?.apply_runs?.[0] ?? null;
 
   return (
     <>
@@ -183,8 +190,8 @@ export function ConfigPage() {
         <span className="eyebrow">Desired State</span>
         <h2>Config console for {clientId}</h2>
         <p>
-          Desired-state persistence, validation, and apply runs are backed by the
-          Phase 1 config APIs and client stream.
+          Desired-state persistence, validation, apply history, and approval-gated
+          execution are backed by the phase-4 config APIs and client stream.
         </p>
       </section>
       <section className="grid">
@@ -202,10 +209,13 @@ export function ConfigPage() {
         <article className="card">
           <h3>Runs</h3>
           <p className="muted-copy">
-            Validation: {state.validationResult?.status ?? "not started"}
+            Validation: {latestValidation?.status ?? "not started"}
             <br />
-            Apply: {state.applyResult?.status ?? "not started"}
+            Apply: {latestApply?.status ?? "not started"}
           </p>
+          {latestApply?.approval_id ? (
+            <p className="muted-copy">Approval: {latestApply.approval_id}</p>
+          ) : null}
           {isAdmin ? (
             <div className="card-actions">
               <button
@@ -223,6 +233,18 @@ export function ConfigPage() {
               >
                 Apply
               </button>
+              {latestApply &&
+              (latestApply.status === "pending" ||
+                latestApply.status === "validating") ? (
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    void handleCancelApplyRun(latestApply.config_apply_run_id);
+                  }}
+                >
+                  Cancel Pending Apply
+                </button>
+              ) : null}
             </div>
           ) : (
             <p className="muted-copy">Only admins can validate or apply configuration.</p>
@@ -252,6 +274,52 @@ export function ConfigPage() {
               </button>
             </div>
           ) : null}
+        </article>
+      </section>
+      <section className="grid">
+        <article className="card full-width-card">
+          <h3>Run History</h3>
+          {state.runHistory &&
+          (state.runHistory.validation_runs?.length ?? 0) === 0 &&
+          (state.runHistory.apply_runs?.length ?? 0) === 0 ? (
+            <p className="muted-copy">No validation or apply runs have been recorded yet.</p>
+          ) : null}
+          <div className="list">
+            {state.runHistory?.apply_runs?.map((run) => (
+              <article className="list-item" key={run.config_apply_run_id}>
+                <strong>
+                  Apply v{run.desired_state_version} | {run.status}
+                </strong>
+                <span>{run.requested_at}</span>
+                {(run.steps?.length ?? 0) > 0 ? (
+                  <span>
+                    Steps: {run.steps?.map((step) => step.step_name).join(", ")}
+                  </span>
+                ) : null}
+                {isAdmin &&
+                (run.status === "pending" || run.status === "validating") ? (
+                  <span className="card-actions">
+                    <button
+                      className="secondary-button"
+                      onClick={() => {
+                        void handleCancelApplyRun(run.config_apply_run_id);
+                      }}
+                    >
+                      Cancel Run
+                    </button>
+                  </span>
+                ) : null}
+              </article>
+            ))}
+            {state.runHistory?.validation_runs?.map((run) => (
+              <article className="list-item" key={run.config_apply_run_id}>
+                <strong>
+                  Validation v{run.desired_state_version} | {run.status}
+                </strong>
+                <span>{run.validated_at}</span>
+              </article>
+            ))}
+          </div>
         </article>
       </section>
     </>

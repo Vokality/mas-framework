@@ -24,6 +24,19 @@ from .agent_ids import (
     is_ops_plane_connector_id,
     is_reserved_agent_id,
 )
+from .approvals import (
+    ApprovalCancellation,
+    ApprovalController,
+    ApprovalOutcomeHandler,
+    ApprovalRecord,
+    ApprovalStore,
+)
+from .config import (
+    ConfigApplyRunRecord,
+    ConfigDeployerAgent,
+    ConfigRunStore,
+    DesiredStateStore,
+)
 from .inventory import InventoryAgent, InventoryAssetRecord, InventoryRepository
 from .incidents import (
     IncidentChatHandler,
@@ -37,8 +50,17 @@ from .ops_bridge import OpsBridgeAgent
 
 __all__ = [
     "APPROVAL_CONTROLLER_AGENT_ID",
+    "ApprovalCancellation",
+    "ApprovalController",
+    "ApprovalOutcomeHandler",
+    "ApprovalRecord",
+    "ApprovalStore",
     "CONFIG_DEPLOYER_AGENT_ID",
     "CORE_ORCHESTRATOR_AGENT_ID",
+    "ConfigApplyRunRecord",
+    "ConfigDeployerAgent",
+    "ConfigRunStore",
+    "DesiredStateStore",
     "INVENTORY_AGENT_ID",
     "LINUX_DIAGNOSTICS_AGENT_ID",
     "LINUX_EVENT_INGEST_AGENT_ID",

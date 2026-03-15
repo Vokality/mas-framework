@@ -6,7 +6,16 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from mas_msp_contracts import ChatTurnState, OperatorChatRequest, OperatorChatResponse
+from datetime import UTC, datetime
+
+from mas_msp_contracts import (
+    ApprovalDecision,
+    ChatTurnState,
+    ConfigValidationResult,
+    OperatorChatRequest,
+    OperatorChatResponse,
+)
+from mas_msp_core import ApprovalCancellation
 
 from .conftest import CLIENT_A
 from .test_portfolio_ingest import _alert_event, _seed_desired_state
@@ -36,14 +45,37 @@ class FakeFabricConnector:
     async def dispatch_visibility_event(self, *, event) -> None:  # noqa: ANN001
         self.visibility_events.append(event)
 
+    async def dispatch_approval_decision(
+        self,
+        *,
+        decision: ApprovalDecision,
+    ) -> None:
+        del decision
+        return None
+
+    async def dispatch_approval_cancellation(
+        self,
+        *,
+        cancellation: ApprovalCancellation,
+    ) -> None:
+        del cancellation
+        return None
+
     async def request_config_validation(
         self,
         *,
         client_id: str,
         config_apply_run_id: str,
-    ) -> None:
-        del client_id, config_apply_run_id
-        return None
+    ) -> ConfigValidationResult:
+        return ConfigValidationResult(
+            config_apply_run_id=config_apply_run_id,
+            client_id=client_id,
+            desired_state_version=1,
+            status="valid",
+            errors=[],
+            warnings=[],
+            validated_at=datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+        )
 
     async def request_config_apply(
         self,

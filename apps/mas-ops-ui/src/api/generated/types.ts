@@ -130,7 +130,32 @@ export type ConfigApplyResult = {
   status: ConfigApplyState;
 };
 
+export type ConfigApplyRunResponse = {
+  approval_id?: string | null;
+  client_id: string;
+  completed_at: string | null;
+  config_apply_run_id: string;
+  desired_state_version: number;
+  error_summary: string | null;
+  requested_at: string;
+  requested_by_user_id: string;
+  started_at: string | null;
+  status: ConfigApplyState;
+  steps?: Array<ConfigApplyStepResponse>;
+};
+
 export type ConfigApplyState = "pending" | "validating" | "applying" | "succeeded" | "failed" | "cancelled";
+
+export type ConfigApplyStepResponse = {
+  client_id: string;
+  config_apply_run_id: string;
+  config_apply_step_id: number;
+  details: Record<string, unknown>;
+  occurred_at: string;
+  outcome: string;
+  step_index: number;
+  step_name: string;
+};
 
 export type ConfigDesiredStateInput = {
   client_id: string;
@@ -152,6 +177,15 @@ export type ConfigDesiredStateOutput = {
   tenant_metadata?: Record<string, JSONValueOutput>;
 };
 
+export type ConfigRunCancelRequest = {
+  reason?: string | null;
+};
+
+export type ConfigRunHistoryResponse = {
+  apply_runs?: Array<ConfigApplyRunResponse>;
+  validation_runs?: Array<ConfigValidationRunResponse>;
+};
+
 export type ConfigValidationResult = {
   client_id: string;
   config_apply_run_id: string;
@@ -160,6 +194,18 @@ export type ConfigValidationResult = {
   status: string;
   validated_at: string;
   warnings?: Array<string>;
+};
+
+export type ConfigValidationRunResponse = {
+  client_id: string;
+  config_apply_run_id: string;
+  desired_state_version: number;
+  errors: Array<string>;
+  requested_at: string;
+  requested_by_user_id: string;
+  status: string;
+  validated_at: string;
+  warnings: Array<string>;
 };
 
 export type EvidenceBundleResponse = {
@@ -178,6 +224,8 @@ export type HTTPValidationError = {
 };
 
 export type IncidentDetailResponse = {
+  activity?: Array<ActivityEventResponse>;
+  approvals?: Array<ApprovalResponse>;
   assets?: Array<AssetResponse>;
   client_id: string;
   evidence_bundles?: Array<EvidenceBundleResponse>;

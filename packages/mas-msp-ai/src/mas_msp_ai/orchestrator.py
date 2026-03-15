@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from mas_msp_contracts import (
+    ApprovalRequested,
     AlertRaised,
     AssetRef,
     ChatTurnState,
@@ -18,6 +20,7 @@ from mas_msp_contracts import (
     IncidentState,
     OperatorChatRequest,
     OperatorChatResponse,
+    RemediationExecute,
     Severity,
 )
 from mas_msp_core import NotifierTransportAgent
@@ -31,8 +34,18 @@ from .toolsets import CoreOrchestratorToolset
 class CoreOrchestratorAgent:
     """Coordinate incident chat, diagnostics planning, and summary persistence."""
 
-    def __init__(self, *, summary_composer: SummaryComposer | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        summary_composer: SummaryComposer | None = None,
+        approval_id_factory: Callable[[], str] | None = None,
+        remediation_request_id_factory: Callable[[], str] | None = None,
+    ) -> None:
         self._summary_composer = summary_composer or SummaryComposer()
+        self._approval_id_factory = approval_id_factory or (lambda: str(uuid4()))
+        self._remediation_request_id_factory = remediation_request_id_factory or (
+            lambda: str(uuid4())
+        )
 
     async def handle_chat_request(
         self,
@@ -100,11 +113,11 @@ class CoreOrchestratorAgent:
                 bundle.evidence_bundle_id for bundle in recent_evidence
             ]
 
-        state = (
-            IncidentState.INVESTIGATING
-            if incident_record.state is IncidentState.OPEN
-            or triage.next_action == "collect_diagnostics"
-            else incident_record.state
+        requires_approval = self._requires_approval(request.message)
+        state = self._target_incident_state(
+            incident_record=incident_record,
+            collected_diagnostics=triage.next_action == "collect_diagnostics",
+            requires_approval=requires_approval,
         )
         summary = await self._summary_composer.compose(
             SummaryComposerDeps(
@@ -115,6 +128,46 @@ class CoreOrchestratorAgent:
                 recent_activity=tuple(recent_activity),
             )
         )
+        if requires_approval:
+            approval = await toolset.request_approval(
+                self._build_remediation_approval(
+                    request=request,
+                    incident_id=incident_record.incident_id,
+                    asset_refs=asset_refs,
+                    summary=summary.headline,
+                )
+            )
+            await toolset.append_activity(
+                event_type="approval.requested",
+                payload={
+                    "approval_id": approval.approval_id,
+                    "action_kind": approval.action_kind,
+                    "title": approval.title,
+                },
+                asset_id=asset_refs[0].asset_id if asset_refs else None,
+            )
+            persisted_incident = await toolset.persist_summary(
+                summary=summary.headline,
+                severity=triage.severity,
+                state=state,
+                recommended_actions=summary.recommended_actions,
+                asset_ids=[asset.asset_id for asset in asset_refs],
+            )
+            return OperatorChatResponse(
+                request_id=request.request_id,
+                chat_session_id=request.chat_session_id,
+                turn_id=request.turn_id,
+                state=ChatTurnState.WAITING_FOR_APPROVAL,
+                incident_id=persisted_incident.incident_id,
+                markdown_summary=(
+                    "Approval is required before the requested remediation can run. "
+                    "The incident will remain paused until an authorized operator "
+                    "approves it."
+                ),
+                evidence_bundle_ids=evidence_bundle_ids,
+                approval_id=approval.approval_id,
+                recommended_actions=summary.recommended_actions,
+            )
         persisted_incident = await toolset.persist_summary(
             summary=summary.headline,
             severity=triage.severity,
@@ -232,6 +285,40 @@ class CoreOrchestratorAgent:
         keywords = ("collect", "run diagnostic", "run diagnostics", "investigate")
         return any(word in normalized for word in keywords)
 
+    def _requires_approval(self, user_intent: str) -> bool:
+        normalized = user_intent.lower()
+        approval_keywords = (
+            "apply",
+            "block",
+            "bounce",
+            "clear",
+            "cycle",
+            "disable",
+            "enable",
+            "fail over",
+            "failover",
+            "reboot",
+            "reset",
+            "restart",
+            "shut",
+            "shutdown",
+            "unblock",
+        )
+        return any(keyword in normalized for keyword in approval_keywords)
+
+    def _target_incident_state(
+        self,
+        *,
+        incident_record: IncidentRecord,
+        collected_diagnostics: bool,
+        requires_approval: bool,
+    ) -> IncidentState:
+        if requires_approval:
+            return IncidentState.AWAITING_APPROVAL
+        if incident_record.state is IncidentState.OPEN or collected_diagnostics:
+            return IncidentState.INVESTIGATING
+        return incident_record.state
+
     def _default_profile(self, user_intent: str) -> str:
         normalized = user_intent.lower()
         if "vpn" in normalized:
@@ -264,6 +351,54 @@ class CoreOrchestratorAgent:
             )
             for asset in asset_refs
         ]
+
+    def _build_remediation_approval(
+        self,
+        *,
+        request: OperatorChatRequest,
+        incident_id: str,
+        asset_refs: list[AssetRef],
+        summary: str,
+    ) -> ApprovalRequested:
+        now = datetime.now(UTC)
+        if not asset_refs:
+            raise LookupError("incident remediation requires at least one asset")
+        primary_asset = asset_refs[0]
+        approval_id = self._approval_id_factory()
+        remediation = RemediationExecute(
+            request_id=self._remediation_request_id_factory(),
+            incident_id=incident_id,
+            client_id=request.client_id or primary_asset.client_id,
+            fabric_id=request.fabric_id or primary_asset.fabric_id,
+            asset=primary_asset,
+            action_type="network.remediation",
+            parameters={"operator_message": request.message, "summary": summary},
+            approval_id=approval_id,
+        )
+        return ApprovalRequested(
+            approval_id=approval_id,
+            client_id=request.client_id or primary_asset.client_id,
+            fabric_id=request.fabric_id or primary_asset.fabric_id,
+            incident_id=incident_id,
+            action_kind="network.remediation",
+            title=f"Execute remediation for {primary_asset.hostname or primary_asset.asset_id}",
+            requested_at=now,
+            expires_at=now.replace(microsecond=0) + timedelta(hours=1),
+            requested_by_agent="core-orchestrator",
+            payload={
+                "action_scope": "incident_remediation",
+                "chat_session_id": request.chat_session_id,
+                "turn_id": request.turn_id,
+                "incident_id": incident_id,
+                "asset_ids": [asset.asset_id for asset in asset_refs],
+                "requested_action": request.message,
+                "remediation_execute": remediation.model_dump(mode="json"),
+            },
+            risk_summary=(
+                "Executing this remediation mutates managed infrastructure and may "
+                "briefly impact service while recovery proceeds."
+            ),
+        )
 
 
 def request_to_incident_record(

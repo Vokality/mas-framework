@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mas_msp_contracts import IncidentState
 
 from mas_ops_api.db.models import (
+    ApprovalRequestRecord,
     ChatSession,
     IncidentEvidenceBundleRecord,
     PortfolioActivityEvent,
@@ -114,6 +115,18 @@ class PortfolioQueries:
             )
             .where(PortfolioIncidentAsset.incident_id == incident_id)
             .order_by(PortfolioAsset.hostname.asc(), PortfolioAsset.asset_id.asc())
+        )
+        return list((await session.scalars(stmt)).all())
+
+    @staticmethod
+    async def list_approvals_for_incident(
+        session: AsyncSession,
+        incident_id: str,
+    ) -> list[ApprovalRequestRecord]:
+        stmt = (
+            select(ApprovalRequestRecord)
+            .where(ApprovalRequestRecord.incident_id == incident_id)
+            .order_by(ApprovalRequestRecord.requested_at.desc())
         )
         return list((await session.scalars(stmt)).all())
 

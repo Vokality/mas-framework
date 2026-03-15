@@ -14,6 +14,8 @@ import type {
   ConfigApplyResult,
   ConfigDesiredStateInput,
   ConfigDesiredStateOutput,
+  ConfigRunCancelRequest,
+  ConfigRunHistoryResponse,
   ConfigValidationResult,
   IncidentDetailResponse,
   IncidentResponse,
@@ -269,6 +271,21 @@ export class MasOpsApiClient {
     return this.requestJson<ConfigDesiredStateOutput>({
       method: 'GET',
       path: `/clients/${encodeURIComponent(String(clientId))}/config/desired-state`,
+    });
+  }
+
+  async cancelConfigApplyRun(clientId: string, configApplyRunId: string, body: ConfigRunCancelRequest): Promise<ConfigApplyResult> {
+    return this.requestJson<ConfigApplyResult>({
+      method: 'POST',
+      path: `/clients/${encodeURIComponent(String(clientId))}/config/runs/${encodeURIComponent(String(configApplyRunId))}/cancel`,
+      body,
+    });
+  }
+
+  async listConfigRuns(clientId: string): Promise<ConfigRunHistoryResponse> {
+    return this.requestJson<ConfigRunHistoryResponse>({
+      method: 'GET',
+      path: `/clients/${encodeURIComponent(String(clientId))}/config/runs`,
     });
   }
 

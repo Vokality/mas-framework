@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from mas_msp_contracts import (
+    ApprovalRequested,
     AssetRef,
     DiagnosticsCollect,
     DiagnosticsResult,
@@ -47,6 +48,11 @@ class CoreOrchestratorToolset(Protocol):
         recommended_actions: list[JSONObject],
         asset_ids: list[str],
     ) -> IncidentRecord: ...
+
+    async def request_approval(
+        self,
+        approval_request: ApprovalRequested,
+    ) -> ApprovalRequested: ...
 
 
 __all__ = ["CoreOrchestratorToolset"]

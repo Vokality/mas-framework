@@ -146,3 +146,91 @@ async def test_client_and_incident_streams_enforce_scope(
         assert response.status_code == 200
         events = await _read_sse_events(response, expected_count=1)
     assert events[0]["event"] == "incident.updated"
+
+
+@pytest.mark.asyncio
+async def test_incident_and_chat_streams_replay_terminal_approval_events(
+    api_client,
+    seed_user,
+    seed_portfolio,
+    insert_stream_events,
+    login,
+) -> None:
+    await seed_portfolio()
+    await seed_user(
+        email="operator@example.com",
+        password="password-1",
+        role=UserRole.OPERATOR,
+        client_ids=(CLIENT_A,),
+    )
+    await login("operator@example.com", "password-1")
+
+    create_response = await api_client.post(
+        "/chat/sessions",
+        json={
+            "scope": "incident",
+            "client_id": CLIENT_A,
+            "fabric_id": "33333333-3333-4333-8333-333333333333",
+            "incident_id": INCIDENT_A,
+        },
+    )
+    assert create_response.status_code == 201
+    chat_session_id = create_response.json()["chat_session_id"]
+
+    await insert_stream_events(
+        [
+            {
+                "event_name": "approval.executed",
+                "client_id": CLIENT_A,
+                "incident_id": INCIDENT_A,
+                "chat_session_id": chat_session_id,
+                "subject_type": "approval_request",
+                "subject_id": "approval-1",
+                "payload": {"approval_id": "approval-1", "state": "executed"},
+            },
+            {
+                "event_name": "approval.expired",
+                "client_id": CLIENT_A,
+                "incident_id": INCIDENT_A,
+                "chat_session_id": chat_session_id,
+                "subject_type": "approval_request",
+                "subject_id": "approval-2",
+                "payload": {"approval_id": "approval-2", "state": "expired"},
+            },
+            {
+                "event_name": "approval.cancelled",
+                "client_id": CLIENT_A,
+                "incident_id": INCIDENT_A,
+                "chat_session_id": chat_session_id,
+                "subject_type": "approval_request",
+                "subject_id": "approval-3",
+                "payload": {"approval_id": "approval-3", "state": "cancelled"},
+            },
+        ]
+    )
+
+    async with api_client.stream(
+        "GET",
+        f"/streams/incidents/{INCIDENT_A}?replay_only=true",
+    ) as response:
+        assert response.status_code == 200
+        incident_events = await _read_sse_events(response, expected_count=3)
+
+    assert [event["event"] for event in incident_events] == [
+        "approval.executed",
+        "approval.expired",
+        "approval.cancelled",
+    ]
+
+    async with api_client.stream(
+        "GET",
+        f"/streams/chat/{chat_session_id}?replay_only=true",
+    ) as response:
+        assert response.status_code == 200
+        chat_events = await _read_sse_events(response, expected_count=3)
+
+    assert [event["event"] for event in chat_events] == [
+        "approval.executed",
+        "approval.expired",
+        "approval.cancelled",
+    ]

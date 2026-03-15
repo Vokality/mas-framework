@@ -208,6 +208,12 @@ async def test_approval_and_config_routes_enforce_roles(
         )
     ).status_code == 403
     assert (
+        await api_client.post(
+            f"/clients/{CLIENT_A}/config/runs/run-1/cancel",
+            json={"reason": "nope"},
+        )
+    ).status_code == 403
+    assert (
         await api_client.put(
             f"/clients/{CLIENT_A}/config/desired-state",
             json={
@@ -230,6 +236,12 @@ async def test_approval_and_config_routes_enforce_roles(
     )
     assert approval_response.status_code == 200
     assert approval_response.json()["state"] == ApprovalState.APPROVED.value
+    assert (
+        await api_client.post(
+            f"/clients/{CLIENT_A}/config/runs/run-1/cancel",
+            json={"reason": "nope"},
+        )
+    ).status_code == 403
     assert (
         await api_client.post(f"/clients/{CLIENT_A}/config/validate")
     ).status_code == 403

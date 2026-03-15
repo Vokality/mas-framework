@@ -819,6 +819,101 @@
         "title": "ConfigApplyResult",
         "type": "object"
       },
+      "ConfigApplyRunResponse": {
+        "description": "Config apply run response with step history.",
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "config_apply_run_id": {
+            "title": "Config Apply Run Id",
+            "type": "string"
+          },
+          "desired_state_version": {
+            "title": "Desired State Version",
+            "type": "integer"
+          },
+          "error_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Summary"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by_user_id": {
+            "title": "Requested By User Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConfigApplyState"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigApplyStepResponse"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "config_apply_run_id",
+          "client_id",
+          "desired_state_version",
+          "status",
+          "requested_by_user_id",
+          "requested_at",
+          "started_at",
+          "completed_at",
+          "error_summary"
+        ],
+        "title": "ConfigApplyRunResponse",
+        "type": "object"
+      },
       "ConfigApplyState": {
         "description": "Canonical config validation and apply states.",
         "enum": [
@@ -831,6 +926,57 @@
         ],
         "title": "ConfigApplyState",
         "type": "string"
+      },
+      "ConfigApplyStepResponse": {
+        "description": "One deterministic step recorded for a config apply run.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "config_apply_run_id": {
+            "title": "Config Apply Run Id",
+            "type": "string"
+          },
+          "config_apply_step_id": {
+            "title": "Config Apply Step Id",
+            "type": "integer"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "step_index": {
+            "title": "Step Index",
+            "type": "integer"
+          },
+          "step_name": {
+            "title": "Step Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "config_apply_step_id",
+          "config_apply_run_id",
+          "client_id",
+          "step_index",
+          "step_name",
+          "outcome",
+          "details",
+          "occurred_at"
+        ],
+        "title": "ConfigApplyStepResponse",
+        "type": "object"
       },
       "ConfigDesiredState-Input": {
         "additionalProperties": false,
@@ -952,6 +1098,45 @@
         "title": "ConfigDesiredState",
         "type": "object"
       },
+      "ConfigRunCancelRequest": {
+        "description": "Config apply-run cancellation request body.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ConfigRunCancelRequest",
+        "type": "object"
+      },
+      "ConfigRunHistoryResponse": {
+        "description": "Grouped config validation and apply history for one client.",
+        "properties": {
+          "apply_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigApplyRunResponse"
+            },
+            "title": "Apply Runs",
+            "type": "array"
+          },
+          "validation_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigValidationRunResponse"
+            },
+            "title": "Validation Runs",
+            "type": "array"
+          }
+        },
+        "title": "ConfigRunHistoryResponse",
+        "type": "object"
+      },
       "ConfigValidationResult": {
         "additionalProperties": false,
         "description": "Validation output for a desired-state configuration.",
@@ -1003,6 +1188,68 @@
           "validated_at"
         ],
         "title": "ConfigValidationResult",
+        "type": "object"
+      },
+      "ConfigValidationRunResponse": {
+        "description": "Config validation run response.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "config_apply_run_id": {
+            "title": "Config Apply Run Id",
+            "type": "string"
+          },
+          "desired_state_version": {
+            "title": "Desired State Version",
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by_user_id": {
+            "title": "Requested By User Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "config_apply_run_id",
+          "client_id",
+          "desired_state_version",
+          "status",
+          "errors",
+          "warnings",
+          "requested_by_user_id",
+          "requested_at",
+          "validated_at"
+        ],
+        "title": "ConfigValidationRunResponse",
         "type": "object"
       },
       "EvidenceBundleResponse": {
@@ -1075,6 +1322,20 @@
       "IncidentDetailResponse": {
         "description": "Expanded incident detail for the cockpit.",
         "properties": {
+          "activity": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityEventResponse"
+            },
+            "title": "Activity",
+            "type": "array"
+          },
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalResponse"
+            },
+            "title": "Approvals",
+            "type": "array"
+          },
           "assets": {
             "items": {
               "$ref": "#/components/schemas/AssetResponse"
@@ -2062,6 +2323,111 @@
           }
         },
         "summary": "Replace Desired State",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/clients/{client_id}/config/runs": {
+      "get": {
+        "description": "Return grouped config validation/apply history for one client.",
+        "operationId": "list_config_runs_clients__client_id__config_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigRunHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Config Runs",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/clients/{client_id}/config/runs/{config_apply_run_id}/cancel": {
+      "post": {
+        "description": "Cancel one pending or validating apply run.",
+        "operationId": "cancel_config_apply_run_clients__client_id__config_runs__config_apply_run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "config_apply_run_id",
+            "required": true,
+            "schema": {
+              "title": "Config Apply Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigRunCancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigApplyResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Config Apply Run",
         "tags": [
           "config"
         ]

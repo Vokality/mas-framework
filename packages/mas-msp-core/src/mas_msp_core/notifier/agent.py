@@ -53,8 +53,10 @@ class NotifierTransportAgent:
             if existing is None
             else _merge_asset_ids(existing.asset_ids, alert.asset.asset_id)
         )
-        severity = alert.severity if existing is None else _max_severity(
-            existing.severity, alert.severity
+        severity = (
+            alert.severity
+            if existing is None
+            else _max_severity(existing.severity, alert.severity)
         )
         state = IncidentState.OPEN if existing is None else existing.state
         source = "visibility" if existing is None else "visibility_update"

@@ -12,6 +12,7 @@ from mas_msp_contracts import (
     ApprovalState,
     ChatScope,
     ChatTurnState,
+    ConfigApplyState,
 )
 from mas_ops_api.auth.types import UserRole
 
@@ -93,6 +94,8 @@ class IncidentDetailResponse(IncidentResponse):
     """Expanded incident detail for the cockpit."""
 
     assets: list["AssetResponse"] = Field(default_factory=list)
+    activity: list["ActivityEventResponse"] = Field(default_factory=list)
+    approvals: list["ApprovalResponse"] = Field(default_factory=list)
     evidence_bundles: list[EvidenceBundleResponse] = Field(default_factory=list)
 
 
@@ -216,16 +219,65 @@ class ApprovalDecisionRequest(BaseModel):
     reason: str | None = None
 
 
+class ConfigRunCancelRequest(BaseModel):
+    """Config apply-run cancellation request body."""
+
+    reason: str | None = None
+
+
 class ConfigApplyRequestResponse(ApiModel):
     """Config apply-run response."""
 
     config_apply_run_id: str
     client_id: str
     desired_state_version: int
-    status: str
+    status: ConfigApplyState
+    approval_id: str | None = None
+    requested_by_user_id: str
+    requested_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
     error_summary: str | None
+
+
+class ConfigApplyStepResponse(ApiModel):
+    """One deterministic step recorded for a config apply run."""
+
+    config_apply_step_id: int
+    config_apply_run_id: str
+    client_id: str
+    step_index: int
+    step_name: str
+    outcome: str
+    details: dict[str, Any]
+    occurred_at: datetime
+
+
+class ConfigValidationRunResponse(ApiModel):
+    """Config validation run response."""
+
+    config_apply_run_id: str
+    client_id: str
+    desired_state_version: int
+    status: str
+    errors: list[str]
+    warnings: list[str]
+    requested_by_user_id: str
+    requested_at: datetime
+    validated_at: datetime
+
+
+class ConfigApplyRunResponse(ConfigApplyRequestResponse):
+    """Config apply run response with step history."""
+
+    steps: list[ConfigApplyStepResponse] = Field(default_factory=list)
+
+
+class ConfigRunHistoryResponse(ApiModel):
+    """Grouped config validation and apply history for one client."""
+
+    validation_runs: list[ConfigValidationRunResponse] = Field(default_factory=list)
+    apply_runs: list[ConfigApplyRunResponse] = Field(default_factory=list)
 
 
 IncidentDetailResponse.model_rebuild()
@@ -242,7 +294,11 @@ __all__ = [
     "ChatSessionResponse",
     "ChatTurnResponse",
     "ClientSummaryResponse",
+    "ConfigApplyRunResponse",
     "ConfigApplyRequestResponse",
+    "ConfigApplyStepResponse",
+    "ConfigRunHistoryResponse",
+    "ConfigValidationRunResponse",
     "EvidenceBundleResponse",
     "IncidentDetailResponse",
     "IncidentResponse",
