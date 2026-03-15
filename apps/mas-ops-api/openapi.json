@@ -1005,6 +1005,60 @@
         "title": "ConfigValidationResult",
         "type": "object"
       },
+      "EvidenceBundleResponse": {
+        "description": "Evidence bundle visible in the incident cockpit.",
+        "properties": {
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "collected_at": {
+            "format": "date-time",
+            "title": "Collected At",
+            "type": "string"
+          },
+          "evidence_bundle_id": {
+            "title": "Evidence Bundle Id",
+            "type": "string"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "incident_id": {
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_bundle_id",
+          "incident_id",
+          "asset_id",
+          "client_id",
+          "fabric_id",
+          "collected_at",
+          "summary",
+          "items"
+        ],
+        "title": "EvidenceBundleResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1016,6 +1070,79 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IncidentDetailResponse": {
+        "description": "Expanded incident detail for the cockpit.",
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetResponse"
+            },
+            "title": "Assets",
+            "type": "array"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "evidence_bundles": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceBundleResponse"
+            },
+            "title": "Evidence Bundles",
+            "type": "array"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "incident_id": {
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "title": "Opened At",
+            "type": "string"
+          },
+          "recommended_actions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Recommended Actions",
+            "type": "array"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "incident_id",
+          "client_id",
+          "fabric_id",
+          "state",
+          "severity",
+          "summary",
+          "opened_at",
+          "updated_at"
+        ],
+        "title": "IncidentDetailResponse",
         "type": "object"
       },
       "IncidentResponse": {
@@ -1037,6 +1164,14 @@
             "format": "date-time",
             "title": "Opened At",
             "type": "string"
+          },
+          "recommended_actions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Recommended Actions",
+            "type": "array"
           },
           "severity": {
             "title": "Severity",
@@ -2042,7 +2177,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IncidentResponse"
+                  "$ref": "#/components/schemas/IncidentDetailResponse"
                 }
               }
             },

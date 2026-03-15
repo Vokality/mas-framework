@@ -136,6 +136,14 @@ def get_chat_service(
     return services.chat_service
 
 
+def get_chat_execution_service(
+    services: OpsApiServices = Depends(get_services),
+):
+    """Return the chat execution service."""
+
+    return services.chat_execution_service
+
+
 def get_config_service(
     services: OpsApiServices = Depends(get_services),
 ):
@@ -147,6 +155,7 @@ def get_config_service(
 __all__ = [
     "get_command_connector_registry",
     "get_chat_service",
+    "get_chat_execution_service",
     "get_config_service",
     "get_portfolio_ingress_registry",
     "get_stream_service",

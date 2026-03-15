@@ -4,19 +4,42 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from mas_msp_contracts import (
+    ChatTurnState,
+    OperatorChatRequest,
+    OperatorChatResponse,
+    PortfolioEvent,
+)
+
 from mas_ops_api.connectors.protocol import FabricConnector
 
 
 class NullFabricConnector:
     """Default command connector used before fabric write paths are implemented."""
 
-    async def dispatch_chat_turn(
+    async def dispatch_chat_request(
         self,
         *,
-        client_id: str,
-        chat_session_id: str,
-        turn_id: str,
+        request: OperatorChatRequest,
+    ) -> OperatorChatResponse:
+        return OperatorChatResponse(
+            request_id=request.request_id,
+            chat_session_id=request.chat_session_id,
+            turn_id=request.turn_id,
+            state=ChatTurnState.FAILED,
+            incident_id=request.incident_id,
+            markdown_summary="No incident connector is configured for this client.",
+            evidence_bundle_ids=[],
+            approval_id=None,
+            recommended_actions=[],
+        )
+
+    async def dispatch_visibility_event(
+        self,
+        *,
+        event: PortfolioEvent,
     ) -> None:
+        del event
         return None
 
     async def request_config_validation(

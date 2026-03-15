@@ -25,7 +25,14 @@ from .agent_ids import (
     is_reserved_agent_id,
 )
 from .inventory import InventoryAgent, InventoryAssetRecord, InventoryRepository
+from .incidents import (
+    IncidentChatHandler,
+    IncidentContextReader,
+    NotifierTransport,
+    VisibilityAlertHandler,
+)
 from .messages import PortfolioPublish
+from .notifier import NotifierTransportAgent
 from .ops_bridge import OpsBridgeAgent
 
 __all__ = [
@@ -44,11 +51,16 @@ __all__ = [
     "InventoryAgent",
     "InventoryAssetRecord",
     "InventoryRepository",
+    "IncidentChatHandler",
+    "IncidentContextReader",
+    "NotifierTransport",
+    "NotifierTransportAgent",
     "OpsBridgeAgent",
     "OPS_BRIDGE_AGENT_ID",
     "OPS_PLANE_CONNECTOR_PREFIX",
     "PortfolioPublish",
     "RESERVED_STATIC_AGENT_IDS",
+    "VisibilityAlertHandler",
     "WINDOWS_DIAGNOSTICS_AGENT_ID",
     "WINDOWS_EVENT_INGEST_AGENT_ID",
     "WINDOWS_EXECUTOR_AGENT_ID",

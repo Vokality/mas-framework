@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mas_msp_contracts import ChatScope
 
 from mas_ops_api.api.dependencies import (
+    get_chat_execution_service,
     get_chat_service,
-    get_command_connector_registry,
     load_chat_session_for_user,
 )
 from mas_ops_api.api.schemas import (
@@ -22,6 +22,7 @@ from mas_ops_api.api.schemas import (
 from mas_ops_api.auth.dependencies import get_current_user, get_db_session
 from mas_ops_api.auth.types import AuthenticatedUser
 from mas_ops_api.chat.service import ChatService, ChatSessionCreateInput
+from mas_ops_api.chat import ChatExecutionService
 from mas_ops_api.projections.repository import PortfolioQueries
 
 
@@ -137,7 +138,7 @@ async def append_chat_message(
     current_user: AuthenticatedUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
     chat_service: ChatService = Depends(get_chat_service),
-    command_connector_registry=Depends(get_command_connector_registry),
+    chat_execution_service: ChatExecutionService = Depends(get_chat_execution_service),
 ) -> ChatTurnResponse:
     """Append one operator message to a chat session."""
 
@@ -152,16 +153,12 @@ async def append_chat_message(
         actor_user_id=current_user.user_id,
         content=payload.message,
     )
-    if (
-        chat_session.scope == ChatScope.INCIDENT.value
-        and chat_session.client_id is not None
-    ):
-        connector = command_connector_registry.get(chat_session.client_id)
-        await connector.dispatch_chat_turn(
-            client_id=chat_session.client_id,
-            chat_session_id=chat_session.chat_session_id,
-            turn_id=turn.turn_id,
-        )
+    chat_execution_service.schedule_turn(
+        chat_session=chat_session,
+        turn_id=turn.turn_id,
+        message=payload.message,
+        user=current_user,
+    )
     return ChatTurnResponse.model_validate(turn)
 
 

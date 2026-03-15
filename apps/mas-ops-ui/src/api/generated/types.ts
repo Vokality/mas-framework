@@ -162,8 +162,33 @@ export type ConfigValidationResult = {
   warnings?: Array<string>;
 };
 
+export type EvidenceBundleResponse = {
+  asset_id: string;
+  client_id: string;
+  collected_at: string;
+  evidence_bundle_id: string;
+  fabric_id: string;
+  incident_id: string;
+  items: Array<Record<string, unknown>>;
+  summary: string;
+};
+
 export type HTTPValidationError = {
   detail?: Array<ValidationError>;
+};
+
+export type IncidentDetailResponse = {
+  assets?: Array<AssetResponse>;
+  client_id: string;
+  evidence_bundles?: Array<EvidenceBundleResponse>;
+  fabric_id: string;
+  incident_id: string;
+  opened_at: string;
+  recommended_actions?: Array<Record<string, unknown>>;
+  severity: string;
+  state: string;
+  summary: string;
+  updated_at: string;
 };
 
 export type IncidentResponse = {
@@ -171,6 +196,7 @@ export type IncidentResponse = {
   fabric_id: string;
   incident_id: string;
   opened_at: string;
+  recommended_actions?: Array<Record<string, unknown>>;
   severity: string;
   state: string;
   summary: string;

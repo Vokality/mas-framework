@@ -71,8 +71,29 @@ class IncidentResponse(ApiModel):
     state: str
     severity: str
     summary: str
+    recommended_actions: list[dict[str, Any]] = Field(default_factory=list)
     opened_at: datetime
     updated_at: datetime
+
+
+class EvidenceBundleResponse(ApiModel):
+    """Evidence bundle visible in the incident cockpit."""
+
+    evidence_bundle_id: str
+    incident_id: str
+    asset_id: str
+    client_id: str
+    fabric_id: str
+    collected_at: datetime
+    summary: str
+    items: list[dict[str, Any]]
+
+
+class IncidentDetailResponse(IncidentResponse):
+    """Expanded incident detail for the cockpit."""
+
+    assets: list["AssetResponse"] = Field(default_factory=list)
+    evidence_bundles: list[EvidenceBundleResponse] = Field(default_factory=list)
 
 
 class AssetResponse(ApiModel):
@@ -207,6 +228,9 @@ class ConfigApplyRequestResponse(ApiModel):
     error_summary: str | None
 
 
+IncidentDetailResponse.model_rebuild()
+
+
 __all__ = [
     "ActivityEventResponse",
     "ApprovalDecisionRequest",
@@ -219,6 +243,8 @@ __all__ = [
     "ChatTurnResponse",
     "ClientSummaryResponse",
     "ConfigApplyRequestResponse",
+    "EvidenceBundleResponse",
+    "IncidentDetailResponse",
     "IncidentResponse",
     "LoginRequest",
     "SessionResponse",

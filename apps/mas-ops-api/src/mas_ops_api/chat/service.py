@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mas_msp_contracts import ChatScope, ChatTurnState
+from mas_msp_contracts import CHAT_TURN_STATE_MACHINE, ChatScope, ChatTurnState
 
 from mas_ops_api.db.base import utc_now
 from mas_ops_api.db.models import ChatMessage, ChatSession, ChatTurn
@@ -143,6 +143,117 @@ class ChatService:
             .order_by(ChatMessage.created_at.asc())
         )
         return list((await session.scalars(stmt)).all())
+
+    async def complete_turn(
+        self,
+        session: AsyncSession,
+        *,
+        chat_session: ChatSession,
+        turn_id: str,
+        assistant_content: str,
+        stream_service: StreamService,
+        approval_id: str | None = None,
+    ) -> ChatTurn:
+        """Persist the assistant response and complete the matching turn."""
+
+        return await self._finalize_turn(
+            session,
+            chat_session=chat_session,
+            turn_id=turn_id,
+            assistant_content=assistant_content,
+            stream_service=stream_service,
+            target_state=ChatTurnState.COMPLETED,
+            approval_id=approval_id,
+        )
+
+    async def fail_turn(
+        self,
+        session: AsyncSession,
+        *,
+        chat_session: ChatSession,
+        turn_id: str,
+        message: str,
+        stream_service: StreamService,
+    ) -> ChatTurn:
+        """Persist a failure message and mark the turn as failed."""
+
+        return await self._finalize_turn(
+            session,
+            chat_session=chat_session,
+            turn_id=turn_id,
+            assistant_content=message,
+            stream_service=stream_service,
+            target_state=ChatTurnState.FAILED,
+            approval_id=None,
+        )
+
+    async def _finalize_turn(
+        self,
+        session: AsyncSession,
+        *,
+        chat_session: ChatSession,
+        turn_id: str,
+        assistant_content: str,
+        stream_service: StreamService,
+        target_state: ChatTurnState,
+        approval_id: str | None,
+    ) -> ChatTurn:
+        turn = await session.get(ChatTurn, turn_id)
+        if turn is None:
+            raise LookupError(f"chat turn {turn_id!r} was not found")
+        current_state = ChatTurnState(turn.state)
+        if current_state is not target_state:
+            CHAT_TURN_STATE_MACHINE.require_transition(current_state, target_state)
+        now = utc_now()
+        turn.state = target_state.value
+        turn.completed_at = now
+        turn.approval_id = approval_id
+        message = ChatMessage(
+            message_id=str(uuid4()),
+            chat_session_id=chat_session.chat_session_id,
+            turn_id=turn.turn_id,
+            role="assistant",
+            content=assistant_content,
+            created_at=now,
+        )
+        delta_event = stream_service.build_event(
+            event_name="chat.delta",
+            client_id=chat_session.client_id,
+            incident_id=chat_session.incident_id,
+            chat_session_id=chat_session.chat_session_id,
+            subject_type="chat_session",
+            subject_id=chat_session.chat_session_id,
+            payload={
+                "chat_session_id": chat_session.chat_session_id,
+                "turn_id": turn.turn_id,
+                "role": message.role,
+                "content": message.content,
+            },
+            occurred_at=now,
+        )
+        completed_event = stream_service.build_event(
+            event_name="chat.completed",
+            client_id=chat_session.client_id,
+            incident_id=chat_session.incident_id,
+            chat_session_id=chat_session.chat_session_id,
+            subject_type="chat_turn",
+            subject_id=turn.turn_id,
+            payload={
+                "chat_session_id": chat_session.chat_session_id,
+                "turn_id": turn.turn_id,
+                "state": turn.state,
+                "approval_id": approval_id,
+            },
+            occurred_at=now,
+        )
+        session.add(message)
+        session.add(delta_event)
+        session.add(completed_event)
+        await session.flush()
+        await session.commit()
+        await stream_service.publish(delta_event)
+        await stream_service.publish(completed_event)
+        return turn
 
 
 __all__ = ["ChatService", "ChatSessionCreateInput"]

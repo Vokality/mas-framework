@@ -90,8 +90,8 @@ export function IncidentPage() {
         <span className="eyebrow">Incident Cockpit</span>
         <h2>{state.incident?.summary ?? incidentId}</h2>
         <p>
-          Incident detail, timeline, and incident-scoped chat are loaded from the
-          Phase 1 ops-plane API and incident stream.
+          Incident detail, evidence, recommendations, and incident-scoped chat are
+          loaded from the Phase 3 ops-plane API and incident stream.
         </p>
         {state.status === "ready" && state.errorMessage ? (
           <p className="form-error">{state.errorMessage}</p>
@@ -107,6 +107,10 @@ export function IncidentPage() {
               <p className="muted-copy">Fabric ID: {state.incident.fabric_id}</p>
               <p className="muted-copy">
                 Severity: {state.incident.severity} | State: {state.incident.state}
+              </p>
+              <p className="muted-copy">
+                Assets: {state.incident.assets?.length ?? 0} | Evidence bundles:{" "}
+                {state.incident.evidence_bundles?.length ?? 0}
               </p>
             </>
           ) : null}
@@ -124,6 +128,67 @@ export function IncidentPage() {
                 <span>{entry.occurred_at}</span>
               </article>
             ))}
+          </div>
+        </article>
+      </section>
+      <section className="grid two-up">
+        <article className="card">
+          <h3>Affected Assets</h3>
+          {state.status === "loading" ? <p>Loading affected assets...</p> : null}
+          {state.status === "ready" &&
+          (state.incident?.assets?.length ?? 0) === 0 ? (
+            <p className="muted-copy">No assets are currently linked to this incident.</p>
+          ) : null}
+          <div className="list">
+            {state.incident?.assets?.map((asset) => (
+              <article className="list-item" key={asset.asset_id}>
+                <strong>{asset.hostname ?? asset.asset_id}</strong>
+                <span>
+                  {asset.vendor ?? "unknown"} | {asset.health_state}
+                </span>
+              </article>
+            ))}
+          </div>
+        </article>
+        <article className="card">
+          <h3>Evidence</h3>
+          {state.status === "loading" ? <p>Loading evidence bundles...</p> : null}
+          {state.status === "ready" &&
+          (state.incident?.evidence_bundles?.length ?? 0) === 0 ? (
+            <p className="muted-copy">No structured evidence has been captured yet.</p>
+          ) : null}
+          <div className="list">
+            {state.incident?.evidence_bundles?.map((bundle) => (
+              <article className="list-item" key={bundle.evidence_bundle_id}>
+                <strong>{bundle.summary}</strong>
+                <span>{bundle.collected_at}</span>
+              </article>
+            ))}
+          </div>
+        </article>
+      </section>
+      <section className="grid">
+        <article className="card">
+          <h3>Recommended Actions</h3>
+          {state.status === "ready" &&
+          (state.incident?.recommended_actions?.length ?? 0) === 0 ? (
+            <p className="muted-copy">No operator actions have been recommended yet.</p>
+          ) : null}
+          <div className="list">
+            {state.incident?.recommended_actions?.map((action, index) => {
+              const title =
+                typeof action.title === "string"
+                  ? action.title
+                  : `Recommended action ${index + 1}`;
+              const details =
+                typeof action.details === "string" ? action.details : "";
+              return (
+                <article className="list-item" key={`${title}-${index}`}>
+                  <strong>{title}</strong>
+                  <span>{details}</span>
+                </article>
+              );
+            })}
           </div>
         </article>
       </section>

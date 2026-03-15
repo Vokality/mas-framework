@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from mas_ops_api.db.models import (
+    IncidentEvidenceBundleRecord,
     PortfolioActivityEvent,
     PortfolioAsset,
     PortfolioClient,
+    PortfolioIncident,
 )
 
 
@@ -63,6 +65,39 @@ def serialize_activity(activity: PortfolioActivityEvent) -> dict[str, Any]:
     }
 
 
+def serialize_incident(incident: PortfolioIncident) -> dict[str, object]:
+    """Return the incident payload emitted on incident stream updates."""
+
+    return {
+        "incident_id": incident.incident_id,
+        "client_id": incident.client_id,
+        "fabric_id": incident.fabric_id,
+        "state": incident.state,
+        "severity": incident.severity,
+        "summary": incident.summary,
+        "recommended_actions": list(incident.recommended_actions),
+        "opened_at": _serialize_datetime(incident.opened_at),
+        "updated_at": _serialize_datetime(incident.updated_at),
+    }
+
+
+def serialize_evidence_bundle(
+    evidence: IncidentEvidenceBundleRecord,
+) -> dict[str, object]:
+    """Return a serialized evidence bundle payload."""
+
+    return {
+        "evidence_bundle_id": evidence.evidence_bundle_id,
+        "incident_id": evidence.incident_id,
+        "asset_id": evidence.asset_id,
+        "client_id": evidence.client_id,
+        "fabric_id": evidence.fabric_id,
+        "collected_at": _serialize_datetime(evidence.collected_at),
+        "summary": evidence.summary,
+        "items": list(evidence.items),
+    }
+
+
 def _serialize_datetime(value) -> str:  # noqa: ANN001
     return value.isoformat().replace("+00:00", "Z")
 
@@ -74,7 +109,9 @@ def _serialize_optional_datetime(value) -> str | None:  # noqa: ANN001
 
 
 __all__ = [
+    "serialize_evidence_bundle",
     "serialize_activity",
     "serialize_asset",
     "serialize_client_summary",
+    "serialize_incident",
 ]

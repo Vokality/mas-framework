@@ -8,10 +8,10 @@ export function ChatPage() {
     <>
       <section className="hero">
         <span className="eyebrow">Global Chat</span>
-        <h2>Portfolio assistant shell</h2>
+        <h2>Portfolio assistant</h2>
         <p>
-          Global chat sessions are persisted through the Phase 1 chat API.
-          Assistant-side reasoning remains deferred to Phase 3.
+          Global chat sessions are persisted through the ops-plane chat API and
+          answered from authorized Postgres-backed portfolio read models.
         </p>
       </section>
       <ChatSessionPanel

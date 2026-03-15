@@ -19,7 +19,7 @@ export function IncidentChatPanel({
         fabric_id: fabricId,
         incident_id: incidentId,
       }}
-      description="This incident chat shell is persisted in the Phase 1 chat tables and follows incident scope checks."
+      description="This incident chat path runs fabric-local orchestration, read-only diagnostics, and evidence-backed summary updates."
       emptyStateMessage="No incident chat session has been created for this cockpit yet."
       placeholder="Ask for more evidence, diagnostics, or next investigative steps."
       storageKey={`incident:${incidentId}`}

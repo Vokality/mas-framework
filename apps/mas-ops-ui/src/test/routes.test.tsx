@@ -600,16 +600,52 @@ describe("MAS Ops UI Phase 1 routes", () => {
         path: `/incidents/${INCIDENT_ID}`,
         response: {
           body: {
-            incident_id: INCIDENT_ID,
-            client_id: CLIENT_ID,
-            fabric_id: FABRIC_ID,
-            state: "investigating",
-            severity: "major",
-            summary: "Primary uplink is unstable",
-            opened_at: "2026-03-15T00:00:00Z",
-            updated_at: "2026-03-15T00:00:00Z",
+              incident_id: INCIDENT_ID,
+              client_id: CLIENT_ID,
+              fabric_id: FABRIC_ID,
+              state: "investigating",
+              severity: "major",
+              summary: "Primary uplink is unstable",
+              recommended_actions: [
+                {
+                  title: "Review the latest diagnostic evidence",
+                  details: "Use the newest evidence bundle before taking action.",
+                },
+              ],
+              assets: [
+                {
+                  asset_id: ASSET_ID,
+                  client_id: CLIENT_ID,
+                  fabric_id: FABRIC_ID,
+                  asset_kind: "network_device",
+                  vendor: "Cisco",
+                  model: "Catalyst 9300",
+                  hostname: "edge-sw-01",
+                  mgmt_address: "10.0.0.10",
+                  site: "nyc-1",
+                  tags: ["core"],
+                  health_state: "degraded",
+                  health_observed_at: "2026-03-15T00:00:00Z",
+                  last_alert_at: "2026-03-15T00:00:00Z",
+                  updated_at: "2026-03-15T00:00:00Z",
+                },
+              ],
+              evidence_bundles: [
+                {
+                  evidence_bundle_id: "evidence-1",
+                  incident_id: INCIDENT_ID,
+                  asset_id: ASSET_ID,
+                  client_id: CLIENT_ID,
+                  fabric_id: FABRIC_ID,
+                  collected_at: "2026-03-15T00:01:00Z",
+                  summary: "Diagnostics confirmed the primary uplink is down.",
+                  items: [],
+                },
+              ],
+              opened_at: "2026-03-15T00:00:00Z",
+              updated_at: "2026-03-15T00:00:00Z",
+            },
           },
-        },
       },
       {
         method: "GET",
@@ -641,6 +677,8 @@ describe("MAS Ops UI Phase 1 routes", () => {
     renderOpsUi(`/incidents/${INCIDENT_ID}`);
 
     expect(await screen.findByText("Primary uplink is unstable")).toBeInTheDocument();
+    expect(await screen.findByText("Diagnostics confirmed the primary uplink is down.")).toBeInTheDocument();
+    expect(await screen.findByText("Review the latest diagnostic evidence")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Create Session" })).toBeInTheDocument();
   });
 
@@ -758,7 +796,7 @@ describe("MAS Ops UI Phase 1 routes", () => {
 
     renderOpsUi("/chat");
 
-    expect(await screen.findByText("Portfolio assistant shell")).toBeInTheDocument();
+    expect(await screen.findByText("Portfolio assistant")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Create Session" })).toBeInTheDocument();
   });
 });

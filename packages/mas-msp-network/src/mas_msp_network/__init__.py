@@ -1,5 +1,6 @@
 """MSP network normalization and polling integrations."""
 
+from .diagnostics import DiagnosticsExecution, NetworkDiagnosticsAgent
 from .ingest import NetworkEventIngestAgent
 from .models import (
     SnmpPollObservation,
@@ -11,7 +12,9 @@ from .models import (
 from .polling import NetworkPollingAgent
 
 __all__ = [
+    "DiagnosticsExecution",
     "NetworkEventIngestAgent",
+    "NetworkDiagnosticsAgent",
     "NetworkPollingAgent",
     "SnmpPollObservation",
     "SnmpTrapEvent",

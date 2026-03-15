@@ -1,12 +1,12 @@
 import type {
   ActivityEventResponse,
-  IncidentResponse,
+  IncidentDetailResponse,
 } from "../api/client";
 
 export type IncidentPageState = {
   activity: Array<ActivityEventResponse>;
   errorMessage: string | null;
-  incident: IncidentResponse | null;
+  incident: IncidentDetailResponse | null;
   status: "loading" | "ready" | "error";
 };
 
@@ -14,7 +14,7 @@ export type IncidentPageAction =
   | {
       type: "loaded";
       activity: Array<ActivityEventResponse>;
-      incident: IncidentResponse;
+      incident: IncidentDetailResponse;
     }
   | { type: "loading" }
   | { type: "failed"; message: string };

@@ -1,4 +1,4 @@
-"""Ops bridge agent for Phase 2 portfolio event emission."""
+"""Ops bridge agent for Phase 2 visibility and Phase 3 incident routing."""
 
 from __future__ import annotations
 
@@ -6,9 +6,17 @@ from datetime import UTC
 from uuid import uuid4
 
 from mas_agent import Agent, AgentMessage, TlsClientConfig
-from mas_msp_contracts import AlertRaised, HealthSnapshot, PortfolioEvent
+from mas_msp_contracts import (
+    AlertRaised,
+    HealthSnapshot,
+    IncidentRecord,
+    OperatorChatRequest,
+    OperatorChatResponse,
+    PortfolioEvent,
+)
 
 from mas_msp_core.agent_ids import OPS_BRIDGE_AGENT_ID, build_ops_plane_connector_id
+from mas_msp_core.incidents import IncidentChatHandler, VisibilityAlertHandler
 from mas_msp_core.messages import PortfolioPublish
 
 
@@ -20,6 +28,8 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         *,
         server_addr: str = "localhost:50051",
         tls: TlsClientConfig | None = None,
+        incident_chat_handler: IncidentChatHandler | None = None,
+        visibility_alert_handler: VisibilityAlertHandler | None = None,
     ) -> None:
         super().__init__(
             OPS_BRIDGE_AGENT_ID,
@@ -27,6 +37,8 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
             server_addr=server_addr,
             tls=tls,
         )
+        self._incident_chat_handler = incident_chat_handler
+        self._visibility_alert_handler = visibility_alert_handler
 
     @Agent.on("portfolio.publish", model=PortfolioPublish)
     async def handle_portfolio_publish(
@@ -151,6 +163,31 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         if isinstance(source, AlertRaised):
             return {"source_type": "alert", "source_id": source.alert_id}
         return {"source_type": "snapshot", "source_id": source.snapshot_id}
+
+    async def dispatch_chat_request(
+        self,
+        *,
+        request: OperatorChatRequest,
+    ) -> OperatorChatResponse:
+        """Route one incident-scoped chat request into fabric-local orchestration."""
+
+        if self._incident_chat_handler is None:
+            raise LookupError("no incident chat handler is configured")
+        return await self._incident_chat_handler.handle_incident_chat_request(request)
+
+    async def dispatch_visibility_alert(
+        self,
+        *,
+        event: PortfolioEvent,
+    ) -> IncidentRecord:
+        """Route one visibility alert into fabric-local incident ownership."""
+
+        if event.event_type != "network.alert.raised":
+            raise ValueError("visibility dispatch requires a network.alert.raised event")
+        if self._visibility_alert_handler is None:
+            raise LookupError("no visibility alert handler is configured")
+        alert = AlertRaised.model_validate(event.payload["alert"])
+        return await self._visibility_alert_handler.handle_visibility_alert(alert)
 
 
 __all__ = ["OpsBridgeAgent"]
