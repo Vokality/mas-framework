@@ -9,12 +9,14 @@ from mas_agent import Agent, AgentMessage, TlsClientConfig
 from mas_msp_contracts import (
     ApprovalDecision,
     AlertRaised,
+    AssetKind,
     ConfigValidationResult,
     HealthSnapshot,
     IncidentRecord,
     OperatorChatRequest,
     OperatorChatResponse,
     PortfolioEvent,
+    RemediationExecute,
 )
 
 from mas_msp_core.agent_ids import OPS_BRIDGE_AGENT_ID, build_ops_plane_connector_id
@@ -24,7 +26,12 @@ from mas_msp_core.approvals import (
     ApprovalRecord,
 )
 from mas_msp_core.config import ConfigDeployerAgent
-from mas_msp_core.incidents import IncidentChatHandler, VisibilityAlertHandler
+from mas_msp_core.incidents import (
+    IncidentChatHandler,
+    IncidentRemediationExecution,
+    IncidentRemediationHandler,
+    VisibilityAlertHandler,
+)
 from mas_msp_core.messages import PortfolioPublish
 
 
@@ -38,6 +45,7 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         tls: TlsClientConfig | None = None,
         incident_chat_handler: IncidentChatHandler | None = None,
         visibility_alert_handler: VisibilityAlertHandler | None = None,
+        incident_remediation_handler: IncidentRemediationHandler | None = None,
         approval_controller: ApprovalController | None = None,
         config_deployer: ConfigDeployerAgent | None = None,
     ) -> None:
@@ -49,6 +57,7 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         )
         self._incident_chat_handler = incident_chat_handler
         self._visibility_alert_handler = visibility_alert_handler
+        self._incident_remediation_handler = incident_remediation_handler
         self._approval_controller = approval_controller
         self._config_deployer = config_deployer
 
@@ -104,7 +113,7 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
                 self._build_event(
                     client_id=source.client_id,
                     fabric_id=source.fabric_id,
-                    event_type="network.alert.raised",
+                    event_type=_alert_event_type(source.asset.asset_kind),
                     subject_type="alert",
                     subject_id=source.alert_id,
                     occurred_at=source.occurred_at,
@@ -132,7 +141,7 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
             self._build_event(
                 client_id=source.client_id,
                 fabric_id=source.fabric_id,
-                event_type="network.snapshot.recorded",
+                event_type=_snapshot_event_type(publish_request.asset.asset_kind),
                 subject_type="snapshot",
                 subject_id=source.snapshot_id,
                 occurred_at=source.collected_at,
@@ -194,10 +203,8 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
     ) -> IncidentRecord:
         """Route one visibility alert into fabric-local incident ownership."""
 
-        if event.event_type != "network.alert.raised":
-            raise ValueError(
-                "visibility dispatch requires a network.alert.raised event"
-            )
+        if event.event_type not in {"network.alert.raised", "host.alert.raised"}:
+            raise ValueError("visibility dispatch requires a supported alert event")
         if self._visibility_alert_handler is None:
             raise LookupError("no visibility alert handler is configured")
         alert = AlertRaised.model_validate(event.payload["alert"])
@@ -213,6 +220,21 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
         if self._approval_controller is None:
             raise LookupError("no approval controller is configured")
         return await self._approval_controller.apply_decision(decision)
+
+    async def dispatch_approved_remediation(
+        self,
+        *,
+        approval_id: str,
+        remediation: RemediationExecute,
+    ) -> IncidentRemediationExecution:
+        """Route one approved remediation into fabric-local execution."""
+
+        if self._incident_remediation_handler is None:
+            raise LookupError("no incident remediation handler is configured")
+        return await self._incident_remediation_handler.execute_approved_remediation(
+            approval_id=approval_id,
+            remediation=remediation,
+        )
 
     async def dispatch_approval_cancellation(
         self,
@@ -249,3 +271,15 @@ class OpsBridgeAgent(Agent[dict[str, object]]):
 
 
 __all__ = ["OpsBridgeAgent"]
+
+
+def _alert_event_type(asset_kind: AssetKind) -> str:
+    if asset_kind in {AssetKind.LINUX_HOST, AssetKind.WINDOWS_HOST}:
+        return "host.alert.raised"
+    return "network.alert.raised"
+
+
+def _snapshot_event_type(asset_kind: AssetKind) -> str:
+    if asset_kind in {AssetKind.LINUX_HOST, AssetKind.WINDOWS_HOST}:
+        return "host.snapshot.recorded"
+    return "network.snapshot.recorded"

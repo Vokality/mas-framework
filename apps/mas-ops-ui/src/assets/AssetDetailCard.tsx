@@ -3,6 +3,9 @@ import {
   describeActivityEvent,
   describeActivityMeta,
   extractAlertTitle,
+  extractHostServices,
+  extractServiceName,
+  extractServiceState,
   extractSnapshotHealth,
   findLatestAlert,
   findLatestSnapshot,
@@ -26,6 +29,10 @@ export function AssetDetailCard({ activity, asset }: AssetDetailCardProps) {
 
   const latestAlert = findLatestAlert(activity);
   const latestSnapshot = findLatestSnapshot(activity);
+  const isHostAsset = asset.asset_kind === "linux_host" || asset.asset_kind === "windows_host";
+  const hostServices = latestSnapshot ? extractHostServices(latestSnapshot) : [];
+  const remediationHistory = activity.filter((event) => event.event_type.startsWith("remediation."));
+  const latestRemediation = remediationHistory[0] ?? null;
 
   return (
     <article className="card">
@@ -57,10 +64,37 @@ export function AssetDetailCard({ activity, asset }: AssetDetailCardProps) {
       ) : null}
       {latestAlert ? (
         <p className="muted-copy">
-          Latest alert: {extractAlertTitle(latestAlert) ?? "Network alert raised"}
+          Latest alert: {extractAlertTitle(latestAlert) ?? "Visibility alert raised"}
         </p>
       ) : null}
       <p className="muted-copy">Tags: {asset.tags.join(", ") || "none"}</p>
+      {isHostAsset ? (
+        <>
+          <p className="muted-copy">
+            Platform: {asset.asset_kind === "linux_host" ? "Linux" : "Windows"}
+          </p>
+          {hostServices.length > 0 ? (
+            <div className="list">
+              {hostServices.map((service) => (
+                <div className="list-item" key={`${service.serviceName}-${service.serviceState}`}>
+                  <strong>{service.serviceName}</strong>
+                  <span>{service.serviceState}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-copy">No host service snapshot is available yet.</p>
+          )}
+          {latestRemediation ? (
+            <p className="muted-copy">
+              Latest remediation: {extractServiceName(latestRemediation) ?? "unknown service"}
+              {extractServiceState(latestRemediation)
+                ? ` is ${extractServiceState(latestRemediation)}`
+                : ""}
+            </p>
+          ) : null}
+        </>
+      ) : null}
       <div className="list">
         {activity.slice(0, 3).map((event) => (
           <div className="list-item" key={event.activity_id}>
@@ -69,6 +103,16 @@ export function AssetDetailCard({ activity, asset }: AssetDetailCardProps) {
           </div>
         ))}
       </div>
+      {isHostAsset && remediationHistory.length > 0 ? (
+        <div className="list">
+          {remediationHistory.slice(0, 3).map((event) => (
+            <div className="list-item" key={`remediation-${event.activity_id}`}>
+              <strong>{describeActivityEvent(event)}</strong>
+              <span>{describeActivityMeta(event)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
 }

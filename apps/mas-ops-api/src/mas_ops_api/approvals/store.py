@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sqlalchemy import select, update
+
 from mas_msp_contracts import (
     APPROVAL_STATE_MACHINE,
     ApprovalDecision,
@@ -306,15 +308,36 @@ class OpsPlaneApprovalStore(ApprovalStore):
     async def expire_pending(self, *, now: datetime) -> list[ApprovalRecord]:
         stream_events = []
         async with self._database.session_factory() as session:
+            claimed_ids = list(
+                (
+                    await session.scalars(
+                        update(ApprovalRequestRecord)
+                        .where(
+                            ApprovalRequestRecord.state == ApprovalState.PENDING.value,
+                            ApprovalRequestRecord.expires_at < now.astimezone(UTC),
+                        )
+                        .values(
+                            state=ApprovalState.EXPIRED.value,
+                            expired_at=now,
+                        )
+                        .returning(ApprovalRequestRecord.approval_id)
+                    )
+                ).all()
+            )
+            if not claimed_ids:
+                await session.commit()
+                return []
             rows = list(
                 (
-                    await session.scalars(_pending_expiry_query(now.astimezone(UTC)))
+                    await session.scalars(
+                        select(ApprovalRequestRecord)
+                        .where(ApprovalRequestRecord.approval_id.in_(claimed_ids))
+                        .order_by(ApprovalRequestRecord.requested_at.asc())
+                    )
                 ).all()
             )
             expired: list[ApprovalRecord] = []
             for row in rows:
-                row.state = ApprovalState.EXPIRED.value
-                row.expired_at = now
                 stream_event = self._stream_service.build_event(
                     event_name="approval.expired",
                     client_id=row.client_id,
@@ -348,15 +371,6 @@ class OpsPlaneApprovalStore(ApprovalStore):
         for stream_event in stream_events:
             await self._stream_service.publish(stream_event)
         return expired
-
-
-def _pending_expiry_query(now: datetime):
-    from sqlalchemy import select
-
-    return select(ApprovalRequestRecord).where(
-        ApprovalRequestRecord.state == ApprovalState.PENDING.value,
-        ApprovalRequestRecord.expires_at < now,
-    )
 
 
 def _record_from_model(row: ApprovalRequestRecord) -> ApprovalRecord:

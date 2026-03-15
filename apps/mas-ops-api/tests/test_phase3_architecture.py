@@ -14,8 +14,9 @@ from mas_msp_contracts import (
     ConfigValidationResult,
     OperatorChatRequest,
     OperatorChatResponse,
+    RemediationExecute,
 )
-from mas_msp_core import ApprovalCancellation
+from mas_msp_core import ApprovalCancellation, IncidentRemediationExecution
 
 from .conftest import CLIENT_A
 from .test_portfolio_ingest import _alert_event, _seed_desired_state
@@ -52,6 +53,15 @@ class FakeFabricConnector:
     ) -> None:
         del decision
         return None
+
+    async def dispatch_approved_remediation(
+        self,
+        *,
+        approval_id: str,
+        remediation: RemediationExecute,
+    ) -> IncidentRemediationExecution:
+        del approval_id, remediation
+        raise LookupError("unused")
 
     async def dispatch_approval_cancellation(
         self,

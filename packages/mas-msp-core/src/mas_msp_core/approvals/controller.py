@@ -38,10 +38,15 @@ class ApprovalController:
 
         approval = await self._store.resolve_request(decision)
         if approval.state is ApprovalState.APPROVED:
-            if await self._outcome_handler.on_approved(approval):
+            execution = await self._outcome_handler.on_approved(approval)
+            if execution.executed:
                 return await self._store.mark_executed(
                     approval.approval_id,
-                    executed_at=approval.approved_at or decision.decided_at,
+                    executed_at=(
+                        execution.executed_at
+                        or approval.approved_at
+                        or decision.decided_at
+                    ),
                 )
             return approval
         await self._outcome_handler.on_rejected(approval)

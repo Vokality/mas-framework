@@ -7,7 +7,7 @@ from typing import Protocol
 
 from mas_msp_contracts import ApprovalDecision, ApprovalRequested
 
-from .models import ApprovalCancellation, ApprovalRecord
+from .models import ApprovalCancellation, ApprovalExecutionOutcome, ApprovalRecord
 
 
 class ApprovalStore(Protocol):
@@ -43,7 +43,10 @@ class ApprovalStore(Protocol):
 class ApprovalOutcomeHandler(Protocol):
     """Resume or unwind deferred actions after an approval transition."""
 
-    async def on_approved(self, approval: ApprovalRecord) -> bool: ...
+    async def on_approved(
+        self,
+        approval: ApprovalRecord,
+    ) -> ApprovalExecutionOutcome: ...
 
     async def on_rejected(self, approval: ApprovalRecord) -> None: ...
 

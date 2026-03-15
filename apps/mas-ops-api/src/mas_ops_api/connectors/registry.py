@@ -11,8 +11,10 @@ from mas_msp_contracts import (
     OperatorChatRequest,
     OperatorChatResponse,
     PortfolioEvent,
+    RemediationExecute,
 )
 from mas_msp_core import ApprovalCancellation
+from mas_msp_core import IncidentRemediationExecution
 
 from mas_ops_api.connectors.protocol import FabricConnector
 
@@ -52,6 +54,15 @@ class NullFabricConnector:
     ) -> None:
         del decision
         return None
+
+    async def dispatch_approved_remediation(
+        self,
+        *,
+        approval_id: str,
+        remediation: RemediationExecute,
+    ) -> IncidentRemediationExecution:
+        del approval_id, remediation
+        raise LookupError("no remediation connector is configured")
 
     async def dispatch_approval_cancellation(
         self,

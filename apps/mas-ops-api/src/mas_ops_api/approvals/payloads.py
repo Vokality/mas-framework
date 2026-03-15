@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mas_msp_contracts import RemediationExecute
+
 
 @dataclass(frozen=True, slots=True)
 class IncidentRemediationApprovalPayload:
@@ -14,6 +16,7 @@ class IncidentRemediationApprovalPayload:
     incident_id: str
     asset_ids: list[str]
     requested_action: str
+    remediation_execute: RemediationExecute | None = None
 
     @classmethod
     def from_payload(
@@ -28,6 +31,7 @@ class IncidentRemediationApprovalPayload:
         turn_id = payload.get("turn_id")
         incident_id = payload.get("incident_id")
         requested_action = payload.get("requested_action")
+        remediation_payload = payload.get("remediation_execute")
         asset_ids = payload.get("asset_ids")
         if (
             not isinstance(chat_session_id, str)
@@ -43,12 +47,18 @@ class IncidentRemediationApprovalPayload:
             resolved_asset_ids = [
                 asset_id for asset_id in asset_ids if isinstance(asset_id, str)
             ]
+        remediation_execute = (
+            RemediationExecute.model_validate(remediation_payload)
+            if isinstance(remediation_payload, dict)
+            else None
+        )
         return cls(
             chat_session_id=chat_session_id,
             turn_id=turn_id,
             incident_id=incident_id,
             asset_ids=resolved_asset_ids,
             requested_action=requested_action,
+            remediation_execute=remediation_execute,
         )
 
 

@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -580,6 +580,183 @@ describe("MAS Ops UI Phase 1 routes", () => {
     ).toHaveLength(2);
   });
 
+  test("client asset detail renders host service panels for Linux hosts", async () => {
+    installMockFetch([
+      {
+        method: "GET",
+        path: "/auth/session",
+        response: {
+          body: {
+            user_id: "user-host-1",
+            email: "operator@example.com",
+            display_name: "Operator User",
+            role: "operator",
+            client_ids: [CLIENT_ID],
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/clients/${CLIENT_ID}`,
+        response: {
+          body: {
+            client_id: CLIENT_ID,
+            fabric_id: FABRIC_ID,
+            name: "Acme Corp",
+            open_alert_count: 1,
+            critical_asset_count: 1,
+            updated_at: "2026-03-15T00:00:00Z",
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/clients/${CLIENT_ID}/incidents`,
+        response: { body: [] },
+      },
+      {
+        method: "GET",
+        path: `/clients/${CLIENT_ID}/assets`,
+        response: {
+          body: [
+            {
+              asset_id: ASSET_ID,
+              client_id: CLIENT_ID,
+              fabric_id: FABRIC_ID,
+              asset_kind: "linux_host",
+              vendor: "Linux",
+              model: "Ubuntu 24.04",
+              hostname: "web-01",
+              mgmt_address: "10.20.0.15",
+              site: "nyc-1",
+              tags: ["linux", "production"],
+              health_state: "critical",
+              health_observed_at: "2026-03-15T00:11:00Z",
+              last_alert_at: "2026-03-15T00:05:00Z",
+              updated_at: "2026-03-15T00:11:00Z",
+            },
+          ],
+        },
+      },
+      {
+        method: "GET",
+        path: `/clients/${CLIENT_ID}/activity`,
+        response: {
+          body: [
+            {
+              activity_id: 3,
+              source_event_id: "activity-3",
+              client_id: CLIENT_ID,
+              fabric_id: FABRIC_ID,
+              incident_id: null,
+              asset_id: ASSET_ID,
+              event_type: "host.snapshot.recorded",
+              subject_type: "snapshot",
+              subject_id: "snapshot-1",
+              payload: {
+                snapshot: {
+                  asset: { asset_id: ASSET_ID, hostname: "web-01" },
+                  health_state: "critical",
+                  metrics: {
+                    services: [
+                      { service_name: "nginx", service_state: "failed" },
+                      { service_name: "sshd", service_state: "running" },
+                    ],
+                  },
+                },
+              },
+              occurred_at: "2026-03-15T00:11:00Z",
+            },
+          ],
+        },
+      },
+      {
+        method: "GET",
+        path: `/assets/${ASSET_ID}`,
+        response: {
+          body: {
+            asset_id: ASSET_ID,
+            client_id: CLIENT_ID,
+            fabric_id: FABRIC_ID,
+            asset_kind: "linux_host",
+            vendor: "Linux",
+            model: "Ubuntu 24.04",
+            hostname: "web-01",
+            mgmt_address: "10.20.0.15",
+            site: "nyc-1",
+            tags: ["linux", "production"],
+            health_state: "critical",
+            health_observed_at: "2026-03-15T00:11:00Z",
+            last_alert_at: "2026-03-15T00:05:00Z",
+            updated_at: "2026-03-15T00:11:00Z",
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/assets/${ASSET_ID}/activity`,
+        response: {
+          body: [
+            {
+              activity_id: 3,
+              source_event_id: "activity-3",
+              client_id: CLIENT_ID,
+              fabric_id: FABRIC_ID,
+              incident_id: null,
+              asset_id: ASSET_ID,
+              event_type: "host.snapshot.recorded",
+              subject_type: "snapshot",
+              subject_id: "snapshot-1",
+              payload: {
+                snapshot: {
+                  asset: { asset_id: ASSET_ID, hostname: "web-01" },
+                  health_state: "critical",
+                  metrics: {
+                    services: [
+                      { service_name: "nginx", service_state: "failed" },
+                      { service_name: "sshd", service_state: "running" },
+                    ],
+                  },
+                },
+              },
+              occurred_at: "2026-03-15T00:11:00Z",
+            },
+            {
+              activity_id: 2,
+              source_event_id: "activity-2",
+              client_id: CLIENT_ID,
+              fabric_id: FABRIC_ID,
+              incident_id: INCIDENT_ID,
+              asset_id: ASSET_ID,
+              event_type: "remediation.executed",
+              subject_type: "incident",
+              subject_id: INCIDENT_ID,
+              payload: {
+                post_state: {
+                  service_name: "nginx",
+                  service_state: "running",
+                },
+              },
+              occurred_at: "2026-03-15T00:12:00Z",
+            },
+          ],
+        },
+      },
+      {
+        method: "GET",
+        path: `/streams/clients/${CLIENT_ID}?replay_only=true`,
+        response: { text: "" },
+      },
+    ]);
+
+    renderOpsUi(`/clients/${CLIENT_ID}`);
+
+    expect(await screen.findByText("Platform: Linux")).toBeInTheDocument();
+    expect(await screen.findByText("nginx")).toBeInTheDocument();
+    expect(await screen.findByText("failed")).toBeInTheDocument();
+    expect(await screen.findByText(/Latest remediation: nginx is running/)).toBeInTheDocument();
+  });
+
   test("incident cockpit loads and exposes the incident chat shell", async () => {
     installMockFetch([
       {
@@ -700,6 +877,134 @@ describe("MAS Ops UI Phase 1 routes", () => {
     expect(await screen.findByText(/Bounce primary uplink/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Create Session" })).toBeInTheDocument();
+  });
+
+  test("incident cockpit renders host remediation verification details", async () => {
+    installMockFetch([
+      {
+        method: "GET",
+        path: "/auth/session",
+        response: {
+          body: {
+            user_id: "user-host-2",
+            email: "operator@example.com",
+            display_name: "Operator User",
+            role: "operator",
+            client_ids: [CLIENT_ID],
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/incidents/${INCIDENT_ID}`,
+        response: {
+          body: {
+            incident_id: INCIDENT_ID,
+            client_id: CLIENT_ID,
+            fabric_id: FABRIC_ID,
+            state: "resolved",
+            severity: "major",
+            summary: "Linux diagnostics captured host.services evidence for web-01.",
+            recommended_actions: [
+              {
+                title: "Continue post-remediation monitoring",
+                details: "Verification evidence was captured after the approved host action.",
+              },
+            ],
+            activity: [
+              {
+                activity_id: 1,
+                source_event_id: "activity-1",
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                incident_id: INCIDENT_ID,
+                event_type: "remediation.executed",
+                subject_type: "incident",
+                subject_id: INCIDENT_ID,
+                payload: {
+                  post_state: {
+                    service_name: "nginx",
+                    service_state: "running",
+                  },
+                },
+                occurred_at: "2026-03-15T00:12:00Z",
+              },
+              {
+                activity_id: 2,
+                source_event_id: "activity-2",
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                incident_id: INCIDENT_ID,
+                event_type: "remediation.verified",
+                subject_type: "incident",
+                subject_id: INCIDENT_ID,
+                payload: {
+                  post_state: {
+                    service_name: "nginx",
+                    service_state: "running",
+                  },
+                },
+                occurred_at: "2026-03-15T00:13:00Z",
+              },
+            ],
+            approvals: [],
+            assets: [
+              {
+                asset_id: ASSET_ID,
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                asset_kind: "linux_host",
+                vendor: "Linux",
+                model: "Ubuntu 24.04",
+                hostname: "web-01",
+                mgmt_address: "10.20.0.15",
+                site: "nyc-1",
+                tags: ["linux", "production"],
+                health_state: "critical",
+                health_observed_at: "2026-03-15T00:00:00Z",
+                last_alert_at: "2026-03-15T00:00:00Z",
+                updated_at: "2026-03-15T00:00:00Z",
+              },
+            ],
+            evidence_bundles: [
+              {
+                evidence_bundle_id: "evidence-1",
+                incident_id: INCIDENT_ID,
+                asset_id: ASSET_ID,
+                client_id: CLIENT_ID,
+                fabric_id: FABRIC_ID,
+                collected_at: "2026-03-15T00:14:00Z",
+                summary: "Linux diagnostics captured host.services evidence for web-01.",
+                items: [
+                  {
+                    kind: "host_services",
+                    services: [
+                      { service_name: "nginx", service_state: "running" },
+                      { service_name: "sshd", service_state: "running" },
+                    ],
+                  },
+                ],
+              },
+            ],
+            opened_at: "2026-03-15T00:00:00Z",
+            updated_at: "2026-03-15T00:14:00Z",
+          },
+        },
+      },
+      {
+        method: "GET",
+        path: `/streams/incidents/${INCIDENT_ID}?replay_only=true`,
+        response: { text: "" },
+      },
+    ]);
+
+    renderOpsUi(`/incidents/${INCIDENT_ID}`);
+
+    const timelineHeading = await screen.findByText("Host Remediation Timeline");
+    const timelineCard = timelineHeading.closest("article");
+    expect(timelineCard).not.toBeNull();
+    expect(await screen.findByText("nginx: running | sshd: running")).toBeInTheDocument();
+    expect(within(timelineCard as HTMLElement).getByText("remediation.executed")).toBeInTheDocument();
   });
 
   test("approvals inbox loads visible approvals", async () => {

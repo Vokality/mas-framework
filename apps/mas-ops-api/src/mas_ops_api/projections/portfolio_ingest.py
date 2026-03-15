@@ -77,7 +77,7 @@ class PortfolioIngestService:
             )
             session.add(activity)
 
-            if event.event_type == "network.alert.raised":
+            if event.event_type in {"network.alert.raised", "host.alert.raised"}:
                 client.open_alert_count += 1
                 client_changed = True
             if event.occurred_at > client.updated_at:
@@ -110,9 +110,8 @@ class PortfolioIngestService:
 
         for stream_event in stream_events:
             await self._stream_service.publish(stream_event)
-        if (
-            event.event_type == "network.alert.raised"
-            and self._alert_dispatcher is not None
+        if event.event_type in {"network.alert.raised", "host.alert.raised"} and (
+            self._alert_dispatcher is not None
         ):
             await self._alert_dispatcher(event)
         return ProjectionWriteResult(applied=True)
@@ -196,7 +195,7 @@ class PortfolioIngestService:
                 updated_at=event.occurred_at,
             )
 
-        if event.event_type == "network.alert.raised":
+        if event.event_type in {"network.alert.raised", "host.alert.raised"}:
             alert = AlertRaised.model_validate(event.payload["alert"])
             return await self._upsert_asset(
                 session,
@@ -207,7 +206,11 @@ class PortfolioIngestService:
                 updated_at=alert.occurred_at,
             )
 
-        if event.event_type in {"asset.health.changed", "network.snapshot.recorded"}:
+        if event.event_type in {
+            "asset.health.changed",
+            "network.snapshot.recorded",
+            "host.snapshot.recorded",
+        }:
             snapshot = HealthSnapshot.model_validate(event.payload["snapshot"])
             return await self._upsert_asset(
                 session,

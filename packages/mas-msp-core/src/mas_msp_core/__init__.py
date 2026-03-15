@@ -27,6 +27,7 @@ from .agent_ids import (
 from .approvals import (
     ApprovalCancellation,
     ApprovalController,
+    ApprovalExecutionOutcome,
     ApprovalOutcomeHandler,
     ApprovalRecord,
     ApprovalStore,
@@ -41,6 +42,8 @@ from .inventory import InventoryAgent, InventoryAssetRecord, InventoryRepository
 from .incidents import (
     IncidentChatHandler,
     IncidentContextReader,
+    IncidentRemediationExecution,
+    IncidentRemediationHandler,
     NotifierTransport,
     VisibilityAlertHandler,
 )
@@ -52,6 +55,7 @@ __all__ = [
     "APPROVAL_CONTROLLER_AGENT_ID",
     "ApprovalCancellation",
     "ApprovalController",
+    "ApprovalExecutionOutcome",
     "ApprovalOutcomeHandler",
     "ApprovalRecord",
     "ApprovalStore",
@@ -75,6 +79,8 @@ __all__ = [
     "InventoryRepository",
     "IncidentChatHandler",
     "IncidentContextReader",
+    "IncidentRemediationExecution",
+    "IncidentRemediationHandler",
     "NotifierTransport",
     "NotifierTransportAgent",
     "OpsBridgeAgent",

@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from mas_msp_contracts import ApprovalState, ConfigApplyState
 from mas_ops_api.auth.types import UserRole
-from mas_ops_api.db.models import ApprovalRequestRecord, OpsAuditEntry
+from mas_ops_api.db.models import ApprovalRequestRecord, OpsAuditEntry, OpsStreamEvent
 
 from .conftest import CLIENT_A, INCIDENT_A
 
@@ -252,6 +252,58 @@ async def test_pending_remediation_approvals_expire_and_unwind_waiting_turn(
         item for item in approvals_response.json() if item["approval_id"] == approval_id
     )
     assert approval["state"] == ApprovalState.EXPIRED
+
+
+@pytest.mark.asyncio
+async def test_expiry_sweep_is_idempotent_and_emits_terminal_side_effects_once(
+    ops_app,
+    session_factory,
+    seed_portfolio,
+) -> None:
+    await seed_portfolio()
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        approval = await session.get(
+            ApprovalRequestRecord, "99999999-9999-4999-8999-999999999999"
+        )
+        assert approval is not None
+        approval.expires_at = now - timedelta(minutes=1)
+        await session.commit()
+
+    first = await ops_app.state.services.approval_service.expire_pending(now=now)
+    second = await ops_app.state.services.approval_service.expire_pending(now=now)
+
+    assert [item.approval_id for item in first] == [
+        "99999999-9999-4999-8999-999999999999"
+    ]
+    assert second == []
+
+    async with session_factory() as session:
+        audit_entries = list(
+            (
+                await session.scalars(
+                    select(OpsAuditEntry).where(
+                        OpsAuditEntry.approval_id
+                        == "99999999-9999-4999-8999-999999999999",
+                        OpsAuditEntry.action == "approval.expired",
+                    )
+                )
+            ).all()
+        )
+        stream_entries = list(
+            (
+                await session.scalars(
+                    select(OpsStreamEvent).where(
+                        OpsStreamEvent.subject_id
+                        == "99999999-9999-4999-8999-999999999999",
+                        OpsStreamEvent.event_name == "approval.expired",
+                    )
+                )
+            ).all()
+        )
+
+    assert len(audit_entries) == 1
+    assert len(stream_entries) == 1
 
 
 @pytest.mark.asyncio

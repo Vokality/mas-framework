@@ -13,8 +13,11 @@ dependencies = [
     "fastapi>=0.118.0",
     "greenlet>=3.2.4",
     "httpx>=0.28.1",
+    "mas-msp-ai",
     "mas-msp-contracts",
     "mas-msp-core",
+    "mas-msp-hosts",
+    "mas-msp-network",
     "pydantic-settings>=2.11.0",
     "sqlalchemy>=2.0.44",
     "uvicorn>=0.37.0",
@@ -26,8 +29,11 @@ dependencies = [
 mas-ops-api = "mas_ops_api.__main__:main"
 
 [tool.uv.sources]
+mas-msp-ai = { workspace = true }
 mas-msp-contracts = { workspace = true }
 mas-msp-core = { workspace = true }
+mas-msp-hosts = { workspace = true }
+mas-msp-network = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mas_ops_api"]

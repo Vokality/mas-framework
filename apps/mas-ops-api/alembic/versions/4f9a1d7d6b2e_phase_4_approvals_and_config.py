@@ -152,7 +152,9 @@ def downgrade() -> None:
         "ix_ops_audit_entries_incident_id_occurred_at",
         table_name="ops_audit_entries",
     )
-    op.drop_index(op.f("ix_ops_audit_entries_incident_id"), table_name="ops_audit_entries")
+    op.drop_index(
+        op.f("ix_ops_audit_entries_incident_id"), table_name="ops_audit_entries"
+    )
     op.drop_index(
         op.f("ix_ops_audit_entries_config_apply_run_id"),
         table_name="ops_audit_entries",
@@ -161,8 +163,12 @@ def downgrade() -> None:
         "ix_ops_audit_entries_client_id_occurred_at",
         table_name="ops_audit_entries",
     )
-    op.drop_index(op.f("ix_ops_audit_entries_client_id"), table_name="ops_audit_entries")
-    op.drop_index(op.f("ix_ops_audit_entries_approval_id"), table_name="ops_audit_entries")
+    op.drop_index(
+        op.f("ix_ops_audit_entries_client_id"), table_name="ops_audit_entries"
+    )
+    op.drop_index(
+        op.f("ix_ops_audit_entries_approval_id"), table_name="ops_audit_entries"
+    )
     op.drop_index(op.f("ix_ops_audit_entries_action"), table_name="ops_audit_entries")
     op.drop_table("ops_audit_entries")
     op.drop_index(
@@ -173,7 +179,9 @@ def downgrade() -> None:
         op.f("ix_config_apply_steps_config_apply_run_id"),
         table_name="config_apply_steps",
     )
-    op.drop_index(op.f("ix_config_apply_steps_client_id"), table_name="config_apply_steps")
+    op.drop_index(
+        op.f("ix_config_apply_steps_client_id"), table_name="config_apply_steps"
+    )
     op.drop_table("config_apply_steps")
     op.drop_index(
         op.f("ix_config_apply_runs_approval_id"),

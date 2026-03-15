@@ -99,6 +99,14 @@ export function IncidentPage() {
     );
   }
 
+  const hostAssets =
+    state.incident?.assets?.filter(
+      (asset) => asset.asset_kind === "linux_host" || asset.asset_kind === "windows_host",
+    ) ?? [];
+  const hostRemediationEvents = state.activity.filter((entry) =>
+    entry.event_type.startsWith("remediation."),
+  );
+
   return (
     <>
       <section className="hero">
@@ -195,7 +203,7 @@ export function IncidentPage() {
               <article className="list-item" key={asset.asset_id}>
                 <strong>{asset.hostname ?? asset.asset_id}</strong>
                 <span>
-                  {asset.vendor ?? "unknown"} | {asset.health_state}
+                  {asset.vendor ?? "unknown"} | {asset.asset_kind} | {asset.health_state}
                 </span>
               </article>
             ))}
@@ -213,11 +221,31 @@ export function IncidentPage() {
               <article className="list-item" key={bundle.evidence_bundle_id}>
                 <strong>{bundle.summary}</strong>
                 <span>{bundle.collected_at}</span>
+                {renderHostEvidence(bundle.items)}
               </article>
             ))}
           </div>
         </article>
       </section>
+      {hostAssets.length > 0 ? (
+        <section className="grid">
+          <article className="card full-width-card">
+            <h3>Host Remediation Timeline</h3>
+            {hostRemediationEvents.length === 0 ? (
+              <p className="muted-copy">No host remediation actions have been recorded yet.</p>
+            ) : (
+              <div className="list">
+                {hostRemediationEvents.map((event) => (
+                  <article className="list-item" key={`host-remediation-${event.activity_id}`}>
+                    <strong>{event.event_type}</strong>
+                    <span>{describeHostRemediationEvent(event.payload)}</span>
+                  </article>
+                ))}
+              </div>
+            )}
+          </article>
+        </section>
+      ) : null}
       <section className="grid">
         <article className="card">
           <h3>Recommended Actions</h3>
@@ -272,4 +300,47 @@ function getIncidentErrorMessage(error: unknown): string {
     return "The current session is not authorized for this incident.";
   }
   return "The ops API did not return incident data.";
+}
+
+function renderHostEvidence(items: Array<Record<string, unknown>>) {
+  const hostServices = items.find((item) => item.kind === "host_services");
+  if (!hostServices || !Array.isArray(hostServices.services)) {
+    return null;
+  }
+  const services = hostServices.services
+    .map((service) => {
+      if (
+        typeof service !== "object" ||
+        service === null ||
+        typeof service.service_name !== "string" ||
+        typeof service.service_state !== "string"
+      ) {
+        return null;
+      }
+      return `${service.service_name}: ${service.service_state}`;
+    })
+    .filter((service): service is string => service !== null);
+  if (services.length === 0) {
+    return null;
+  }
+  return <span>{services.join(" | ")}</span>;
+}
+
+function describeHostRemediationEvent(payload: Record<string, unknown>): string {
+  const serviceName =
+    typeof payload.service_name === "string"
+      ? payload.service_name
+      : typeof (payload.post_state as { service_name?: unknown } | undefined)?.service_name ===
+          "string"
+        ? ((payload.post_state as { service_name: string }).service_name)
+        : "service";
+  const serviceState =
+    typeof (payload.post_state as { service_state?: unknown } | undefined)?.service_state ===
+    "string"
+      ? ((payload.post_state as { service_state: string }).service_state)
+      : null;
+  if (serviceState) {
+    return `${serviceName} -> ${serviceState}`;
+  }
+  return serviceName;
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+import re
 from typing import cast
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from pydantic_ai.models.test import TestModel
 from mas_msp_contracts import (
     ApprovalRequested,
     AlertRaised,
+    AssetKind,
     AssetRef,
     ChatTurnState,
     DiagnosticsCollect,
@@ -113,7 +115,18 @@ class CoreOrchestratorAgent:
                 bundle.evidence_bundle_id for bundle in recent_evidence
             ]
 
-        requires_approval = self._requires_approval(request.message)
+        requested_write = self._requires_approval(request.message)
+        approval_request = (
+            self._build_remediation_approval(
+                request=request,
+                incident_id=incident_record.incident_id,
+                asset_refs=asset_refs,
+                summary=incident_record.summary,
+            )
+            if requested_write
+            else None
+        )
+        requires_approval = approval_request is not None
         state = self._target_incident_state(
             incident_record=incident_record,
             collected_diagnostics=triage.next_action == "collect_diagnostics",
@@ -128,15 +141,8 @@ class CoreOrchestratorAgent:
                 recent_activity=tuple(recent_activity),
             )
         )
-        if requires_approval:
-            approval = await toolset.request_approval(
-                self._build_remediation_approval(
-                    request=request,
-                    incident_id=incident_record.incident_id,
-                    asset_refs=asset_refs,
-                    summary=summary.headline,
-                )
-            )
+        if approval_request is not None:
+            approval = await toolset.request_approval(approval_request)
             await toolset.append_activity(
                 event_type="approval.requested",
                 payload={
@@ -186,7 +192,14 @@ class CoreOrchestratorAgent:
             turn_id=response.turn_id,
             state=response.state,
             incident_id=persisted_incident.incident_id,
-            markdown_summary=response.markdown_summary,
+            markdown_summary=(
+                f"{response.markdown_summary}\n\n"
+                "Only typed host service.start, service.stop, and "
+                "service.restart actions with an explicit service name are "
+                "supported in v1."
+                if requested_write and approval_request is None
+                else response.markdown_summary
+            ),
             evidence_bundle_ids=response.evidence_bundle_ids,
             approval_id=None,
             recommended_actions=response.recommended_actions,
@@ -210,7 +223,9 @@ class CoreOrchestratorAgent:
             severity=deps.incident_record.severity,
             next_action="collect_diagnostics" if needs_diagnostics else "summarize",
             diagnostic_profiles=(
-                [self._default_profile(deps.user_intent)] if needs_diagnostics else []
+                [self._default_profile(deps.user_intent, deps.asset_refs)]
+                if needs_diagnostics
+                else []
             ),
             rationale=(
                 "Additional read-only evidence is needed before recommending next steps."
@@ -319,8 +334,28 @@ class CoreOrchestratorAgent:
             return IncidentState.INVESTIGATING
         return incident_record.state
 
-    def _default_profile(self, user_intent: str) -> str:
+    def _default_profile(
+        self, user_intent: str, asset_refs: tuple[AssetRef, ...]
+    ) -> str:
         normalized = user_intent.lower()
+        primary_asset = asset_refs[0] if asset_refs else None
+        if primary_asset is not None and primary_asset.asset_kind in {
+            AssetKind.LINUX_HOST,
+            AssetKind.WINDOWS_HOST,
+        }:
+            if "service" in normalized or "restart" in normalized:
+                return "host.services"
+            if "disk" in normalized:
+                return "host.disk"
+            if "log" in normalized:
+                return (
+                    "host.logs"
+                    if primary_asset.asset_kind is AssetKind.LINUX_HOST
+                    else "host.event_logs"
+                )
+            if "performance" in normalized:
+                return "host.performance"
+            return "host.summary"
         if "vpn" in normalized:
             return "vpn-health"
         return "uplink-health"
@@ -333,7 +368,6 @@ class CoreOrchestratorAgent:
         asset_refs: list[AssetRef],
         profiles: list[str],
     ) -> list[DiagnosticsCollect]:
-        profile = profiles[0] if profiles else "uplink-health"
         return [
             DiagnosticsCollect(
                 request_id=str(uuid4()),
@@ -341,11 +375,19 @@ class CoreOrchestratorAgent:
                 client_id=request.client_id or asset.client_id,
                 fabric_id=request.fabric_id or asset.fabric_id,
                 asset=asset,
-                diagnostic_profile=profile,
-                requested_actions=[
-                    "collect-interface-status",
-                    "collect-health-snapshot",
-                ],
+                diagnostic_profile=self._profile_for_asset(
+                    asset=asset,
+                    requested_profile=profiles[0] if profiles else None,
+                    user_intent=request.message,
+                ),
+                requested_actions=self._requested_actions_for_asset(
+                    asset=asset,
+                    diagnostic_profile=self._profile_for_asset(
+                        asset=asset,
+                        requested_profile=profiles[0] if profiles else None,
+                        user_intent=request.message,
+                    ),
+                ),
                 timeout_seconds=60,
                 read_only=True,
             )
@@ -359,11 +401,56 @@ class CoreOrchestratorAgent:
         incident_id: str,
         asset_refs: list[AssetRef],
         summary: str,
-    ) -> ApprovalRequested:
+    ) -> ApprovalRequested | None:
         now = datetime.now(UTC)
         if not asset_refs:
             raise LookupError("incident remediation requires at least one asset")
         primary_asset = asset_refs[0]
+        if primary_asset.asset_kind in {AssetKind.LINUX_HOST, AssetKind.WINDOWS_HOST}:
+            host_action = self._parse_host_service_action(request.message)
+            if host_action is None:
+                return None
+            action_type, service_name = host_action
+            approval_id = self._approval_id_factory()
+            remediation = RemediationExecute(
+                request_id=self._remediation_request_id_factory(),
+                incident_id=incident_id,
+                client_id=request.client_id or primary_asset.client_id,
+                fabric_id=request.fabric_id or primary_asset.fabric_id,
+                asset=primary_asset,
+                action_type=action_type,
+                parameters={"service_name": service_name},
+                approval_id=approval_id,
+            )
+            verb = action_type.removeprefix("service.")
+            return ApprovalRequested(
+                approval_id=approval_id,
+                client_id=request.client_id or primary_asset.client_id,
+                fabric_id=request.fabric_id or primary_asset.fabric_id,
+                incident_id=incident_id,
+                action_kind="host.remediation",
+                title=(
+                    f"{verb.capitalize()} {service_name} on "
+                    f"{primary_asset.hostname or primary_asset.asset_id}"
+                ),
+                requested_at=now,
+                expires_at=now.replace(microsecond=0) + timedelta(hours=1),
+                requested_by_agent="core-orchestrator",
+                payload={
+                    "action_scope": "incident_remediation",
+                    "chat_session_id": request.chat_session_id,
+                    "turn_id": request.turn_id,
+                    "incident_id": incident_id,
+                    "asset_ids": [asset.asset_id for asset in asset_refs],
+                    "requested_action": request.message,
+                    "remediation_execute": remediation.model_dump(mode="json"),
+                },
+                risk_summary=(
+                    "Executing this host service-control action mutates the "
+                    "managed system and immediately triggers verification "
+                    "diagnostics before the incident can resolve."
+                ),
+            )
         approval_id = self._approval_id_factory()
         remediation = RemediationExecute(
             request_id=self._remediation_request_id_factory(),
@@ -399,6 +486,66 @@ class CoreOrchestratorAgent:
                 "briefly impact service while recovery proceeds."
             ),
         )
+
+    def _profile_for_asset(
+        self,
+        *,
+        asset: AssetRef,
+        requested_profile: str | None,
+        user_intent: str,
+    ) -> str:
+        if asset.asset_kind in {AssetKind.LINUX_HOST, AssetKind.WINDOWS_HOST}:
+            if requested_profile and requested_profile.startswith("host."):
+                return requested_profile
+            return self._default_profile(user_intent, (asset,))
+        if requested_profile and not requested_profile.startswith("host."):
+            return requested_profile
+        return "uplink-health"
+
+    def _requested_actions_for_asset(
+        self,
+        *,
+        asset: AssetRef,
+        diagnostic_profile: str,
+    ) -> list[str]:
+        if asset.asset_kind is AssetKind.LINUX_HOST:
+            if diagnostic_profile == "host.services":
+                return ["collect-service-status", "collect-systemd-health"]
+            if diagnostic_profile == "host.disk":
+                return ["collect-disk-usage", "collect-filesystem-health"]
+            if diagnostic_profile == "host.logs":
+                return ["collect-journal-errors", "collect-service-failures"]
+            return ["collect-host-summary", "collect-service-status"]
+        if asset.asset_kind is AssetKind.WINDOWS_HOST:
+            if diagnostic_profile == "host.services":
+                return ["collect-service-status", "collect-scm-events"]
+            if diagnostic_profile == "host.event_logs":
+                return ["collect-event-log-errors", "collect-service-events"]
+            if diagnostic_profile == "host.performance":
+                return ["collect-performance-counters", "collect-service-status"]
+            return ["collect-host-summary", "collect-service-status"]
+        return ["collect-interface-status", "collect-health-snapshot"]
+
+    def _parse_host_service_action(
+        self,
+        user_intent: str,
+    ) -> tuple[str, str] | None:
+        normalized = " ".join(user_intent.lower().split())
+        for action_type, verbs in (
+            ("service.restart", ("restart", "bounce", "cycle")),
+            ("service.start", ("start", "enable")),
+            ("service.stop", ("stop", "disable")),
+        ):
+            for verb in verbs:
+                pattern = rf"{verb}\s+(?:the\s+)?([a-z0-9_.-]+)(?:\s+service)?"
+                match = re.search(pattern, normalized)
+                if match is None:
+                    continue
+                service_name = match.group(1).strip(" .,!?:;")
+                if service_name in {"host", "server", "system"}:
+                    continue
+                return action_type, service_name
+        return None
 
 
 def request_to_incident_record(

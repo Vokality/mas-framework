@@ -3,6 +3,7 @@
 from .actions import (
     ApprovalActionRouter,
     ConfigApplyActionHandler,
+    HostRemediationActionHandler,
     IncidentRemediationActionHandler,
 )
 from .service import ApprovalService
@@ -12,6 +13,7 @@ __all__ = [
     "ApprovalActionRouter",
     "ApprovalService",
     "ConfigApplyActionHandler",
+    "HostRemediationActionHandler",
     "IncidentRemediationActionHandler",
     "OpsPlaneApprovalStore",
 ]

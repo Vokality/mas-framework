@@ -10,8 +10,12 @@ from mas_msp_contracts import (
     OperatorChatRequest,
     OperatorChatResponse,
     PortfolioEvent,
+    RemediationExecute,
 )
-from mas_msp_core import ApprovalCancellation
+from mas_msp_core import (
+    ApprovalCancellation,
+    IncidentRemediationExecution,
+)
 
 
 class FabricConnector(Protocol):
@@ -34,6 +38,13 @@ class FabricConnector(Protocol):
         *,
         decision: ApprovalDecision,
     ) -> None: ...
+
+    async def dispatch_approved_remediation(
+        self,
+        *,
+        approval_id: str,
+        remediation: RemediationExecute,
+    ) -> IncidentRemediationExecution: ...
 
     async def dispatch_approval_cancellation(
         self,

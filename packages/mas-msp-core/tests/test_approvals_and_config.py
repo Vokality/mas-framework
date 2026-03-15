@@ -16,6 +16,7 @@ from mas_msp_contracts import (
 from mas_msp_core.approvals import (
     ApprovalCancellation,
     ApprovalController,
+    ApprovalExecutionOutcome,
     ApprovalRecord,
 )
 from mas_msp_core.config import ConfigDeployerAgent
@@ -124,9 +125,14 @@ class FakeOutcomeHandler:
     should_execute: bool
     approved_ids: list[str] = field(default_factory=list)
 
-    async def on_approved(self, approval: ApprovalRecord) -> bool:
+    async def on_approved(self, approval: ApprovalRecord) -> ApprovalExecutionOutcome:
         self.approved_ids.append(approval.approval_id)
-        return self.should_execute
+        return ApprovalExecutionOutcome(
+            executed=self.should_execute,
+            executed_at=datetime(2026, 3, 15, 12, 7, tzinfo=UTC)
+            if self.should_execute
+            else None,
+        )
 
     async def on_rejected(self, approval: ApprovalRecord) -> None:
         del approval
@@ -169,6 +175,7 @@ async def test_approval_controller_marks_consumed_approval_executed() -> None:
 
     assert approval.state is ApprovalState.EXECUTED
     assert store.executed_ids == [APPROVAL_ID]
+    assert approval.executed_at == datetime(2026, 3, 15, 12, 7, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

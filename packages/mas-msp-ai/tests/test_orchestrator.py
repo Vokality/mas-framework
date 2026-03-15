@@ -49,6 +49,21 @@ def _asset() -> AssetRef:
     )
 
 
+def _linux_asset() -> AssetRef:
+    return AssetRef(
+        asset_id=ASSET_ID,
+        client_id=CLIENT_ID,
+        fabric_id=FABRIC_ID,
+        asset_kind=AssetKind.LINUX_HOST,
+        vendor="Linux",
+        model="Ubuntu 24.04",
+        hostname="web-01",
+        mgmt_address="10.0.1.10",
+        site="nyc-1",
+        tags=["linux"],
+    )
+
+
 def _incident() -> IncidentRecord:
     now = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
     return IncidentRecord(
@@ -108,23 +123,27 @@ class FakeToolset(CoreOrchestratorToolset):
         self, requests: list[DiagnosticsCollect]
     ) -> list[DiagnosticsResult]:
         self.requested_diagnostics.extend(requests)
+        asset = requests[0].asset
         result = DiagnosticsResult(
             request_id="99999999-9999-4999-8999-999999999999",
             incident_id=INCIDENT_ID,
             client_id=CLIENT_ID,
             fabric_id=FABRIC_ID,
-            asset=_asset(),
+            asset=asset,
             completed_at=datetime(2026, 3, 15, 12, 5, tzinfo=UTC),
             outcome="completed",
             evidence_bundle_id=EVIDENCE_ID,
             observations=[{"kind": "diagnostic", "status": "captured"}],
-            structured_results={"read_only": True, "profile": "uplink-health"},
+            structured_results={
+                "read_only": True,
+                "profile": requests[0].diagnostic_profile,
+            },
         )
         self.recent_evidence.append(
             EvidenceBundle(
                 evidence_bundle_id=EVIDENCE_ID,
                 incident_id=INCIDENT_ID,
-                asset_id=ASSET_ID,
+                asset_id=asset.asset_id,
                 collected_at=datetime(2026, 3, 15, 12, 5, tzinfo=UTC),
                 items=[
                     {
@@ -264,3 +283,59 @@ async def test_orchestrator_pauses_turn_and_requests_approval_for_write_actions(
     assert toolset.approvals[0].action_kind == "network.remediation"
     assert toolset.approvals[0].incident_id == INCIDENT_ID
     assert toolset.incident.state is IncidentState.AWAITING_APPROVAL
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_builds_typed_host_remediation_and_host_diagnostics() -> (
+    None
+):
+    toolset = FakeToolset(
+        asset_refs=[_linux_asset()],
+        recent_evidence=[
+            EvidenceBundle(
+                evidence_bundle_id=EVIDENCE_ID,
+                incident_id=INCIDENT_ID,
+                asset_id=ASSET_ID,
+                collected_at=datetime(2026, 3, 15, 12, 1, tzinfo=UTC),
+                items=[{"kind": "host_services", "services": []}],
+                summary="Linux service evidence already exists.",
+            )
+        ],
+    )
+    orchestrator = CoreOrchestratorAgent(
+        summary_composer=SummaryComposer(),
+        approval_id_factory=lambda: APPROVAL_ID,
+    )
+
+    response = await orchestrator.handle_chat_request(
+        _request("Restart nginx service on the web host."),
+        toolset=toolset,
+    )
+
+    assert response.state is ChatTurnState.WAITING_FOR_APPROVAL
+    assert toolset.approvals[0].action_kind == "host.remediation"
+    remediation_payload = toolset.approvals[0].payload["remediation_execute"]
+    assert remediation_payload["action_type"] == "service.restart"
+    assert remediation_payload["parameters"]["service_name"] == "nginx"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_requests_host_service_diagnostics_for_linux_assets() -> (
+    None
+):
+    toolset = FakeToolset(asset_refs=[_linux_asset()])
+    orchestrator = CoreOrchestratorAgent(
+        summary_composer=SummaryComposer(),
+        approval_id_factory=lambda: APPROVAL_ID,
+    )
+
+    await orchestrator.handle_chat_request(
+        _request("Collect service diagnostics for the Linux host."),
+        toolset=toolset,
+    )
+
+    assert toolset.requested_diagnostics[0].diagnostic_profile == "host.services"
+    assert toolset.requested_diagnostics[0].requested_actions == [
+        "collect-service-status",
+        "collect-systemd-health",
+    ]

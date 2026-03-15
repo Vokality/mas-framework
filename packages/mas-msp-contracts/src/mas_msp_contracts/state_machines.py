@@ -51,7 +51,11 @@ class StateMachine(Generic[StateT]):
 INCIDENT_STATE_MACHINE = StateMachine(
     transitions={
         IncidentState.OPEN: frozenset(
-            {IncidentState.INVESTIGATING, IncidentState.RESOLVED}
+            {
+                IncidentState.INVESTIGATING,
+                IncidentState.AWAITING_APPROVAL,
+                IncidentState.RESOLVED,
+            }
         ),
         IncidentState.INVESTIGATING: frozenset(
             {

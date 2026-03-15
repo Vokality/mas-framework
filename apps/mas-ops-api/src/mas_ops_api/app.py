@@ -14,6 +14,7 @@ from mas_ops_api.approvals import (
     ApprovalActionRouter,
     ApprovalService,
     ConfigApplyActionHandler,
+    HostRemediationActionHandler,
     IncidentRemediationActionHandler,
     OpsPlaneApprovalStore,
 )
@@ -41,6 +42,8 @@ from mas_ops_api.services import OpsApiServices
 from mas_ops_api.settings import OpsApiSettings
 from mas_ops_api.streams.service import StreamService
 from mas_msp_ai import (
+    AssetKindDiagnosticsExecutor,
+    AssetKindRemediationExecutor,
     CoreOrchestratorAgent,
     DurableTaskRunner,
     FabricIncidentHandler,
@@ -48,6 +51,13 @@ from mas_msp_ai import (
 )
 from mas_msp_core import ApprovalController, ConfigDeployerAgent
 from mas_msp_core import NotifierTransportAgent, OpsBridgeAgent
+from mas_msp_hosts import (
+    HostServiceRegistry,
+    LinuxDiagnosticsAgent,
+    LinuxExecutorAgent,
+    WindowsDiagnosticsAgent,
+    WindowsExecutorAgent,
+)
 from mas_msp_network import NetworkDiagnosticsAgent
 
 
@@ -82,7 +92,27 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
     durable_task_runner = DurableTaskRunner()
     summary_composer = SummaryComposer()
     core_orchestrator = CoreOrchestratorAgent(summary_composer=summary_composer)
+    host_service_registry = HostServiceRegistry()
     network_diagnostics_agent = NetworkDiagnosticsAgent()
+    linux_diagnostics_agent = LinuxDiagnosticsAgent(
+        service_registry=host_service_registry
+    )
+    linux_executor_agent = LinuxExecutorAgent(service_registry=host_service_registry)
+    windows_diagnostics_agent = WindowsDiagnosticsAgent(
+        service_registry=host_service_registry
+    )
+    windows_executor_agent = WindowsExecutorAgent(
+        service_registry=host_service_registry
+    )
+    diagnostics_executor = AssetKindDiagnosticsExecutor(
+        network_executor=network_diagnostics_agent,
+        linux_executor=linux_diagnostics_agent,
+        windows_executor=windows_diagnostics_agent,
+    )
+    remediation_executor = AssetKindRemediationExecutor(
+        linux_executor=linux_executor_agent,
+        windows_executor=windows_executor_agent,
+    )
     incident_projection_service = IncidentProjectionService(stream_service)
     chat_service = ChatService(stream_service)
     incident_gateway = OpsPlaneIncidentGateway(
@@ -134,11 +164,13 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         approval_controller=approval_controller,
         notifier=notifier_transport_agent,
         orchestrator=core_orchestrator,
-        diagnostics_executor=network_diagnostics_agent,
+        diagnostics_executor=diagnostics_executor,
+        remediation_executor=remediation_executor,
     )
     ops_bridge_agent = OpsBridgeAgent(
         incident_chat_handler=fabric_incident_handler,
         visibility_alert_handler=fabric_incident_handler,
+        incident_remediation_handler=fabric_incident_handler,
         approval_controller=approval_controller,
         config_deployer=config_deployer,
     )
@@ -147,6 +179,16 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
             client_id=client_id,
             bridge=ops_bridge_agent,
         )
+    )
+    approval_action_router.register(
+        "host.remediation",
+        HostRemediationActionHandler(
+            command_connector_registry=command_connector_registry,
+            database=database,
+            chat_service=chat_service,
+            incident_projection_service=incident_projection_service,
+            stream_service=stream_service,
+        ),
     )
 
     async def dispatch_alert(event) -> None:  # noqa: ANN001

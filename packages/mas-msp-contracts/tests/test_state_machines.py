@@ -21,7 +21,11 @@ from mas_msp_contracts import (
     [
         (
             IncidentState.OPEN,
-            {IncidentState.INVESTIGATING, IncidentState.RESOLVED},
+            {
+                IncidentState.INVESTIGATING,
+                IncidentState.AWAITING_APPROVAL,
+                IncidentState.RESOLVED,
+            },
         ),
         (
             IncidentState.INVESTIGATING,

@@ -11,14 +11,23 @@ from mas_msp_contracts import (
     AssetRef,
     ChatScope,
     ChatTurnState,
+    DiagnosticsResult,
+    EvidenceBundle,
     IncidentRecord,
     IncidentState,
     OperatorChatRequest,
     OperatorChatResponse,
     PortfolioEvent,
+    RemediationExecute,
+    RemediationResult,
     Severity,
 )
-from mas_msp_core import NotifierTransportAgent, OpsBridgeAgent
+from mas_msp_core import (
+    IncidentRemediationExecution,
+    NotifierTransportAgent,
+    OpsBridgeAgent,
+    PortfolioPublish,
+)
 
 
 CLIENT_ID = "11111111-1111-4111-8111-111111111111"
@@ -107,6 +116,28 @@ def _alert_event() -> PortfolioEvent:
     )
 
 
+def _host_alert_event() -> PortfolioEvent:
+    alert = _alert().model_copy(
+        update={
+            "asset": _asset().model_copy(update={"asset_kind": AssetKind.LINUX_HOST}),
+            "category": "service",
+            "title": "nginx on edge-sw-01 entered failed state",
+            "normalized_facts": {"service_name": "nginx"},
+        }
+    )
+    return PortfolioEvent(
+        event_id="99999999-9999-4999-8999-999999999998",
+        client_id=alert.client_id,
+        fabric_id=alert.fabric_id,
+        event_type="host.alert.raised",
+        subject_type="alert",
+        subject_id=alert.alert_id,
+        occurred_at=alert.occurred_at,
+        payload_version=1,
+        payload={"alert": alert.model_dump(mode="json")},
+    )
+
+
 @dataclass(slots=True)
 class FakeIncidentChatHandler:
     requests: list[OperatorChatRequest] = field(default_factory=list)
@@ -136,6 +167,55 @@ class FakeVisibilityAlertHandler:
     async def handle_visibility_alert(self, alert: AlertRaised) -> IncidentRecord:
         self.alerts.append(alert)
         return _incident(severity=alert.severity)
+
+
+@dataclass(slots=True)
+class FakeIncidentRemediationHandler:
+    calls: list[tuple[str, RemediationExecute]] = field(default_factory=list)
+
+    async def execute_approved_remediation(
+        self,
+        *,
+        approval_id: str,
+        remediation: RemediationExecute,
+    ) -> IncidentRemediationExecution:
+        self.calls.append((approval_id, remediation))
+        now = datetime(2026, 3, 15, 14, 10, tzinfo=UTC)
+        return IncidentRemediationExecution(
+            remediation_result=RemediationResult(
+                request_id=remediation.request_id,
+                incident_id=remediation.incident_id,
+                client_id=remediation.client_id,
+                fabric_id=remediation.fabric_id,
+                asset=remediation.asset,
+                completed_at=now,
+                outcome="completed",
+                audit_reference="linux-service:test",
+                post_state={"service_name": "nginx", "service_state": "running"},
+            ),
+            verification_result=DiagnosticsResult(
+                request_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                incident_id=remediation.incident_id,
+                client_id=remediation.client_id,
+                fabric_id=remediation.fabric_id,
+                asset=remediation.asset,
+                completed_at=now,
+                outcome="completed",
+                evidence_bundle_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                observations=[],
+                structured_results={},
+            ),
+            verification_evidence_bundle=EvidenceBundle(
+                evidence_bundle_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                incident_id=remediation.incident_id,
+                asset_id=remediation.asset.asset_id,
+                collected_at=now,
+                items=[],
+                summary="Verification completed.",
+            ),
+            incident_state=IncidentState.RESOLVED,
+            operator_message="Approved remediation completed.",
+        )
 
 
 @dataclass(slots=True)
@@ -218,6 +298,55 @@ async def test_ops_bridge_routes_visibility_alerts() -> None:
 
     assert incident.incident_id == INCIDENT_ID
     assert handler.alerts == [_alert()]
+
+
+def test_ops_bridge_emits_host_alert_events_for_host_assets() -> None:
+    bridge = OpsBridgeAgent()
+    host_alert = _alert().model_copy(
+        update={
+            "asset": _asset().model_copy(update={"asset_kind": AssetKind.LINUX_HOST}),
+            "category": "service",
+            "title": "nginx on edge-sw-01 entered failed state",
+            "normalized_facts": {"service_name": "nginx"},
+        }
+    )
+    host_publish = PortfolioPublish(
+        asset=host_alert.asset,
+        asset_upserted=True,
+        health_changed=False,
+        source=host_alert,
+    )
+
+    events = bridge.build_portfolio_events(host_publish)
+
+    assert [event.event_type for event in events] == [
+        "asset.upserted",
+        "host.alert.raised",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_bridge_routes_approved_remediations() -> None:
+    handler = FakeIncidentRemediationHandler()
+    bridge = OpsBridgeAgent(incident_remediation_handler=handler)
+    remediation = RemediationExecute(
+        request_id="99999999-9999-4999-8999-999999999997",
+        incident_id=INCIDENT_ID,
+        client_id=CLIENT_ID,
+        fabric_id=FABRIC_ID,
+        asset=_asset().model_copy(update={"asset_kind": AssetKind.LINUX_HOST}),
+        action_type="service.restart",
+        parameters={"service_name": "nginx"},
+        approval_id="99999999-9999-4999-8999-999999999996",
+    )
+
+    result = await bridge.dispatch_approved_remediation(
+        approval_id="99999999-9999-4999-8999-999999999996",
+        remediation=remediation,
+    )
+
+    assert result.incident_state is IncidentState.RESOLVED
+    assert handler.calls == [("99999999-9999-4999-8999-999999999996", remediation)]
 
 
 @pytest.mark.asyncio

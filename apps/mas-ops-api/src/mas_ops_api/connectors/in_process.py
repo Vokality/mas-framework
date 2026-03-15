@@ -8,6 +8,7 @@ from mas_msp_contracts import (
     OperatorChatRequest,
     OperatorChatResponse,
     PortfolioEvent,
+    RemediationExecute,
 )
 
 from mas_msp_core import ApprovalCancellation, OpsBridgeAgent
@@ -52,6 +53,23 @@ class InProcessFabricConnector:
         """Forward one approval decision into the local bridge."""
 
         await self._bridge.dispatch_approval_decision(decision=decision)
+
+    async def dispatch_approved_remediation(
+        self,
+        *,
+        approval_id: str,
+        remediation: RemediationExecute,
+    ):
+        """Forward one approved remediation into the local bridge/runtime."""
+
+        if remediation.client_id != self._client_id:
+            raise ValueError(
+                "approved remediation client_id must match connector client_id"
+            )
+        return await self._bridge.dispatch_approved_remediation(
+            approval_id=approval_id,
+            remediation=remediation,
+        )
 
     async def dispatch_approval_cancellation(
         self,

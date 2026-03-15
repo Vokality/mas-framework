@@ -58,6 +58,14 @@ class ApprovalRecord:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ApprovalExecutionOutcome:
+    """Return whether an approved action was consumed and when it finished."""
+
+    executed: bool
+    executed_at: datetime | None = None
+
+
 ApprovalCancellationActorType = Literal["agent", "system", "user"]
 
 
@@ -75,5 +83,6 @@ class ApprovalCancellation:
 __all__ = [
     "ApprovalCancellation",
     "ApprovalCancellationActorType",
+    "ApprovalExecutionOutcome",
     "ApprovalRecord",
 ]

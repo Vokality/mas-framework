@@ -14,8 +14,11 @@ from mas_msp_contracts import (
     JSONObject,
     OperatorChatRequest,
     OperatorChatResponse,
+    RemediationExecute,
     Severity,
 )
+
+from .models import IncidentRemediationExecution
 
 
 class IncidentChatHandler(Protocol):
@@ -31,6 +34,17 @@ class VisibilityAlertHandler(Protocol):
     """Handle one visibility alert that may need durable incident ownership."""
 
     async def handle_visibility_alert(self, alert: AlertRaised) -> IncidentRecord: ...
+
+
+class IncidentRemediationHandler(Protocol):
+    """Execute one approved incident remediation inside a client fabric."""
+
+    async def execute_approved_remediation(
+        self,
+        *,
+        approval_id: str,
+        remediation: RemediationExecute,
+    ) -> IncidentRemediationExecution: ...
 
 
 class IncidentContextReader(Protocol):
@@ -109,6 +123,7 @@ class NotifierTransport(Protocol):
 __all__ = [
     "IncidentChatHandler",
     "IncidentContextReader",
+    "IncidentRemediationHandler",
     "NotifierTransport",
     "VisibilityAlertHandler",
 ]
