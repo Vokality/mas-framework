@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from mas_msp_contracts import AlertRaised, CredentialRef, HealthSnapshot
-from mas_msp_core import InventoryRepository, OpsBridgeAgent
 from mas_msp_hosts import (
     DockerLinuxHostPoller,
     LinuxEventIngestAgent,
@@ -18,8 +17,8 @@ from mas_msp_hosts import (
     LinuxPollingTarget,
 )
 
-from mas_ops_api.connectors import PortfolioIngressRegistry
 from mas_ops_api.settings import OpsApiSettings
+from mas_ops_api.visibility import InProcessVisibilityRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +39,11 @@ class DockerDogfoodMonitorService:
         self,
         *,
         settings: OpsApiSettings,
-        portfolio_ingress_registry: PortfolioIngressRegistry,
+        visibility_runtime: InProcessVisibilityRuntime,
         poller: LinuxHostPoller | None = None,
     ) -> None:
         self._settings = settings
-        self._portfolio_ingress_registry = portfolio_ingress_registry
-        self._inventory = InventoryRepository()
-        self._bridge = OpsBridgeAgent()
+        self._visibility_runtime = visibility_runtime
         self._poller = poller or DockerLinuxHostPoller(
             container_name_resolver=lambda _target: self._settings.dogfood_container_name
         )
@@ -86,8 +83,8 @@ class DockerDogfoodMonitorService:
     async def _poll_once(self) -> None:
         target = self._build_target()
         observation = await self._poller.poll(target)
-        snapshot = self._polling_agent.normalize_poll(target, observation)
-        await self._ingest_contract(snapshot)
+        raw_snapshot = self._polling_agent.normalize_poll(target, observation)
+        snapshot = await self._ingest_snapshot(raw_snapshot)
         self._record_start_time(snapshot)
 
         problem_signature = _problem_signature(snapshot)
@@ -120,20 +117,20 @@ class DockerDogfoodMonitorService:
                 tags=target.tags,
             )
         )
-        await self._ingest_contract(alert)
+        await self._ingest_alert(alert)
         self._problem_window.alerted = True
 
-    async def _ingest_contract(
-        self,
-        contract: HealthSnapshot | AlertRaised,
-    ) -> None:
-        if isinstance(contract, HealthSnapshot):
-            publish = self._inventory.process_snapshot(contract)
-        else:
-            publish = self._inventory.process_alert(contract)
-        connector = self._portfolio_ingress_registry.get(publish.asset.client_id)
-        for event in self._bridge.build_portfolio_events(publish):
-            await connector.ingest_portfolio_event(event=event)
+    async def _ingest_snapshot(self, snapshot: HealthSnapshot) -> HealthSnapshot:
+        result = await self._visibility_runtime.ingest_contract(snapshot)
+        if not isinstance(result, HealthSnapshot):
+            raise TypeError("snapshot ingestion must return a HealthSnapshot")
+        return result
+
+    async def _ingest_alert(self, alert: AlertRaised) -> AlertRaised:
+        result = await self._visibility_runtime.ingest_contract(alert)
+        if not isinstance(result, AlertRaised):
+            raise TypeError("alert ingestion must return an AlertRaised")
+        return result
 
     def _build_target(self) -> LinuxPollingTarget:
         return LinuxPollingTarget(

@@ -24,7 +24,9 @@ from mas_ops_api.db.models import (
     PortfolioAsset,
     PortfolioClient,
     PortfolioIncident,
+    PortfolioIncidentAsset,
 )
+from mas_ops_api.projections.repository import PortfolioQueries
 from mas_ops_api.projections.source_ids import build_projection_source_id
 
 from .conftest import CLIENT_A, FABRIC_A
@@ -251,14 +253,11 @@ async def test_portfolio_connector_ingests_visibility_events_idempotently(
     assert asset.health_observed_at == datetime(2026, 3, 15, 14, 11, tzinfo=UTC)
     assert asset.last_alert_at == datetime(2026, 3, 15, 14, 5, tzinfo=UTC)
 
-    assert len(incidents) == 1
-    assert incidents[0].summary == "Primary uplink changed state to down"
-    assert incidents[0].state == "open"
+    assert incidents == []
 
     assert [row.source_event_id for row in activity_rows] == [
         build_projection_source_id(asset_upsert_event),
         build_projection_source_id(alert_event),
-        f"incident-alert:{ALERT_ID}",
         build_projection_source_id(health_event),
         build_projection_source_id(snapshot_event),
         build_projection_source_id(
@@ -271,8 +270,8 @@ async def test_portfolio_connector_ingests_visibility_events_idempotently(
         ),
     ]
     assert all(row.asset_id == ASSET_ID for row in activity_rows)
-    assert len(stream_rows) == 15
-    assert len(activity_rows) == 6
+    assert len(stream_rows) == 13
+    assert len(activity_rows) == 5
     assert stream_rows[0].payload["updated_at"] == "2026-03-15T14:00:00Z"
     assert stream_rows[1].payload["source_event_id"] == build_projection_source_id(
         asset_upsert_event
@@ -340,7 +339,6 @@ async def test_phase_2_routes_expose_client_and_asset_activity(
     assert client_activity.status_code == 200
     assert [item["event_type"] for item in client_activity.json()] == [
         "network.snapshot.recorded",
-        "incident.updated",
         "network.alert.raised",
         "asset.upserted",
     ]
@@ -356,7 +354,58 @@ async def test_phase_2_routes_expose_client_and_asset_activity(
     assert asset_activity.status_code == 200
     assert [item["event_type"] for item in asset_activity.json()] == [
         "network.snapshot.recorded",
-        "incident.updated",
         "network.alert.raised",
         "asset.upserted",
     ]
+
+
+@pytest.mark.asyncio
+async def test_correlation_key_does_not_fallback_to_asset_owned_incident(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            PortfolioAsset(
+                asset_id=ASSET_ID,
+                client_id=CLIENT_A,
+                fabric_id=FABRIC_A,
+                asset_kind=AssetKind.NETWORK_DEVICE.value,
+                vendor="Cisco",
+                model="Catalyst 9300",
+                hostname="edge-sw-01",
+                mgmt_address="10.0.0.10",
+                site="nyc-1",
+                tags=["core"],
+                updated_at=datetime(2026, 3, 15, 14, 0, tzinfo=UTC),
+            )
+        )
+        session.add(
+            PortfolioIncident(
+                incident_id="12121212-1212-4121-8121-121212121212",
+                client_id=CLIENT_A,
+                fabric_id=FABRIC_A,
+                correlation_key=None,
+                state="open",
+                severity=Severity.WARNING.value,
+                summary="Legacy asset scoped incident",
+                recommended_actions=[],
+                opened_at=datetime(2026, 3, 15, 14, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 3, 15, 14, 0, tzinfo=UTC),
+            )
+        )
+        session.add(
+            PortfolioIncidentAsset(
+                incident_id="12121212-1212-4121-8121-121212121212",
+                asset_id=ASSET_ID,
+            )
+        )
+        await session.commit()
+
+        incident = await PortfolioQueries.find_active_incident(
+            session,
+            client_id=CLIENT_A,
+            correlation_key="condition:service:nginx",
+            asset_id=ASSET_ID,
+        )
+
+    assert incident is None

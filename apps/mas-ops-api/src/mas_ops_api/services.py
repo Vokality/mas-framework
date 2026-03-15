@@ -15,6 +15,7 @@ from mas_ops_api.incidents import IncidentProjectionService
 from mas_ops_api.projections.portfolio_ingest import PortfolioIngestService
 from mas_ops_api.settings import OpsApiSettings
 from mas_ops_api.streams.service import StreamService
+from mas_ops_api.visibility import InProcessVisibilityRuntime
 from mas_msp_ai import DurableTaskRunner
 
 
@@ -37,6 +38,7 @@ class OpsApiServices:
     portfolio_ingest_service: PortfolioIngestService
     portfolio_ingress_registry: PortfolioIngressRegistry
     stream_service: StreamService
+    visibility_runtime: InProcessVisibilityRuntime
 
 
 __all__ = ["OpsApiServices"]

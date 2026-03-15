@@ -16,6 +16,7 @@ from mas_msp_contracts import (
 from mas_msp_core import IncidentContextReader, NotifierTransport
 
 from mas_ops_api.db.session import Database
+from mas_ops_api.db.models import PortfolioAsset
 from mas_ops_api.incidents.service import IncidentProjectionService
 from mas_ops_api.projections.repository import PortfolioQueries
 from mas_ops_api.streams.service import StreamService
@@ -35,16 +36,18 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
         self._incident_projection_service = incident_projection_service
         self._stream_service = stream_service
 
-    async def find_active_incident_for_asset(
+    async def find_active_incident(
         self,
         *,
         client_id: str,
-        asset_id: str,
+        correlation_key: str | None,
+        asset_id: str | None,
     ) -> IncidentRecord | None:
         async with self._database.session_factory() as session:
-            incident = await PortfolioQueries.find_active_incident_for_asset(
+            incident = await PortfolioQueries.find_active_incident(
                 session,
                 client_id=client_id,
+                correlation_key=correlation_key,
                 asset_id=asset_id,
             )
             if incident is None:
@@ -115,10 +118,12 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
         incident_id: str | None,
         client_id: str,
         fabric_id: str,
+        correlation_key: str | None,
         summary: str,
         severity: Severity,
         state: IncidentState,
         asset_ids: list[str],
+        asset_refs: list[AssetRef],
         occurred_at: datetime,
         source: str,
         source_event_id: str,
@@ -127,6 +132,7 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
             raise ValueError("visibility incidents require a fabric-owned incident_id")
         stream_events = []
         async with self._database.session_factory() as session:
+            await self._ensure_assets(session, asset_refs=asset_refs, observed_at=occurred_at)
             existing = await PortfolioQueries.get_incident(session, incident_id)
             if existing is None:
                 await self._incident_projection_service.create_incident(
@@ -134,6 +140,7 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
                     incident_id=incident_id,
                     client_id=client_id,
                     fabric_id=fabric_id,
+                    correlation_key=correlation_key,
                     state=state,
                     severity=severity.value,
                     summary=summary,
@@ -148,6 +155,7 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
                 session,
                 incident_id=incident_id,
                 summary=summary,
+                correlation_key=correlation_key,
                 severity=severity.value,
                 state=state,
                 recommended_actions=None,
@@ -171,6 +179,32 @@ class OpsPlaneIncidentGateway(IncidentContextReader, NotifierTransport):
         for stream_event in stream_events:
             await self._stream_service.publish(stream_event)
         return result
+
+    async def _ensure_assets(
+        self,
+        session,  # noqa: ANN001
+        *,
+        asset_refs: list[AssetRef],
+        observed_at: datetime,
+    ) -> None:
+        for asset_ref in asset_refs:
+            asset = await session.get(PortfolioAsset, asset_ref.asset_id)
+            if asset is None:
+                session.add(
+                    PortfolioAsset(
+                        asset_id=asset_ref.asset_id,
+                        client_id=asset_ref.client_id,
+                        fabric_id=asset_ref.fabric_id,
+                        asset_kind=asset_ref.asset_kind.value,
+                        vendor=asset_ref.vendor,
+                        model=asset_ref.model,
+                        hostname=asset_ref.hostname,
+                        mgmt_address=asset_ref.mgmt_address,
+                        site=asset_ref.site,
+                        tags=list(asset_ref.tags),
+                        updated_at=observed_at,
+                    )
+                )
 
     async def persist_summary(
         self,
@@ -281,6 +315,7 @@ def _incident_record(incident, assets) -> IncidentRecord:  # noqa: ANN001
         incident_id=incident.incident_id,
         client_id=incident.client_id,
         fabric_id=incident.fabric_id,
+        correlation_key=incident.correlation_key,
         state=IncidentState(incident.state),
         severity=Severity(incident.severity),
         summary=incident.summary,

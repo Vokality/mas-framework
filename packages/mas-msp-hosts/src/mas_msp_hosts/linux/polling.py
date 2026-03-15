@@ -5,11 +5,11 @@ from __future__ import annotations
 from uuid import uuid4
 
 from mas_agent import Agent, TlsClientConfig
-from mas_msp_contracts import AssetKind, HealthSnapshot
+from mas_msp_contracts import AssetKind, HealthSnapshot, HealthState
 
 from mas_msp_core import INVENTORY_AGENT_ID, LINUX_POLLING_AGENT_ID
 
-from ..common import build_host_asset_ref, evaluate_host_health
+from ..common import build_host_asset_ref
 from .models import LinuxHostPoller, LinuxPollObservation, LinuxPollingTarget
 
 
@@ -38,11 +38,6 @@ class LinuxPollingAgent(Agent[dict[str, object]]):
     ) -> HealthSnapshot:
         """Normalize one Linux polling observation into a shared snapshot."""
 
-        health_state, findings = evaluate_host_health(
-            metrics=dict(observation.metrics),
-            services=[dict(item) for item in observation.services],
-            findings=observation.findings,
-        )
         return HealthSnapshot(
             snapshot_id=str(uuid4()),
             client_id=target.client_id,
@@ -60,12 +55,12 @@ class LinuxPollingAgent(Agent[dict[str, object]]):
             ),
             source_kind="ssh_poll",
             collected_at=observation.collected_at,
-            health_state=health_state,
+            health_state=HealthState.UNKNOWN,
             metrics={
                 **dict(observation.metrics),
                 "services": [dict(item) for item in observation.services],
             },
-            findings=findings,
+            findings=[],
         )
 
     async def poll_target(self, target: LinuxPollingTarget) -> HealthSnapshot:

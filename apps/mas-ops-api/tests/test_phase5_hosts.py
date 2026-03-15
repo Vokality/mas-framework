@@ -14,7 +14,6 @@ from mas_msp_contracts import (
     AssetRef,
     HealthSnapshot,
     HealthState,
-    PortfolioEvent,
     Severity,
 )
 from mas_ops_api.auth.types import UserRole
@@ -44,8 +43,8 @@ def _linux_host_asset() -> AssetRef:
     )
 
 
-def _linux_host_alert_event() -> PortfolioEvent:
-    alert = AlertRaised(
+def _linux_host_alert() -> AlertRaised:
+    return AlertRaised(
         alert_id=HOST_ALERT_ID,
         client_id=CLIENT_A,
         fabric_id=FABRIC_A,
@@ -57,28 +56,17 @@ def _linux_host_alert_event() -> PortfolioEvent:
         title="nginx on web-01 entered failed state",
         normalized_facts={"service_name": "nginx"},
     )
-    return PortfolioEvent(
-        event_id="dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-        client_id=CLIENT_A,
-        fabric_id=FABRIC_A,
-        event_type="host.alert.raised",
-        subject_type="alert",
-        subject_id=alert.alert_id,
-        occurred_at=alert.occurred_at,
-        payload_version=1,
-        payload={"alert": alert.model_dump(mode="json")},
-    )
 
 
-def _linux_host_snapshot_event() -> PortfolioEvent:
-    snapshot = HealthSnapshot(
+def _linux_host_snapshot() -> HealthSnapshot:
+    return HealthSnapshot(
         snapshot_id=HOST_SNAPSHOT_ID,
         client_id=CLIENT_A,
         fabric_id=FABRIC_A,
         asset=_linux_host_asset(),
         source_kind="ssh_poll",
         collected_at=datetime(2026, 3, 15, 15, 2, tzinfo=UTC),
-        health_state=HealthState.CRITICAL,
+        health_state=HealthState.UNKNOWN,
         metrics={
             "cpu_percent": 41,
             "memory_percent": 58,
@@ -88,18 +76,7 @@ def _linux_host_snapshot_event() -> PortfolioEvent:
                 {"service_name": "sshd", "service_state": "running"},
             ],
         },
-        findings=[{"code": "service_not_running", "service_name": "nginx"}],
-    )
-    return PortfolioEvent(
-        event_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-        client_id=CLIENT_A,
-        fabric_id=FABRIC_A,
-        event_type="host.snapshot.recorded",
-        subject_type="snapshot",
-        subject_id=snapshot.snapshot_id,
-        occurred_at=snapshot.collected_at,
-        payload_version=1,
-        payload={"snapshot": snapshot.model_dump(mode="json")},
+        findings=[],
     )
 
 
@@ -124,14 +101,18 @@ async def test_host_visibility_projects_linux_assets_and_incidents(
     session_factory,
 ) -> None:
     await _seed_desired_state(session_factory)
-    connector = ops_app.state.services.portfolio_ingress_registry.get(CLIENT_A)
-
-    await connector.ingest_portfolio_event(event=_linux_host_alert_event())
-    await connector.ingest_portfolio_event(event=_linux_host_snapshot_event())
+    await ops_app.state.services.visibility_runtime.ingest_contract(_linux_host_alert())
+    await ops_app.state.services.visibility_runtime.ingest_contract(
+        _linux_host_snapshot()
+    )
 
     async with session_factory() as session:
         client = await session.get(PortfolioClient, CLIENT_A)
-        asset = await session.get(PortfolioAsset, HOST_ASSET_ID)
+        asset = (
+            await session.scalars(
+                select(PortfolioAsset).where(PortfolioAsset.client_id == CLIENT_A)
+            )
+        ).one()
         incidents = list((await session.scalars(select(PortfolioIncident))).all())
 
     assert client is not None
@@ -152,8 +133,7 @@ async def test_host_remediation_executes_and_verifies_before_resolution(
     session_factory,
 ) -> None:
     await _seed_desired_state(session_factory)
-    connector = ops_app.state.services.portfolio_ingress_registry.get(CLIENT_A)
-    await connector.ingest_portfolio_event(event=_linux_host_alert_event())
+    await ops_app.state.services.visibility_runtime.ingest_contract(_linux_host_alert())
 
     async with session_factory() as session:
         incident = (

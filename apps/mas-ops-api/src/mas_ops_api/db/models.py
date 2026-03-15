@@ -105,6 +105,16 @@ class PortfolioClient(Base):
     updated_at: Mapped[Any] = mapped_column(UtcDateTime(), default=utc_now)
 
 
+class AppliedAlertPolicyRecord(Base):
+    """Materialized alert policy owned by the local fabric runtime."""
+
+    __tablename__ = "applied_alert_policies"
+
+    client_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[Any] = mapped_column(UtcDateTime(), default=utc_now)
+
+
 class PortfolioIncident(Base):
     """Human-facing incident projection."""
 
@@ -113,6 +123,9 @@ class PortfolioIncident(Base):
     incident_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     client_id: Mapped[str] = mapped_column(String(36), index=True)
     fabric_id: Mapped[str] = mapped_column(String(36), index=True)
+    correlation_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
     state: Mapped[str] = mapped_column(String(32), default=IncidentState.OPEN.value)
     severity: Mapped[str] = mapped_column(String(32), default=Severity.INFO.value)
     summary: Mapped[str] = mapped_column(Text())
@@ -142,6 +155,43 @@ class PortfolioIncidentAsset(Base):
         ForeignKey("portfolio_assets.asset_id", ondelete="CASCADE"),
         primary_key=True,
     )
+
+
+class AlertConditionStateRecord(Base):
+    """Durable tracked alert condition state for the local fabric runtime."""
+
+    __tablename__ = "alert_condition_states"
+    __table_args__ = (
+        Index(
+            "ix_alert_condition_states_client_asset",
+            "client_id",
+            "asset_id",
+        ),
+        Index(
+            "ix_alert_condition_states_correlation_key",
+            "correlation_key",
+        ),
+    )
+
+    client_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    condition_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    correlation_key: Mapped[str] = mapped_column(String(255))
+    category: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(Text())
+    severity: Mapped[str] = mapped_column(String(32))
+    source_kind: Mapped[str] = mapped_column(String(64))
+    normalized_facts: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    phase: Mapped[str] = mapped_column(String(32))
+    open_observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    close_observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    open_after_polls: Mapped[int] = mapped_column(Integer)
+    close_after_polls: Mapped[int] = mapped_column(Integer)
+    cooldown_seconds: Mapped[int] = mapped_column(Integer)
+    opened_at: Mapped[Any | None] = mapped_column(UtcDateTime(), nullable=True)
+    resolved_at: Mapped[Any | None] = mapped_column(UtcDateTime(), nullable=True)
+    last_observed_at: Mapped[Any] = mapped_column(UtcDateTime())
+    last_surfaced_at: Mapped[Any | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class IncidentEvidenceBundleRecord(Base):
@@ -448,6 +498,8 @@ class OpsStreamEvent(Base):
 
 
 __all__ = [
+    "AlertConditionStateRecord",
+    "AppliedAlertPolicyRecord",
     "ApprovalRequestRecord",
     "ChatMessage",
     "ChatSession",

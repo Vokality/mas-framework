@@ -69,12 +69,29 @@ class PortfolioQueries:
         return await session.get(PortfolioIncident, incident_id)
 
     @staticmethod
-    async def find_active_incident_for_asset(
+    async def find_active_incident(
         session: AsyncSession,
         *,
         client_id: str,
-        asset_id: str,
+        correlation_key: str | None,
+        asset_id: str | None,
     ) -> PortfolioIncident | None:
+        if correlation_key is not None:
+            stmt = (
+                select(PortfolioIncident)
+                .where(
+                    PortfolioIncident.client_id == client_id,
+                    PortfolioIncident.state.in_(ACTIVE_INCIDENT_STATES),
+                    PortfolioIncident.correlation_key == correlation_key,
+                )
+                .order_by(PortfolioIncident.updated_at.desc())
+            )
+            incident = (await session.scalars(stmt)).first()
+            if incident is not None:
+                return incident
+            return None
+        if asset_id is None:
+            return None
         stmt = (
             select(PortfolioIncident)
             .join(

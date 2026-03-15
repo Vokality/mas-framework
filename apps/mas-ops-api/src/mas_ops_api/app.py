@@ -42,6 +42,11 @@ from mas_ops_api.projections.portfolio_ingest import PortfolioIngestService
 from mas_ops_api.services import OpsApiServices
 from mas_ops_api.settings import OpsApiSettings
 from mas_ops_api.streams.service import StreamService
+from mas_ops_api.visibility import (
+    InProcessVisibilityRuntime,
+    OpsPlaneAlertConditionStore,
+    OpsPlaneAppliedAlertPolicyStore,
+)
 from mas_msp_ai import (
     AssetKindDiagnosticsExecutor,
     AssetKindRemediationExecutor,
@@ -50,8 +55,14 @@ from mas_msp_ai import (
     FabricIncidentHandler,
     SummaryComposer,
 )
-from mas_msp_core import ApprovalController, ConfigDeployerAgent
-from mas_msp_core import NotifierTransportAgent, OpsBridgeAgent
+from mas_msp_core import (
+    AlertPolicyAgent,
+    ApprovalController,
+    ConfigDeployerAgent,
+    NotificationService,
+    NotifierTransportAgent,
+    OpsBridgeAgent,
+)
 from mas_msp_hosts import (
     DockerLinuxDiagnosticsBackend,
     HostServiceRegistry,
@@ -126,14 +137,25 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
     )
     incident_projection_service = IncidentProjectionService(stream_service)
     chat_service = ChatService(stream_service)
+    applied_alert_policy_store = OpsPlaneAppliedAlertPolicyStore(database=database)
+    alert_condition_store = OpsPlaneAlertConditionStore(database=database)
     incident_gateway = OpsPlaneIncidentGateway(
         database=database,
         incident_projection_service=incident_projection_service,
         stream_service=stream_service,
     )
+    notification_service = NotificationService(
+        applied_policy_store=applied_alert_policy_store,
+    )
     notifier_transport_agent = NotifierTransportAgent(
         incident_context_reader=incident_gateway,
         transport=incident_gateway,
+        notification_service=notification_service,
+    )
+    alert_policy_agent = AlertPolicyAgent(
+        applied_policy_store=applied_alert_policy_store,
+        condition_store=alert_condition_store,
+        notifier=notifier_transport_agent,
     )
     approval_action_router = ApprovalActionRouter()
     approval_controller = ApprovalController(
@@ -156,6 +178,7 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
             stream_service=stream_service,
         ),
         approval_controller=approval_controller,
+        applied_policy_store=applied_alert_policy_store,
     )
     approval_action_router.register(
         "network.remediation",
@@ -202,15 +225,20 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         ),
     )
 
-    async def dispatch_alert(event) -> None:  # noqa: ANN001
-        await command_connector_registry.get(event.client_id).dispatch_visibility_event(
-            event=event
-        )
-
     portfolio_ingest_service = PortfolioIngestService(
         database,
         stream_service,
-        alert_dispatcher=dispatch_alert,
+    )
+    portfolio_ingress_registry = PortfolioIngressRegistry(
+        factory=lambda client_id: OpsPlaneFabricConnector(
+            client_id=client_id,
+            portfolio_ingest_service=portfolio_ingest_service,
+        )
+    )
+    visibility_runtime = InProcessVisibilityRuntime(
+        alert_policy_agent=alert_policy_agent,
+        bridge=ops_bridge_agent,
+        portfolio_ingress_registry=portfolio_ingress_registry,
     )
     portfolio_assistant = PortfolioAssistant()
     chat_execution_service = ChatExecutionService(
@@ -254,18 +282,14 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         durable_task_runner=durable_task_runner,
         incident_projection_service=incident_projection_service,
         portfolio_assistant=portfolio_assistant,
-        portfolio_ingress_registry=PortfolioIngressRegistry(
-            factory=lambda client_id: OpsPlaneFabricConnector(
-                client_id=client_id,
-                portfolio_ingest_service=portfolio_ingest_service,
-            )
-        ),
+        portfolio_ingress_registry=portfolio_ingress_registry,
         portfolio_ingest_service=portfolio_ingest_service,
         stream_service=stream_service,
+        visibility_runtime=visibility_runtime,
     )
     dogfood_monitor_service = DockerDogfoodMonitorService(
         settings=app_settings,
-        portfolio_ingress_registry=services.portfolio_ingress_registry,
+        visibility_runtime=visibility_runtime,
     )
 
     @asynccontextmanager

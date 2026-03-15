@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from mas_msp_contracts import (
     ApprovalRequested,
     ConfigApplyResult,
@@ -12,6 +14,10 @@ from mas_msp_contracts import (
     ConfigValidationResult,
 )
 from mas_msp_core.agent_ids import CONFIG_DEPLOYER_AGENT_ID
+from mas_msp_core.alerting import (
+    AppliedAlertConfiguration,
+    AppliedAlertPolicyStore,
+)
 from mas_msp_core.approvals import ApprovalController, ApprovalRecord
 
 from .ports import ConfigRunStore, DesiredStateStore
@@ -44,10 +50,12 @@ class ConfigDeployerAgent:
         desired_state_store: DesiredStateStore,
         run_store: ConfigRunStore,
         approval_controller: ApprovalController,
+        applied_policy_store: AppliedAlertPolicyStore | None = None,
     ) -> None:
         self._desired_state_store = desired_state_store
         self._run_store = run_store
         self._approval_controller = approval_controller
+        self._applied_policy_store = applied_policy_store
 
     async def validate_run(
         self,
@@ -143,6 +151,10 @@ class ConfigDeployerAgent:
                 outcome="applied",
                 details={"keys": _keys_for_section(desired_state, section_name)},
             )
+        if self._applied_policy_store is not None:
+            await self._applied_policy_store.apply_configuration(
+                AppliedAlertConfiguration.from_desired_state(desired_state)
+            )
         return await self._run_store.complete_apply(config_apply_run_id)
 
     async def reject_apply(self, approval: ApprovalRecord) -> ConfigApplyResult:
@@ -188,6 +200,7 @@ class ConfigDeployerAgent:
             elif not isinstance(section_value, dict):
                 errors.append(f"{section_name} must be an object")
             errors.extend(_find_secret_value_errors(section_name, section_value))
+        errors.extend(_validate_alerting_policy(desired_state))
         if not desired_state.notification_routes:
             warnings.append("No notification routes are configured.")
         return errors, warnings
@@ -228,6 +241,23 @@ def _keys_for_section(
         return sorted(section_value.keys())
     if isinstance(section_value, list):
         return [str(index) for index in range(len(section_value))]
+    return []
+
+
+def _validate_alerting_policy(desired_state: ConfigDesiredState) -> list[str]:
+    try:
+        AppliedAlertConfiguration.from_desired_state(desired_state)
+    except ValidationError as exc:
+        errors: list[str] = []
+        for error in exc.errors():
+            location = ".".join(str(part) for part in error["loc"])
+            resolved_location = (
+                f"policy.alerting.{location}"
+                if location.startswith(("host_defaults", "overrides", "source_alerts"))
+                else f"notification_routes.{location}"
+            )
+            errors.append(f"{resolved_location} {error['msg']}")
+        return errors
     return []
 
 

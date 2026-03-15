@@ -98,7 +98,7 @@ class FakeFabricConnector:
 
 
 @pytest.mark.asyncio
-async def test_portfolio_ingest_dispatches_alerts_to_client_connector(
+async def test_portfolio_ingest_keeps_alert_projection_local_to_ops_plane(
     ops_app,
     session_factory,
 ) -> None:
@@ -109,4 +109,4 @@ async def test_portfolio_ingest_dispatches_alerts_to_client_connector(
     ingress = ops_app.state.services.portfolio_ingress_registry.get(CLIENT_A)
     await ingress.ingest_portfolio_event(event=_alert_event())
 
-    assert connector.visibility_events == [_alert_event()]
+    assert connector.visibility_events == []

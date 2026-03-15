@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -48,11 +47,9 @@ class PortfolioIngestService:
         self,
         database: Database,
         stream_service: StreamService,
-        alert_dispatcher: Callable[[PortfolioEvent], Awaitable[None]] | None = None,
     ) -> None:
         self._database = database
         self._stream_service = stream_service
-        self._alert_dispatcher = alert_dispatcher
 
     async def ingest_event(self, event: PortfolioEvent) -> ProjectionWriteResult:
         """Apply one portfolio event idempotently to the read models."""
@@ -111,10 +108,6 @@ class PortfolioIngestService:
 
         for stream_event in stream_events:
             await self._stream_service.publish(stream_event)
-        if event.event_type in {"network.alert.raised", "host.alert.raised"} and (
-            self._alert_dispatcher is not None
-        ):
-            await self._alert_dispatcher(event)
         return ProjectionWriteResult(applied=True)
 
     async def _activity_exists(

@@ -83,6 +83,7 @@ class IncidentRecord(ContractModel):
     incident_id: IncidentId
     client_id: ClientId
     fabric_id: FabricId
+    correlation_key: NonEmptyStr | None = None
     state: IncidentState
     severity: Severity
     summary: NonEmptyStr

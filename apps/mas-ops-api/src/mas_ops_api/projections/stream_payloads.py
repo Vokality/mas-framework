@@ -72,6 +72,7 @@ def serialize_incident(incident: PortfolioIncident) -> dict[str, object]:
         "incident_id": incident.incident_id,
         "client_id": incident.client_id,
         "fabric_id": incident.fabric_id,
+        "correlation_key": incident.correlation_key,
         "state": incident.state,
         "severity": incident.severity,
         "summary": incident.summary,

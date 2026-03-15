@@ -116,7 +116,8 @@ def test_windows_polling_normalizes_host_snapshot() -> None:
     )
 
     assert snapshot.asset.asset_kind is AssetKind.WINDOWS_HOST
-    assert snapshot.health_state.value == "critical"
+    assert snapshot.health_state.value == "unknown"
+    assert snapshot.findings == []
     assert snapshot.metrics["services"][0]["service_name"] == "Spooler"
 
 

@@ -1,6 +1,12 @@
 """Inventory binding and visibility projection helpers."""
 
 from .agent import InventoryAgent
-from .repository import InventoryAssetRecord, InventoryRepository
+from .repository import BoundAlert, BoundSnapshot, InventoryAssetRecord, InventoryRepository
 
-__all__ = ["InventoryAgent", "InventoryAssetRecord", "InventoryRepository"]
+__all__ = [
+    "BoundAlert",
+    "BoundSnapshot",
+    "InventoryAgent",
+    "InventoryAssetRecord",
+    "InventoryRepository",
+]

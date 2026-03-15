@@ -3,6 +3,8 @@
 from .base import Base, utc_now
 from .bootstrap import create_schema, drop_schema
 from .models import (
+    AlertConditionStateRecord,
+    AppliedAlertPolicyRecord,
     ApprovalRequestRecord,
     ChatMessage,
     ChatSession,
@@ -25,6 +27,8 @@ from .models import (
 from .session import Database
 
 __all__ = [
+    "AlertConditionStateRecord",
+    "AppliedAlertPolicyRecord",
     "ApprovalRequestRecord",
     "Base",
     "ChatMessage",

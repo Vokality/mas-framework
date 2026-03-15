@@ -37,6 +37,7 @@ class IncidentProjectionService:
         incident_id: str,
         client_id: str,
         fabric_id: str,
+        correlation_key: str | None,
         state: IncidentState,
         severity: str,
         summary: str,
@@ -50,6 +51,7 @@ class IncidentProjectionService:
             incident_id=incident_id,
             client_id=client_id,
             fabric_id=fabric_id,
+            correlation_key=correlation_key,
             state=state.value,
             severity=severity,
             summary=summary,
@@ -114,6 +116,7 @@ class IncidentProjectionService:
         *,
         incident_id: str,
         summary: str,
+        correlation_key: str | None = None,
         severity: str,
         state: IncidentState,
         recommended_actions: list[dict[str, object]] | None,
@@ -129,6 +132,8 @@ class IncidentProjectionService:
         if current_state is not state:
             INCIDENT_STATE_MACHINE.require_transition(current_state, state)
             incident.state = state.value
+        if correlation_key is not None:
+            incident.correlation_key = correlation_key
         incident.summary = summary
         incident.severity = severity
         if recommended_actions is not None:

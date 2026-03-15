@@ -222,14 +222,16 @@ class FakeIncidentRemediationHandler:
 class FakeIncidentContextReader:
     active_incident: IncidentRecord | None = None
 
-    async def find_active_incident_for_asset(
+    async def find_active_incident(
         self,
         *,
         client_id: str,
-        asset_id: str,
+        correlation_key: str | None,
+        asset_id: str | None,
     ) -> IncidentRecord | None:
         assert client_id == CLIENT_ID
         assert asset_id == ASSET_ID
+        assert correlation_key is None
         return self.active_incident
 
 
@@ -243,19 +245,23 @@ class FakeNotifierTransport:
         incident_id: str | None,
         client_id: str,
         fabric_id: str,
+        correlation_key: str | None,
         summary: str,
         severity: Severity,
         state: IncidentState,
         asset_ids: list[str],
+        asset_refs,
         occurred_at: datetime,
         source: str,
         source_event_id: str,
     ) -> IncidentRecord:
+        del asset_refs
         self.visibility_calls.append(
             {
                 "incident_id": incident_id,
                 "client_id": client_id,
                 "fabric_id": fabric_id,
+                "correlation_key": correlation_key,
                 "summary": summary,
                 "severity": severity,
                 "state": state,
@@ -269,6 +275,7 @@ class FakeNotifierTransport:
             incident_id=incident_id or INCIDENT_ID,
             client_id=client_id,
             fabric_id=fabric_id,
+            correlation_key=correlation_key,
             state=state,
             severity=severity,
             summary=summary,
@@ -366,6 +373,7 @@ async def test_notifier_transport_opens_new_incident_for_alert() -> None:
             "incident_id": INCIDENT_ID,
             "client_id": CLIENT_ID,
             "fabric_id": FABRIC_ID,
+            "correlation_key": None,
             "summary": "Primary uplink changed state to down",
             "severity": Severity.MAJOR,
             "state": IncidentState.OPEN,
@@ -393,6 +401,7 @@ async def test_notifier_transport_updates_active_incident_for_alert() -> None:
             "incident_id": INCIDENT_ID,
             "client_id": CLIENT_ID,
             "fabric_id": FABRIC_ID,
+            "correlation_key": None,
             "summary": "Primary uplink changed state to down",
             "severity": Severity.MAJOR,
             "state": IncidentState.INVESTIGATING,

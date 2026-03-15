@@ -24,6 +24,18 @@ from .agent_ids import (
     is_ops_plane_connector_id,
     is_reserved_agent_id,
 )
+from .alerting import (
+    AlertConditionPhase,
+    AlertConditionRecord,
+    AlertConditionStore,
+    AlertPolicyAgent,
+    AlertPolicyService,
+    AppliedAlertConfiguration,
+    AppliedAlertPolicyStore,
+    HostSnapshotAlertOutcome,
+    InMemoryAlertConditionStore,
+    InMemoryAppliedAlertPolicyStore,
+)
 from .approvals import (
     ApprovalCancellation,
     ApprovalController,
@@ -48,17 +60,24 @@ from .incidents import (
     VisibilityAlertHandler,
 )
 from .messages import PortfolioPublish
-from .notifier import NotifierTransportAgent
+from .notifier import NotificationAttempt, NotificationService, NotifierTransportAgent
 from .ops_bridge import OpsBridgeAgent
 
 __all__ = [
     "APPROVAL_CONTROLLER_AGENT_ID",
+    "AlertConditionPhase",
+    "AlertConditionRecord",
+    "AlertConditionStore",
+    "AlertPolicyAgent",
+    "AlertPolicyService",
     "ApprovalCancellation",
     "ApprovalController",
     "ApprovalExecutionOutcome",
     "ApprovalOutcomeHandler",
     "ApprovalRecord",
     "ApprovalStore",
+    "AppliedAlertConfiguration",
+    "AppliedAlertPolicyStore",
     "CONFIG_DEPLOYER_AGENT_ID",
     "CORE_ORCHESTRATOR_AGENT_ID",
     "ConfigApplyRunRecord",
@@ -81,7 +100,12 @@ __all__ = [
     "IncidentContextReader",
     "IncidentRemediationExecution",
     "IncidentRemediationHandler",
+    "HostSnapshotAlertOutcome",
+    "InMemoryAlertConditionStore",
+    "InMemoryAppliedAlertPolicyStore",
     "NotifierTransport",
+    "NotificationAttempt",
+    "NotificationService",
     "NotifierTransportAgent",
     "OpsBridgeAgent",
     "OPS_BRIDGE_AGENT_ID",

@@ -7,8 +7,8 @@ from datetime import datetime
 
 from mas_msp_contracts import AlertRaised, AssetRef, HealthSnapshot, HealthState
 
-from .identity import build_inventory_asset_id
 from mas_msp_core.messages import PortfolioPublish
+from .identity import build_inventory_asset_id
 
 
 @dataclass(slots=True)
@@ -20,6 +20,22 @@ class InventoryAssetRecord:
     health_collected_at: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class BoundAlert:
+    """Resolved alert with inventory-owned asset identity."""
+
+    alert: AlertRaised
+    asset_upserted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BoundSnapshot:
+    """Resolved snapshot with inventory-owned asset identity."""
+
+    snapshot: HealthSnapshot
+    asset_upserted: bool
+
+
 class InventoryRepository:
     """Own asset binding precedence and health-state tracking."""
 
@@ -29,29 +45,35 @@ class InventoryRepository:
         self._serial_index: dict[tuple[str, str], str] = {}
         self._hostname_index: dict[tuple[str, str], str] = {}
 
-    def process_alert(self, alert: AlertRaised) -> PortfolioPublish:
+    def bind_alert(self, alert: AlertRaised) -> BoundAlert:
         """Resolve an alert to an authoritative asset record."""
 
         resolved_asset, asset_upserted = self._resolve_asset(
             alert.asset,
             self._extract_serial_from_alert(alert),
         )
-        resolved_alert = alert.model_copy(update={"asset": resolved_asset})
-        return PortfolioPublish(
-            asset=resolved_asset,
+        return BoundAlert(
+            alert=alert.model_copy(update={"asset": resolved_asset}),
             asset_upserted=asset_upserted,
-            health_changed=False,
-            source=resolved_alert,
         )
 
-    def process_snapshot(self, snapshot: HealthSnapshot) -> PortfolioPublish:
-        """Resolve a snapshot and update the latest health summary."""
+    def bind_snapshot(self, snapshot: HealthSnapshot) -> BoundSnapshot:
+        """Resolve a snapshot to an authoritative asset record."""
 
         resolved_asset, asset_upserted = self._resolve_asset(
             snapshot.asset,
             self._extract_serial_from_snapshot(snapshot),
         )
-        record = self._assets[resolved_asset.asset_id]
+        resolved_snapshot = snapshot.model_copy(update={"asset": resolved_asset})
+        return BoundSnapshot(
+            snapshot=resolved_snapshot,
+            asset_upserted=asset_upserted,
+        )
+
+    def record_snapshot_health(self, snapshot: HealthSnapshot) -> bool:
+        """Persist the latest authoritative health summary for one asset."""
+
+        record = self._assets[snapshot.asset.asset_id]
         health_changed = False
         if (
             record.health_collected_at is None
@@ -60,12 +82,29 @@ class InventoryRepository:
             health_changed = record.health_state is not snapshot.health_state
             record.health_state = snapshot.health_state
             record.health_collected_at = snapshot.collected_at
-        resolved_snapshot = snapshot.model_copy(update={"asset": resolved_asset})
+        return health_changed
+
+    def process_alert(self, alert: AlertRaised) -> PortfolioPublish:
+        """Resolve an alert and build the matching portfolio publish request."""
+
+        bound_alert = self.bind_alert(alert)
         return PortfolioPublish(
-            asset=resolved_asset,
-            asset_upserted=asset_upserted,
+            asset=bound_alert.alert.asset,
+            asset_upserted=bound_alert.asset_upserted,
+            health_changed=False,
+            source=bound_alert.alert,
+        )
+
+    def process_snapshot(self, snapshot: HealthSnapshot) -> PortfolioPublish:
+        """Resolve a snapshot and update the latest health summary."""
+
+        bound_snapshot = self.bind_snapshot(snapshot)
+        health_changed = self.record_snapshot_health(bound_snapshot.snapshot)
+        return PortfolioPublish(
+            asset=bound_snapshot.snapshot.asset,
+            asset_upserted=bound_snapshot.asset_upserted,
             health_changed=health_changed,
-            source=resolved_snapshot,
+            source=bound_snapshot.snapshot,
         )
 
     def get_asset(self, asset_id: str) -> InventoryAssetRecord | None:
@@ -176,4 +215,9 @@ class InventoryRepository:
         return serial if isinstance(serial, str) and serial.strip() else None
 
 
-__all__ = ["InventoryAssetRecord", "InventoryRepository"]
+__all__ = [
+    "BoundAlert",
+    "BoundSnapshot",
+    "InventoryAssetRecord",
+    "InventoryRepository",
+]

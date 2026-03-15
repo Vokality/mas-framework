@@ -50,11 +50,12 @@ class IncidentRemediationHandler(Protocol):
 class IncidentContextReader(Protocol):
     """Read the incident context needed by fabric-local orchestration."""
 
-    async def find_active_incident_for_asset(
+    async def find_active_incident(
         self,
         *,
         client_id: str,
-        asset_id: str,
+        correlation_key: str | None,
+        asset_id: str | None,
     ) -> IncidentRecord | None: ...
 
     async def get_incident(self, incident_id: str) -> IncidentRecord | None: ...
@@ -81,10 +82,12 @@ class NotifierTransport(Protocol):
         incident_id: str | None,
         client_id: str,
         fabric_id: str,
+        correlation_key: str | None,
         summary: str,
         severity: Severity,
         state: IncidentState,
         asset_ids: list[str],
+        asset_refs: list[AssetRef],
         occurred_at: datetime,
         source: str,
         source_event_id: str,
