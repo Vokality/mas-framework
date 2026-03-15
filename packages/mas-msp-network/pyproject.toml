@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mas-msp-network"
+version = "0.4.5"
+description = "Network ingest and diagnostics for MSP deployments"
+requires-python = ">=3.13"
+dependencies = [
+    "mas-agent",
+    "mas-msp-contracts",
+    "mas-msp-core",
+]
+
+[tool.uv.sources]
+mas-agent = { workspace = true }
+mas-msp-contracts = { workspace = true }
+mas-msp-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mas_msp_network"]

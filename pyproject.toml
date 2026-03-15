@@ -36,7 +36,13 @@ root = [
     "./packages/mas-core/src/",
     "./packages/mas-gateway/src/",
     "./packages/mas-agent/src/",
+    "./packages/mas-msp-contracts/src/",
+    "./packages/mas-msp-core/src/",
+    "./packages/mas-msp-ai/src/",
+    "./packages/mas-msp-network/src/",
+    "./packages/mas-msp-hosts/src/",
     "./packages/mas-server/src/",
+    "./apps/mas-ops-api/src/",
     "./apps/mas-runtime/src/",
 ]
 

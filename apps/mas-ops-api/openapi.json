@@ -1,0 +1,2375 @@
+{
+  "components": {
+    "schemas": {
+      "ActivityEventResponse": {
+        "description": "Incident activity timeline entry.",
+        "properties": {
+          "activity_id": {
+            "title": "Activity Id",
+            "type": "integer"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "incident_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Id"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "source_event_id": {
+            "title": "Source Event Id",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "activity_id",
+          "source_event_id",
+          "client_id",
+          "fabric_id",
+          "incident_id",
+          "asset_id",
+          "event_type",
+          "subject_type",
+          "subject_id",
+          "payload",
+          "occurred_at"
+        ],
+        "title": "ActivityEventResponse",
+        "type": "object"
+      },
+      "ApprovalDecisionRequest": {
+        "description": "Approval-decision request body.",
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/ApprovalDecisionValue"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ApprovalDecisionRequest",
+        "type": "object"
+      },
+      "ApprovalDecisionValue": {
+        "description": "Human approval decisions.",
+        "enum": [
+          "approve",
+          "reject"
+        ],
+        "title": "ApprovalDecisionValue",
+        "type": "string"
+      },
+      "ApprovalResponse": {
+        "description": "Approval request response.",
+        "properties": {
+          "action_kind": {
+            "title": "Action Kind",
+            "type": "string"
+          },
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By User Id"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "expired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expired At"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "incident_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Id"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "rejected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejected At"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by_agent": {
+            "title": "Requested By Agent",
+            "type": "string"
+          },
+          "risk_summary": {
+            "title": "Risk Summary",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ApprovalState"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "client_id",
+          "fabric_id",
+          "incident_id",
+          "state",
+          "action_kind",
+          "title",
+          "requested_at",
+          "expires_at",
+          "requested_by_agent",
+          "payload",
+          "risk_summary",
+          "decided_by_user_id",
+          "decision_reason",
+          "decided_at",
+          "approved_at",
+          "rejected_at",
+          "expired_at",
+          "cancelled_at",
+          "executed_at"
+        ],
+        "title": "ApprovalResponse",
+        "type": "object"
+      },
+      "ApprovalState": {
+        "description": "Canonical approval lifecycle states.",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "expired",
+          "cancelled",
+          "executed"
+        ],
+        "title": "ApprovalState",
+        "type": "string"
+      },
+      "AssetResponse": {
+        "description": "Asset detail response.",
+        "properties": {
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "asset_kind": {
+            "title": "Asset Kind",
+            "type": "string"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "health_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Observed At"
+          },
+          "health_state": {
+            "title": "Health State",
+            "type": "string"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "last_alert_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Alert At"
+          },
+          "mgmt_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mgmt Address"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "site": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          }
+        },
+        "required": [
+          "asset_id",
+          "client_id",
+          "fabric_id",
+          "asset_kind",
+          "vendor",
+          "model",
+          "hostname",
+          "mgmt_address",
+          "site",
+          "tags",
+          "health_state",
+          "health_observed_at",
+          "last_alert_at",
+          "updated_at"
+        ],
+        "title": "AssetResponse",
+        "type": "object"
+      },
+      "ChatMessageCreateRequest": {
+        "description": "Append-message request body.",
+        "properties": {
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ChatMessageCreateRequest",
+        "type": "object"
+      },
+      "ChatMessageResponse": {
+        "description": "Persisted chat message response.",
+        "properties": {
+          "chat_session_id": {
+            "title": "Chat Session Id",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "message_id",
+          "chat_session_id",
+          "turn_id",
+          "role",
+          "content",
+          "created_at"
+        ],
+        "title": "ChatMessageResponse",
+        "type": "object"
+      },
+      "ChatScope": {
+        "description": "Supported operator chat scopes.",
+        "enum": [
+          "global",
+          "incident"
+        ],
+        "title": "ChatScope",
+        "type": "string"
+      },
+      "ChatSessionCreateRequest": {
+        "description": "Create-chat-session request body.",
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "fabric_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fabric Id"
+          },
+          "incident_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Id"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ChatScope"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "title": "ChatSessionCreateRequest",
+        "type": "object"
+      },
+      "ChatSessionResponse": {
+        "description": "Chat session with turns and messages.",
+        "properties": {
+          "chat_session_id": {
+            "title": "Chat Session Id",
+            "type": "string"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_user_id": {
+            "title": "Created By User Id",
+            "type": "string"
+          },
+          "fabric_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fabric Id"
+          },
+          "incident_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Id"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessageResponse"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ChatScope"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/ChatTurnResponse"
+            },
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "chat_session_id",
+          "scope",
+          "client_id",
+          "fabric_id",
+          "incident_id",
+          "created_by_user_id",
+          "created_at",
+          "turns",
+          "messages"
+        ],
+        "title": "ChatSessionResponse",
+        "type": "object"
+      },
+      "ChatTurnResponse": {
+        "description": "Persisted chat turn response.",
+        "properties": {
+          "actor_user_id": {
+            "title": "Actor User Id",
+            "type": "string"
+          },
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "chat_session_id": {
+            "title": "Chat Session Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChatTurnState"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "request_id",
+          "chat_session_id",
+          "actor_user_id",
+          "state",
+          "submitted_at",
+          "completed_at",
+          "approval_id"
+        ],
+        "title": "ChatTurnResponse",
+        "type": "object"
+      },
+      "ChatTurnState": {
+        "description": "Canonical operator chat turn states.",
+        "enum": [
+          "running",
+          "waiting_for_approval",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "ChatTurnState",
+        "type": "string"
+      },
+      "ClientSummaryResponse": {
+        "description": "Client summary read-model response.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "critical_asset_count": {
+            "title": "Critical Asset Count",
+            "type": "integer"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "open_alert_count": {
+            "title": "Open Alert Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "fabric_id",
+          "name",
+          "open_alert_count",
+          "critical_asset_count",
+          "updated_at"
+        ],
+        "title": "ClientSummaryResponse",
+        "type": "object"
+      },
+      "ConfigApplyResult": {
+        "additionalProperties": false,
+        "description": "Desired-state apply lifecycle result.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "config_apply_run_id": {
+            "title": "Config Apply Run Id",
+            "type": "string"
+          },
+          "desired_state_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Desired State Version",
+            "type": "integer"
+          },
+          "error_summary": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Summary"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConfigApplyState"
+          }
+        },
+        "required": [
+          "config_apply_run_id",
+          "client_id",
+          "desired_state_version",
+          "status"
+        ],
+        "title": "ConfigApplyResult",
+        "type": "object"
+      },
+      "ConfigApplyState": {
+        "description": "Canonical config validation and apply states.",
+        "enum": [
+          "pending",
+          "validating",
+          "applying",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "title": "ConfigApplyState",
+        "type": "string"
+      },
+      "ConfigDesiredState-Input": {
+        "additionalProperties": false,
+        "description": "Declarative configuration record.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "desired_state_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Desired State Version",
+            "type": "integer"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "inventory_sources": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JSONValue-Input"
+              },
+              "type": "object"
+            },
+            "title": "Inventory Sources",
+            "type": "array"
+          },
+          "notification_routes": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JSONValue-Input"
+              },
+              "type": "object"
+            },
+            "title": "Notification Routes",
+            "type": "array"
+          },
+          "policy": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JSONValue-Input"
+            },
+            "title": "Policy",
+            "type": "object"
+          },
+          "tenant_metadata": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JSONValue-Input"
+            },
+            "title": "Tenant Metadata",
+            "type": "object"
+          }
+        },
+        "required": [
+          "client_id",
+          "fabric_id",
+          "desired_state_version"
+        ],
+        "title": "ConfigDesiredState",
+        "type": "object"
+      },
+      "ConfigDesiredState-Output": {
+        "additionalProperties": false,
+        "description": "Declarative configuration record.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "desired_state_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Desired State Version",
+            "type": "integer"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "inventory_sources": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JSONValue-Output"
+              },
+              "type": "object"
+            },
+            "title": "Inventory Sources",
+            "type": "array"
+          },
+          "notification_routes": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JSONValue-Output"
+              },
+              "type": "object"
+            },
+            "title": "Notification Routes",
+            "type": "array"
+          },
+          "policy": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JSONValue-Output"
+            },
+            "title": "Policy",
+            "type": "object"
+          },
+          "tenant_metadata": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JSONValue-Output"
+            },
+            "title": "Tenant Metadata",
+            "type": "object"
+          }
+        },
+        "required": [
+          "client_id",
+          "fabric_id",
+          "desired_state_version"
+        ],
+        "title": "ConfigDesiredState",
+        "type": "object"
+      },
+      "ConfigValidationResult": {
+        "additionalProperties": false,
+        "description": "Validation output for a desired-state configuration.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "config_apply_run_id": {
+            "title": "Config Apply Run Id",
+            "type": "string"
+          },
+          "desired_state_version": {
+            "exclusiveMinimum": 0.0,
+            "title": "Desired State Version",
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "status": {
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          },
+          "validated_at": {
+            "title": "Validated At",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "config_apply_run_id",
+          "client_id",
+          "desired_state_version",
+          "status",
+          "validated_at"
+        ],
+        "title": "ConfigValidationResult",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IncidentResponse": {
+        "description": "Incident detail response.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "fabric_id": {
+            "title": "Fabric Id",
+            "type": "string"
+          },
+          "incident_id": {
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "title": "Opened At",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "incident_id",
+          "client_id",
+          "fabric_id",
+          "state",
+          "severity",
+          "summary",
+          "opened_at",
+          "updated_at"
+        ],
+        "title": "IncidentResponse",
+        "type": "object"
+      },
+      "JSONValue-Input": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JSONValue-Input"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JSONValue-Input"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "JSONValue-Output": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JSONValue-Output"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JSONValue-Output"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "LoginRequest": {
+        "description": "Login request body.",
+        "properties": {
+          "email": {
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "SessionResponse": {
+        "description": "Session restore and login response.",
+        "properties": {
+          "client_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Client Ids",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "display_name",
+          "role",
+          "client_ids"
+        ],
+        "title": "SessionResponse",
+        "type": "object"
+      },
+      "UserRole": {
+        "description": "Supported human roles for the ops plane.",
+        "enum": [
+          "admin",
+          "operator",
+          "viewer"
+        ],
+        "title": "UserRole",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "MAS Ops API",
+    "version": "0.4.5"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/approvals": {
+      "get": {
+        "description": "List approvals visible to the current user.",
+        "operationId": "list_approvals_approvals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalResponse"
+                  },
+                  "title": "Response List Approvals Approvals Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Approvals",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/approvals/{approval_id}/decision": {
+      "post": {
+        "description": "Submit a human approval decision for a pending approval.",
+        "operationId": "submit_approval_decision_approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Approval Decision",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/assets/{asset_id}": {
+      "get": {
+        "description": "Fetch one asset detail.",
+        "operationId": "get_asset_assets__asset_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Asset",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/assets/{asset_id}/activity": {
+      "get": {
+        "description": "Fetch one asset's projected visibility activity.",
+        "operationId": "list_asset_activity_assets__asset_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ActivityEventResponse"
+                  },
+                  "title": "Response List Asset Activity Assets  Asset Id  Activity Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Asset Activity",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "description": "Authenticate a human user and issue a server-side session.",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "description": "Destroy the current session if it exists.",
+        "operationId": "logout_auth_logout_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "description": "Restore the current human session.",
+        "operationId": "restore_session_auth_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Restore Session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/chat/sessions": {
+      "post": {
+        "description": "Create a global or incident-scoped chat session.",
+        "operationId": "create_chat_session_chat_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatSessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Chat Session",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/chat/sessions/{chat_session_id}": {
+      "get": {
+        "description": "Fetch one chat session and its persisted turns/messages.",
+        "operationId": "get_chat_session_chat_sessions__chat_session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat_session_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chat Session",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/chat/sessions/{chat_session_id}/messages": {
+      "post": {
+        "description": "Append one operator message to a chat session.",
+        "operationId": "append_chat_message_chat_sessions__chat_session_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat_session_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatMessageCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatTurnResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Append Chat Message",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/clients": {
+      "get": {
+        "description": "List authorized clients for the current user.",
+        "operationId": "list_clients_clients_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClientSummaryResponse"
+                  },
+                  "title": "Response List Clients Clients Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Clients",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/clients/{client_id}": {
+      "get": {
+        "description": "Fetch one authorized client summary.",
+        "operationId": "get_client_clients__client_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Client",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/clients/{client_id}/activity": {
+      "get": {
+        "description": "List the latest visibility activity for one authorized client.",
+        "operationId": "list_client_activity_clients__client_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ActivityEventResponse"
+                  },
+                  "title": "Response List Client Activity Clients  Client Id  Activity Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Client Activity",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/clients/{client_id}/assets": {
+      "get": {
+        "description": "List assets for one authorized client.",
+        "operationId": "list_client_assets_clients__client_id__assets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetResponse"
+                  },
+                  "title": "Response List Client Assets Clients  Client Id  Assets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Client Assets",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/clients/{client_id}/config/apply": {
+      "post": {
+        "description": "Start an apply run for the latest desired state.",
+        "operationId": "apply_desired_state_clients__client_id__config_apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigApplyResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Desired State",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/clients/{client_id}/config/desired-state": {
+      "get": {
+        "description": "Fetch the current desired-state config for one client.",
+        "operationId": "get_desired_state_clients__client_id__config_desired_state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigDesiredState-Output"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Desired State",
+        "tags": [
+          "config"
+        ]
+      },
+      "put": {
+        "description": "Replace the desired-state document for one client.",
+        "operationId": "replace_desired_state_clients__client_id__config_desired_state_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigDesiredState-Input"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigDesiredState-Output"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace Desired State",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/clients/{client_id}/config/validate": {
+      "post": {
+        "description": "Start a validation run for the latest desired state.",
+        "operationId": "validate_desired_state_clients__client_id__config_validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigValidationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Desired State",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/clients/{client_id}/incidents": {
+      "get": {
+        "description": "List incidents for one authorized client.",
+        "operationId": "list_client_incidents_clients__client_id__incidents_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IncidentResponse"
+                  },
+                  "title": "Response List Client Incidents Clients  Client Id  Incidents Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Client Incidents",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/incidents/{incident_id}": {
+      "get": {
+        "description": "Fetch one incident detail.",
+        "operationId": "get_incident_incidents__incident_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Incident",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/incidents/{incident_id}/activity": {
+      "get": {
+        "description": "Fetch activity timeline entries for one incident.",
+        "operationId": "list_incident_activity_incidents__incident_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ActivityEventResponse"
+                  },
+                  "title": "Response List Incident Activity Incidents  Incident Id  Activity Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Incident Activity",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/streams/chat/{chat_session_id}": {
+      "get": {
+        "description": "Stream updates for one authorized chat session.",
+        "operationId": "stream_chat_streams_chat__chat_session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat_session_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "replay_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Replay Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Chat",
+        "tags": [
+          "streams"
+        ]
+      }
+    },
+    "/streams/clients/{client_id}": {
+      "get": {
+        "description": "Stream updates for one authorized client.",
+        "operationId": "stream_client_streams_clients__client_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "replay_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Replay Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Client",
+        "tags": [
+          "streams"
+        ]
+      }
+    },
+    "/streams/incidents/{incident_id}": {
+      "get": {
+        "description": "Stream updates for one authorized incident.",
+        "operationId": "stream_incident_streams_incidents__incident_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "replay_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Replay Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Incident",
+        "tags": [
+          "streams"
+        ]
+      }
+    },
+    "/streams/portfolio": {
+      "get": {
+        "description": "Stream authorized portfolio updates.",
+        "operationId": "stream_portfolio_streams_portfolio_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "replay_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Replay Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Portfolio",
+        "tags": [
+          "streams"
+        ]
+      }
+    }
+  }
+}
