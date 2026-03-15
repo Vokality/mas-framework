@@ -18,6 +18,7 @@ from mas_msp_core import (
     OpsBridgeAgent,
     build_ops_plane_connector_id,
 )
+from mas_msp_hosts.common import build_host_asset_ref
 
 
 CLIENT_ID = "11111111-1111-4111-8111-111111111111"
@@ -119,6 +120,50 @@ def test_inventory_repository_prefers_mgmt_address_then_serial_then_hostname() -
     assert fourth_publish.asset.asset_id == third_publish.asset.asset_id
     assert sixth_publish.asset.asset_id == fifth_publish.asset.asset_id
     assert sixth_publish.health_changed is True
+
+
+def test_inventory_repository_assigns_inventory_owned_asset_id_for_new_assets() -> None:
+    repository = InventoryRepository()
+    candidate = _candidate_asset(hostname="edge-sw-01", mgmt_address="10.0.0.10")
+
+    publish = repository.process_alert(_alert(asset=candidate))
+
+    assert publish.asset.asset_id != candidate.asset_id
+
+
+def test_host_asset_ids_are_stable_across_repository_restarts() -> None:
+    candidate = build_host_asset_ref(
+        asset_kind=AssetKind.LINUX_HOST,
+        client_id=CLIENT_ID,
+        fabric_id=FABRIC_ID,
+        vendor="Linux",
+        model="Docker Linux",
+        hostname="mas-runtime",
+        mgmt_address="docker://mas-runtime",
+        site="docker-compose",
+        tags=["docker", "mas-system"],
+    )
+    first_publish = InventoryRepository().process_snapshot(
+        _snapshot(asset=candidate, health_state=HealthState.HEALTHY)
+    )
+    second_publish = InventoryRepository().process_snapshot(
+        _snapshot(
+            asset=build_host_asset_ref(
+                asset_kind=AssetKind.LINUX_HOST,
+                client_id=CLIENT_ID,
+                fabric_id=FABRIC_ID,
+                vendor="Linux",
+                model="Docker Linux",
+                hostname="mas-runtime",
+                mgmt_address="docker://mas-runtime",
+                site="docker-compose",
+                tags=["docker", "mas-system"],
+            ),
+            health_state=HealthState.CRITICAL,
+        )
+    )
+
+    assert second_publish.asset.asset_id == first_publish.asset.asset_id
 
 
 async def test_inventory_agent_forwards_resolved_payloads() -> None:

@@ -244,6 +244,13 @@ def _nested_service_name(value: object) -> str | None:
     return None
 
 
+def _normalized_identity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
 def _numeric_metric(value: object) -> float | None:
     if isinstance(value, bool):
         return None

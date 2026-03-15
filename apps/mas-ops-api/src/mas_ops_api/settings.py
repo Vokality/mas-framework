@@ -69,6 +69,16 @@ class OpsApiSettings(BaseSettings):
         ge=1.0,
         description="Polling interval for Docker-backed MAS dogfood monitoring.",
     )
+    dogfood_startup_grace_seconds: float = Field(
+        default=30.0,
+        ge=0.0,
+        description="Startup grace window before dogfood monitoring may raise alerts.",
+    )
+    dogfood_problem_grace_seconds: float = Field(
+        default=30.0,
+        ge=0.0,
+        description="Minimum degraded duration before dogfood monitoring raises an alert.",
+    )
     dogfood_client_id: str = Field(
         default="11111111-1111-4111-8111-111111111111",
         description="Stable client id for the local MAS dogfood tenant.",
@@ -76,6 +86,10 @@ class OpsApiSettings(BaseSettings):
     dogfood_fabric_id: str = Field(
         default="33333333-3333-4333-8333-333333333333",
         description="Stable fabric id for the local MAS dogfood tenant.",
+    )
+    dogfood_client_display_name: str = Field(
+        default="MAS Dogfood",
+        description="Display name enrolled for the local MAS dogfood tenant.",
     )
     dogfood_container_name: str = Field(
         default="mas-runtime",

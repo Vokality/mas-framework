@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -335,7 +336,7 @@ class PortfolioIngestService:
         client: PortfolioClient | None,
         asset: PortfolioAsset | None,
         activity: PortfolioActivityEvent,
-        occurred_at,
+        occurred_at: datetime,
     ) -> list[OpsStreamEvent]:
         stream_events = [
             self._stream_service.build_event(

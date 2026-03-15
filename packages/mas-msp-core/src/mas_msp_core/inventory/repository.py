@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from uuid import uuid4
 
 from mas_msp_contracts import AlertRaised, AssetRef, HealthSnapshot, HealthState
 
+from .identity import build_inventory_asset_id
 from mas_msp_core.messages import PortfolioPublish
 
 
@@ -97,7 +97,9 @@ class InventoryRepository:
     ) -> tuple[AssetRef, bool]:
         matched_asset_id = self._find_existing_asset_id(candidate, serial)
         if matched_asset_id is None:
-            resolved_asset = candidate.model_copy(update={"asset_id": str(uuid4())})
+            resolved_asset = candidate.model_copy(
+                update={"asset_id": build_inventory_asset_id(candidate, serial=serial)}
+            )
             record = InventoryAssetRecord(asset=resolved_asset)
             self._assets[resolved_asset.asset_id] = record
             self._update_indexes(record.asset, serial)

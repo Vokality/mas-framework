@@ -11,7 +11,12 @@ from pathlib import Path
 import uvicorn
 
 from mas_ops_api.app import create_app
-from mas_ops_api.bootstrap import AdminBootstrapConfig, ensure_admin_user
+from mas_ops_api.bootstrap import (
+    AdminBootstrapConfig,
+    ClientBootstrapConfig,
+    ensure_admin_user,
+    ensure_client_enrollment,
+)
 from mas_ops_api.db.migrations import upgrade_to_head
 from mas_ops_api.settings import OpsApiSettings
 
@@ -45,6 +50,20 @@ def main() -> None:
         default=os.environ.get("MAS_OPS_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Local Admin"),
     )
 
+    client_parser = subparsers.add_parser("bootstrap-client")
+    client_parser.add_argument(
+        "--client-id",
+        default=os.environ.get("MAS_OPS_BOOTSTRAP_CLIENT_ID"),
+    )
+    client_parser.add_argument(
+        "--fabric-id",
+        default=os.environ.get("MAS_OPS_BOOTSTRAP_FABRIC_ID"),
+    )
+    client_parser.add_argument(
+        "--display-name",
+        default=os.environ.get("MAS_OPS_BOOTSTRAP_CLIENT_DISPLAY_NAME"),
+    )
+
     args = parser.parse_args()
     command = args.command or "serve"
 
@@ -67,6 +86,16 @@ def main() -> None:
             display_name=args.admin_display_name,
         )
         asyncio.run(ensure_admin_user(OpsApiSettings(), config=config))
+        return
+
+    if command == "bootstrap-client":
+        settings = OpsApiSettings()
+        config = ClientBootstrapConfig(
+            client_id=args.client_id or settings.dogfood_client_id,
+            fabric_id=args.fabric_id or settings.dogfood_fabric_id,
+            display_name=args.display_name or settings.dogfood_client_display_name,
+        )
+        asyncio.run(ensure_client_enrollment(settings, config=config))
         return
 
     uvicorn.run(

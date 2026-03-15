@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from mas_msp_contracts import AlertRaised, CredentialRef, HealthSnapshot
 from mas_msp_core import InventoryRepository, OpsBridgeAgent
@@ -20,6 +22,15 @@ from mas_ops_api.connectors import PortfolioIngressRegistry
 from mas_ops_api.settings import OpsApiSettings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class DogfoodProblemWindow:
+    """Track one active degraded condition until it clears or alerts."""
+
+    signature: str
+    first_seen_at: datetime
+    alerted: bool = False
 
 
 class DockerDogfoodMonitorService:
@@ -42,7 +53,8 @@ class DockerDogfoodMonitorService:
         self._polling_agent = LinuxPollingAgent(poller=self._poller)
         self._event_ingest_agent = LinuxEventIngestAgent()
         self._task: asyncio.Task[None] | None = None
-        self._last_problem_signature: str | None = None
+        self._started_at: datetime | None = None
+        self._problem_window: DogfoodProblemWindow | None = None
 
     def start(self) -> None:
         """Start the hosted monitoring loop if enabled."""
@@ -76,12 +88,21 @@ class DockerDogfoodMonitorService:
         observation = await self._poller.poll(target)
         snapshot = self._polling_agent.normalize_poll(target, observation)
         await self._ingest_contract(snapshot)
+        self._record_start_time(snapshot)
 
         problem_signature = _problem_signature(snapshot)
         if problem_signature is None:
-            self._last_problem_signature = None
+            self._problem_window = None
             return
-        if problem_signature == self._last_problem_signature:
+        if self._problem_window is None or (
+            self._problem_window.signature != problem_signature
+        ):
+            self._problem_window = DogfoodProblemWindow(
+                signature=problem_signature,
+                first_seen_at=snapshot.collected_at.astimezone(UTC),
+            )
+            return
+        if self._problem_window.alerted or not self._problem_grace_satisfied(snapshot):
             return
         alert = self._event_ingest_agent.normalize_journal_event(
             LinuxJournalEvent(
@@ -100,7 +121,7 @@ class DockerDogfoodMonitorService:
             )
         )
         await self._ingest_contract(alert)
-        self._last_problem_signature = problem_signature
+        self._problem_window.alerted = True
 
     async def _ingest_contract(
         self,
@@ -129,6 +150,24 @@ class DockerDogfoodMonitorService:
             distribution=self._settings.dogfood_distribution,
             site=self._settings.dogfood_site,
             tags=list(self._settings.dogfood_tags),
+        )
+
+    def _record_start_time(self, snapshot: HealthSnapshot) -> None:
+        if self._started_at is None:
+            self._started_at = snapshot.collected_at.astimezone(UTC)
+
+    def _problem_grace_satisfied(self, snapshot: HealthSnapshot) -> bool:
+        if self._started_at is None or self._problem_window is None:
+            return False
+        startup_age = (
+            snapshot.collected_at.astimezone(UTC) - self._started_at
+        ).total_seconds()
+        problem_age = (
+            snapshot.collected_at.astimezone(UTC) - self._problem_window.first_seen_at
+        ).total_seconds()
+        return (
+            startup_age >= self._settings.dogfood_startup_grace_seconds
+            and problem_age >= self._settings.dogfood_problem_grace_seconds
         )
 
 

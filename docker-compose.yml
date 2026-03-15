@@ -90,6 +90,9 @@ services:
       MAS_OPS_API_LINUX_DIAGNOSTICS_BACKEND: docker
       MAS_OPS_API_DOGFOOD_ENABLED: "true"
       MAS_OPS_API_DOGFOOD_POLL_SECONDS: "10"
+      MAS_OPS_API_DOGFOOD_STARTUP_GRACE_SECONDS: "30"
+      MAS_OPS_API_DOGFOOD_PROBLEM_GRACE_SECONDS: "30"
+      MAS_OPS_API_DOGFOOD_CLIENT_DISPLAY_NAME: MAS Dogfood
       MAS_OPS_API_DOGFOOD_CONTAINER_NAME: mas-runtime
       MAS_OPS_API_DOGFOOD_HOSTNAME: mas-runtime
       MAS_OPS_API_DOGFOOD_MGMT_ADDRESS: docker://mas-runtime
@@ -114,6 +117,23 @@ services:
       MAS_OPS_BOOTSTRAP_ADMIN_DISPLAY_NAME: Local Admin
     restart: "no"
 
+  ops-bootstrap-client:
+    build:
+      context: .
+      dockerfile: docker/ops-api/Dockerfile
+    command: ["mas-ops-api", "bootstrap-client"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ops-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *ops-api-environment
+      MAS_OPS_BOOTSTRAP_CLIENT_ID: 11111111-1111-4111-8111-111111111111
+      MAS_OPS_BOOTSTRAP_FABRIC_ID: 33333333-3333-4333-8333-333333333333
+      MAS_OPS_BOOTSTRAP_CLIENT_DISPLAY_NAME: MAS Dogfood
+    restart: "no"
+
   ops-api:
     build:
       context: .
@@ -129,6 +149,8 @@ services:
       ops-migrate:
         condition: service_completed_successfully
       ops-bootstrap:
+        condition: service_completed_successfully
+      ops-bootstrap-client:
         condition: service_completed_successfully
     environment:
       <<: *ops-api-environment

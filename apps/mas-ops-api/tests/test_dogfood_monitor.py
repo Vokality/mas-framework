@@ -38,6 +38,8 @@ async def test_dogfood_monitor_projects_runtime_once_per_problem_signature(
             "dogfood_distribution": "Docker Linux",
             "dogfood_site": "docker-compose",
             "dogfood_tags": ["docker", "mas-system"],
+            "dogfood_startup_grace_seconds": 0.0,
+            "dogfood_problem_grace_seconds": 60.0,
         }
     )
     service = DockerDogfoodMonitorService(
@@ -67,10 +69,22 @@ async def test_dogfood_monitor_projects_runtime_once_per_problem_signature(
                     ],
                     findings=[{"code": "container_unhealthy"}],
                 ),
+                LinuxPollObservation(
+                    collected_at=datetime(2026, 3, 15, 12, 2, tzinfo=UTC),
+                    metrics={"container_status": "running"},
+                    services=[
+                        {
+                            "service_name": "mas-runtime",
+                            "service_state": "unhealthy",
+                        }
+                    ],
+                    findings=[{"code": "container_unhealthy"}],
+                ),
             ]
         ),
     )
 
+    await service._poll_once()  # noqa: SLF001
     await service._poll_once()  # noqa: SLF001
     await service._poll_once()  # noqa: SLF001
 
@@ -89,3 +103,139 @@ async def test_dogfood_monitor_projects_runtime_once_per_problem_signature(
         incidents[0].summary
         == "mas-runtime on mas-runtime: mas-runtime container reported unhealthy status"
     )
+
+
+@pytest.mark.asyncio
+async def test_dogfood_monitor_ignores_one_poll_container_creation_transient(
+    ops_app,
+    session_factory,
+) -> None:
+    settings = ops_app.state.services.settings.model_copy(
+        update={
+            "dogfood_enabled": True,
+            "dogfood_hostname": "mas-runtime",
+            "dogfood_mgmt_address": "docker://mas-runtime",
+            "dogfood_distribution": "Docker Linux",
+            "dogfood_site": "docker-compose",
+            "dogfood_tags": ["docker", "mas-system"],
+            "dogfood_startup_grace_seconds": 0.0,
+            "dogfood_problem_grace_seconds": 90.0,
+        }
+    )
+    service = DockerDogfoodMonitorService(
+        settings=settings,
+        portfolio_ingress_registry=ops_app.state.services.portfolio_ingress_registry,
+        poller=FakeHostPoller(
+            observations=[
+                LinuxPollObservation(
+                    collected_at=datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+                    metrics={"container_status": "created"},
+                    services=[
+                        {
+                            "service_name": "mas-runtime",
+                            "service_state": "stopped",
+                        }
+                    ],
+                    findings=[{"code": "container_not_running"}],
+                ),
+                LinuxPollObservation(
+                    collected_at=datetime(2026, 3, 15, 12, 1, tzinfo=UTC),
+                    metrics={"container_status": "running"},
+                    services=[
+                        {
+                            "service_name": "mas-runtime",
+                            "service_state": "running",
+                        }
+                    ],
+                    findings=[],
+                ),
+            ]
+        ),
+    )
+
+    await service._poll_once()  # noqa: SLF001
+    await service._poll_once()  # noqa: SLF001
+
+    async with session_factory() as session:
+        client = await session.get(PortfolioClient, settings.dogfood_client_id)
+        assets = list((await session.scalars(select(PortfolioAsset))).all())
+        incidents = list((await session.scalars(select(PortfolioIncident))).all())
+
+    assert client is not None
+    assert client.open_alert_count == 0
+    assert client.critical_asset_count == 0
+    assert len(assets) == 1
+    assert assets[0].health_state == HealthState.HEALTHY.value
+    assert incidents == []
+
+
+@pytest.mark.asyncio
+async def test_dogfood_monitor_ignores_unhealthy_startup_window(
+    ops_app,
+    session_factory,
+) -> None:
+    settings = ops_app.state.services.settings.model_copy(
+        update={
+            "dogfood_enabled": True,
+            "dogfood_hostname": "mas-runtime",
+            "dogfood_mgmt_address": "docker://mas-runtime",
+            "dogfood_distribution": "Docker Linux",
+            "dogfood_site": "docker-compose",
+            "dogfood_tags": ["docker", "mas-system"],
+            "dogfood_startup_grace_seconds": 180.0,
+            "dogfood_problem_grace_seconds": 0.0,
+        }
+    )
+    service = DockerDogfoodMonitorService(
+        settings=settings,
+        portfolio_ingress_registry=ops_app.state.services.portfolio_ingress_registry,
+        poller=FakeHostPoller(
+            observations=[
+                LinuxPollObservation(
+                    collected_at=datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+                    metrics={"container_status": "created"},
+                    services=[
+                        {
+                            "service_name": "mas-runtime",
+                            "service_state": "stopped",
+                        }
+                    ],
+                    findings=[{"code": "container_not_running"}],
+                ),
+                LinuxPollObservation(
+                    collected_at=datetime(2026, 3, 15, 12, 1, tzinfo=UTC),
+                    metrics={"container_status": "created"},
+                    services=[
+                        {
+                            "service_name": "mas-runtime",
+                            "service_state": "stopped",
+                        }
+                    ],
+                    findings=[{"code": "container_not_running"}],
+                ),
+                LinuxPollObservation(
+                    collected_at=datetime(2026, 3, 15, 12, 2, tzinfo=UTC),
+                    metrics={"container_status": "created"},
+                    services=[
+                        {
+                            "service_name": "mas-runtime",
+                            "service_state": "stopped",
+                        }
+                    ],
+                    findings=[{"code": "container_not_running"}],
+                ),
+            ]
+        ),
+    )
+
+    await service._poll_once()  # noqa: SLF001
+    await service._poll_once()  # noqa: SLF001
+    await service._poll_once()  # noqa: SLF001
+
+    async with session_factory() as session:
+        client = await session.get(PortfolioClient, settings.dogfood_client_id)
+        incidents = list((await session.scalars(select(PortfolioIncident))).all())
+
+    assert client is not None
+    assert client.open_alert_count == 0
+    assert incidents == []

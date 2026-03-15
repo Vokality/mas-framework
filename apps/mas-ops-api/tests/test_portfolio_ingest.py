@@ -281,6 +281,34 @@ async def test_portfolio_connector_ingests_visibility_events_idempotently(
 
 
 @pytest.mark.asyncio
+async def test_portfolio_connector_does_not_bootstrap_desired_state_for_new_clients(
+    ops_app,
+    session_factory,
+) -> None:
+    connector = ops_app.state.services.portfolio_ingress_registry.get(CLIENT_A)
+
+    await connector.ingest_portfolio_event(event=_alert_event())
+
+    async with session_factory() as session:
+        client = await session.get(PortfolioClient, CLIENT_A)
+        desired_state = await session.get(ConfigDesiredStateRecord, CLIENT_A)
+        stream_rows = list(
+            (
+                await session.scalars(
+                    select(OpsStreamEvent).where(
+                        OpsStreamEvent.subject_type == "config_desired_state"
+                    )
+                )
+            ).all()
+        )
+
+    assert client is not None
+    assert client.name == f"Client {CLIENT_A[:8]}"
+    assert desired_state is None
+    assert stream_rows == []
+
+
+@pytest.mark.asyncio
 async def test_phase_2_routes_expose_client_and_asset_activity(
     api_client,
     ops_app,
