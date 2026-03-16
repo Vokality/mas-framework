@@ -20,7 +20,7 @@ export function ClientActivityPanel({ events }: ClientActivityPanelProps) {
         <div className="list">
           {events.slice(0, 6).map((event) => (
             <div className="list-item" key={event.activity_id}>
-              <strong>{describeActivityEvent(event)}</strong>
+              <span className="activity-label">{describeActivityEvent(event)}</span>
               <span>{describeActivityMeta(event)}</span>
             </div>
           ))}

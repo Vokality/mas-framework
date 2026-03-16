@@ -91,12 +91,12 @@ export function PortfolioPage() {
   const stableClients = state.clients.length - clientsNeedingAttention;
 
   return (
-    <>
+    <div className="page-stack">
       <section className="portfolio-toolbar card">
         <div className="portfolio-toolbar-copy">
           <span className="eyebrow">Portfolio Queue</span>
           <h2>Client triage</h2>
-          <p>
+          <p className="hero-subtitle">
             Use the queue to decide which client to open next. The operational
             path is queue, then client workspace, then incident cockpit.
           </p>
@@ -204,7 +204,7 @@ export function PortfolioPage() {
             : null}
         </div>
       </section>
-    </>
+    </div>
   );
 }
 

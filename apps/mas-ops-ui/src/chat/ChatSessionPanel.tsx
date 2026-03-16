@@ -169,10 +169,10 @@ export function ChatSessionPanel({
 
   return (
     <section className="grid">
-      <article className="card full-width-card">
+      <article className="card full-width-card chat-session-panel">
         <span className="eyebrow">{formatScopeLabel(createPayload.scope)}</span>
         <h3>{title}</h3>
-        <p>{description}</p>
+        <p className="muted-copy">{description}</p>
         <p className="muted-copy">
           {state.session
             ? `Session ${state.session.chat_session_id}`
@@ -190,11 +190,11 @@ export function ChatSessionPanel({
             {state.session ? "Refresh Session" : "Create Session"}
           </button>
         </div>
-        <div className="list">
+        <div className="chat-session-messages list">
           {state.session && state.session.messages.length > 0 ? (
             state.session.messages.map((item) => (
-              <article className="list-item" key={item.message_id}>
-                <strong>{item.role}</strong>
+              <article className="list-item chat-message" key={item.message_id}>
+                <span className="chat-message-role">{item.role}</span>
                 <span>{item.content}</span>
               </article>
             ))

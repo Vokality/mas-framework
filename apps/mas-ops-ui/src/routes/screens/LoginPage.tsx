@@ -23,7 +23,7 @@ export function LoginPage() {
         <div className="login-panel">
           <span className="eyebrow">Session Restore</span>
           <h2>Checking current session</h2>
-          <p>The ops plane is restoring any existing server-side session.</p>
+          <p className="hero-subtitle">The ops plane is restoring any existing server-side session.</p>
         </div>
       </div>
     );
@@ -59,7 +59,7 @@ export function LoginPage() {
       <div className="login-panel">
         <span className="eyebrow">Local Auth</span>
         <h2>MAS Ops Console</h2>
-        <p>
+        <p className="hero-subtitle">
           Sign in to the MSP operator console. The normal flow is portfolio queue,
           then client workspace, then incident cockpit.
         </p>

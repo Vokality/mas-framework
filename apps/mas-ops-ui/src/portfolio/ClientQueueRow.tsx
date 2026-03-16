@@ -20,7 +20,7 @@ export function ClientQueueRow({
 
   return (
     <article className={`queue-row queue-row-${attentionLevel}`}>
-      <div className="queue-row-client">
+      <div className="queue-row-cell queue-row-client" data-label="Client">
         <div className="queue-row-client-title">
           <strong>{client.name}</strong>
           {isPriorityClient ? <span className="priority-chip">Next up</span> : null}
@@ -32,21 +32,21 @@ export function ClientQueueRow({
           <span className="mono-copy">{client.client_id}</span>
         </div>
       </div>
-      <div className="queue-row-metric">
+      <div className="queue-row-cell queue-row-metric" data-label="Alerts">
         <strong>{client.open_alert_count}</strong>
         <span>Alerts</span>
       </div>
-      <div className="queue-row-metric">
+      <div className="queue-row-cell queue-row-metric" data-label="Critical">
         <strong>{client.critical_asset_count}</strong>
         <span>Critical</span>
       </div>
-      <div className="queue-row-fabric">
+      <div className="queue-row-cell queue-row-fabric" data-label="Fabric">
         <span className="mono-copy">{client.fabric_id}</span>
       </div>
-      <div className="queue-row-next-step">
+      <div className="queue-row-cell queue-row-next-step" data-label="Next action">
         <strong>{getClientNextActionLabel(client)}</strong>
       </div>
-      <div className="queue-row-actions">
+      <div className="queue-row-cell queue-row-actions" data-label="Actions">
         <Link to={`/clients/${client.client_id}`}>Open</Link>
         <Link className="secondary-link" to={`/clients/${client.client_id}/config`}>
           Config

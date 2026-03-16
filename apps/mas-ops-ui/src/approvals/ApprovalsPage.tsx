@@ -48,11 +48,11 @@ export function ApprovalsPage() {
   }
 
   return (
-    <>
+    <div className="page-stack">
       <section className="hero">
         <span className="eyebrow">Approvals</span>
         <h2>Approval inbox</h2>
-        <p>
+        <p className="hero-subtitle">
           Approval requests are listed with full phase-4 lifecycle state, and
           operators or admins can resolve visible items.
         </p>
@@ -64,19 +64,23 @@ export function ApprovalsPage() {
         {state.status === "loading" ? (
           <article className="card">
             <h3>Loading approvals</h3>
-            <p>Fetching approval requests visible to the current session.</p>
+            <p className="muted-copy">
+              Fetching approval requests visible to the current session.
+            </p>
           </article>
         ) : null}
         {state.status === "error" ? (
           <article className="card">
             <h3>Approval inbox unavailable</h3>
-            <p>{state.errorMessage}</p>
+            <p className="muted-copy">{state.errorMessage}</p>
           </article>
         ) : null}
         {state.status === "ready" && state.approvals.length === 0 ? (
           <article className="card">
             <h3>No approvals waiting</h3>
-            <p>No approval requests are currently visible to this session.</p>
+            <p className="muted-copy">
+              No approval requests are currently visible to this session.
+            </p>
           </article>
         ) : null}
         {state.status === "ready"
@@ -84,7 +88,7 @@ export function ApprovalsPage() {
               <article className="card" key={approval.approval_id}>
                 <span className="eyebrow">{approval.state}</span>
                 <h3>{approval.title}</h3>
-                <p>{approval.risk_summary}</p>
+                <p className="muted-copy">{approval.risk_summary}</p>
                 <p className="muted-copy">
                   Client: {approval.client_id}
                   <br />
@@ -113,7 +117,7 @@ export function ApprovalsPage() {
             ))
           : null}
       </section>
-    </>
+    </div>
   );
 }
 

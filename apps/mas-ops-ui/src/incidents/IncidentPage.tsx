@@ -108,11 +108,11 @@ export function IncidentPage() {
   );
 
   return (
-    <>
+    <div className="page-stack">
       <section className="hero">
         <span className="eyebrow">Incident Cockpit</span>
         <h2>{state.incident?.summary ?? incidentId}</h2>
-        <p>
+        <p className="hero-subtitle">
           Incident detail, evidence, approvals, recommendations, and incident-scoped
           chat are loaded from the ops-plane incident API and stream.
         </p>
@@ -123,7 +123,9 @@ export function IncidentPage() {
       <section className="grid">
         <article className="card">
           <h3>Summary</h3>
-          {state.status === "loading" ? <p>Loading incident summary...</p> : null}
+          {state.status === "loading" ? (
+            <p className="muted-copy">Loading incident summary...</p>
+          ) : null}
           {state.incident ? (
             <>
               <p className="muted-copy">Client ID: {state.incident.client_id}</p>
@@ -140,7 +142,9 @@ export function IncidentPage() {
         </article>
         <article className="card">
           <h3>Activity</h3>
-          {state.status === "loading" ? <p>Loading activity timeline...</p> : null}
+          {state.status === "loading" ? (
+            <p className="muted-copy">Loading activity timeline...</p>
+          ) : null}
           {state.status === "ready" && state.activity.length === 0 ? (
             <p className="muted-copy">No timeline events are available for this incident.</p>
           ) : null}
@@ -166,7 +170,7 @@ export function IncidentPage() {
                   </strong>
                   <span>{approval.risk_summary}</span>
                   {approval.state === "pending" && auth.session?.role !== "viewer" ? (
-                    <span className="card-actions">
+                    <div className="card-actions">
                       <button
                         onClick={() => {
                           void handleApprovalDecision(approval.approval_id, "approve");
@@ -182,7 +186,7 @@ export function IncidentPage() {
                       >
                         Reject
                       </button>
-                    </span>
+                    </div>
                   ) : null}
                 </article>
               ))}
@@ -193,7 +197,9 @@ export function IncidentPage() {
       <section className="grid two-up">
         <article className="card">
           <h3>Affected Assets</h3>
-          {state.status === "loading" ? <p>Loading affected assets...</p> : null}
+          {state.status === "loading" ? (
+            <p className="muted-copy">Loading affected assets...</p>
+          ) : null}
           {state.status === "ready" &&
           (state.incident?.assets?.length ?? 0) === 0 ? (
             <p className="muted-copy">No assets are currently linked to this incident.</p>
@@ -211,7 +217,9 @@ export function IncidentPage() {
         </article>
         <article className="card">
           <h3>Evidence</h3>
-          {state.status === "loading" ? <p>Loading evidence bundles...</p> : null}
+          {state.status === "loading" ? (
+            <p className="muted-copy">Loading evidence bundles...</p>
+          ) : null}
           {state.status === "ready" &&
           (state.incident?.evidence_bundles?.length ?? 0) === 0 ? (
             <p className="muted-copy">No structured evidence has been captured yet.</p>
@@ -278,7 +286,7 @@ export function IncidentPage() {
           incidentId={state.incident.incident_id}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -287,7 +295,7 @@ function renderIncidentError(message: string) {
     <section className="hero">
       <span className="eyebrow">Incident Cockpit</span>
       <h2>Incident unavailable</h2>
-      <p>{message}</p>
+      <p className="hero-subtitle">{message}</p>
     </section>
   );
 }

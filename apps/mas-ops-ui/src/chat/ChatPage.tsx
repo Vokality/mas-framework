@@ -5,11 +5,11 @@ export function ChatPage() {
   const auth = useAuth();
 
   return (
-    <>
+    <div className="page-stack">
       <section className="hero">
         <span className="eyebrow">Portfolio Chat</span>
         <h2>Read-only portfolio summary</h2>
-        <p>
+        <p className="hero-subtitle">
           Use this as a helper when you want a summary across authorized clients.
           It is not the main investigation workspace and it does not run
           diagnostics or remediation. For active work, open a client and then the
@@ -24,6 +24,6 @@ export function ChatPage() {
         storageKey={`global:${auth.session?.user_id ?? "anonymous"}`}
         title="Global Chat Session"
       />
-    </>
+    </div>
   );
 }

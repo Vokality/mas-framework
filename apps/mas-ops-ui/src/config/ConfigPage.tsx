@@ -185,11 +185,11 @@ export function ConfigPage() {
   const latestApply = state.runHistory?.apply_runs?.[0] ?? null;
 
   return (
-    <>
+    <div className="page-stack">
       <section className="hero">
         <span className="eyebrow">Desired State</span>
         <h2>Config console for {clientId}</h2>
-        <p>
+        <p className="hero-subtitle">
           Desired-state persistence, validation, apply history, and approval-gated
           execution are backed by the phase-4 config APIs and client stream.
         </p>
@@ -197,7 +197,9 @@ export function ConfigPage() {
       <section className="grid">
         <article className="card">
           <h3>Current State</h3>
-          {state.status === "loading" ? <p>Loading desired-state document...</p> : null}
+          {state.status === "loading" ? (
+            <p className="muted-copy">Loading desired-state document...</p>
+          ) : null}
           {state.desiredState ? (
             <p className="muted-copy">
               Version {state.desiredState.desired_state_version} | Fabric{" "}
@@ -298,7 +300,7 @@ export function ConfigPage() {
                 ) : null}
                 {isAdmin &&
                 (run.status === "pending" || run.status === "validating") ? (
-                  <span className="card-actions">
+                  <div className="card-actions">
                     <button
                       className="secondary-button"
                       onClick={() => {
@@ -307,7 +309,7 @@ export function ConfigPage() {
                     >
                       Cancel Run
                     </button>
-                  </span>
+                  </div>
                 ) : null}
               </article>
             ))}
@@ -322,7 +324,7 @@ export function ConfigPage() {
           </div>
         </article>
       </section>
-    </>
+    </div>
   );
 }
 
@@ -331,7 +333,7 @@ function renderConfigError(message: string) {
     <section className="hero">
       <span className="eyebrow">Desired State</span>
       <h2>Config console unavailable</h2>
-      <p>{message}</p>
+      <p className="hero-subtitle">{message}</p>
     </section>
   );
 }

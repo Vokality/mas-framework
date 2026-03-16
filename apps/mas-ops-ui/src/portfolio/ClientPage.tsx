@@ -217,49 +217,52 @@ export function ClientPage() {
     );
   }
 
+  const hasAlerts = (state.client?.open_alert_count ?? 0) > 0;
+  const hasCritical = (state.client?.critical_asset_count ?? 0) > 0;
+
   return (
-    <>
-      <section className="hero">
-        <span className="eyebrow">Client</span>
-        <h2>{state.client?.name ?? clientId}</h2>
-        <p>
-          Client summary, activity, asset inventory, and asset detail are backed by
-          the Phase 2 visibility projections and client stream.
-        </p>
+    <div className="page-stack">
+      <section className="hero client-hero">
+        <div className="client-hero-main">
+          <span className="eyebrow">Client</span>
+          <h2>{state.client?.name ?? clientId}</h2>
+          {state.client ? (
+            <p className="muted-copy client-hero-meta">
+              {state.client.client_id}
+              {state.client.fabric_id ? ` · Fabric ${state.client.fabric_id}` : ""}
+            </p>
+          ) : null}
+        </div>
+        {state.client ? (
+          <div className="client-hero-stats">
+            <div className={`client-stat-chip ${hasAlerts ? "client-stat-chip-warn" : ""}`}>
+              <strong>{state.client.open_alert_count}</strong>
+              <span>Open Alerts</span>
+            </div>
+            <div className={`client-stat-chip ${hasCritical ? "client-stat-chip-danger" : ""}`}>
+              <strong>{state.client.critical_asset_count}</strong>
+              <span>Critical Assets</span>
+            </div>
+            <Link className="client-config-link" to={`/clients/${clientId}/config`}>
+              Config Console →
+            </Link>
+          </div>
+        ) : state.status === "loading" ? (
+          <p className="muted-copy">Loading...</p>
+        ) : null}
         {state.status === "ready" && state.errorMessage ? (
           <p className="form-error">{state.errorMessage}</p>
         ) : null}
       </section>
-      <section className="grid">
-        <article className="card">
-          <h3>Summary</h3>
-          {state.status === "loading" ? <p>Loading client summary...</p> : null}
-          {state.client ? (
-            <>
-              <p className="muted-copy">Client ID: {state.client.client_id}</p>
-              <p className="muted-copy">Fabric ID: {state.client.fabric_id}</p>
-              <p className="muted-copy">
-                Alerts: {state.client.open_alert_count} | Critical assets:{" "}
-                {state.client.critical_asset_count}
-              </p>
-            </>
-          ) : null}
-        </article>
-        <article className="card">
-          <h3>Config Console</h3>
-          <p>
-            Desired-state configuration is available for this client under the
-            config route.
-          </p>
-          <Link to={`/clients/${clientId}/config`}>Open Config Console</Link>
-        </article>
-      </section>
+
       <section className="grid two-up">
         <article className="card">
           <h3>Incidents</h3>
-          {state.status === "loading" ? <p>Loading incidents...</p> : null}
+          {state.status === "loading" ? (
+            <p className="muted-copy">Loading incidents...</p>
+          ) : null}
           {state.status === "ready" && state.incidents.length === 0 ? (
-            <p className="muted-copy">No incidents are currently projected for this client.</p>
+            <p className="muted-copy">No active incidents.</p>
           ) : null}
           <div className="list">
             {state.incidents.map((incident) => (
@@ -268,9 +271,9 @@ export function ClientPage() {
                 key={incident.incident_id}
                 to={`/incidents/${incident.incident_id}`}
               >
-                <strong>{incident.summary}</strong>
+                <span className="activity-label">{incident.summary}</span>
                 <span>
-                  {incident.severity.toUpperCase()} | {incident.state}
+                  {incident.severity.toUpperCase()} · {incident.state}
                 </span>
               </Link>
             ))}
@@ -278,7 +281,9 @@ export function ClientPage() {
         </article>
         <article className="card">
           <h3>Assets</h3>
-          {state.status === "loading" ? <p>Loading assets...</p> : null}
+          {state.status === "loading" ? (
+            <p className="muted-copy">Loading assets...</p>
+          ) : null}
           <AssetListPanel
             assets={state.assets}
             onSelect={(assetId) => {
@@ -288,14 +293,15 @@ export function ClientPage() {
           />
         </article>
       </section>
+
       <section className="grid two-up">
-        <ClientActivityPanel events={state.clientActivity} />
         <AssetDetailCard
           activity={state.selectedAssetActivity}
           asset={state.selectedAsset}
         />
+        <ClientActivityPanel events={state.clientActivity} />
       </section>
-    </>
+    </div>
   );
 }
 
@@ -351,7 +357,7 @@ function renderClientError(message: string) {
     <section className="hero">
       <span className="eyebrow">Client</span>
       <h2>Client view unavailable</h2>
-      <p>{message}</p>
+      <p className="hero-subtitle">{message}</p>
     </section>
   );
 }
