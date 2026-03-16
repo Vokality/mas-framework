@@ -19,3 +19,7 @@ app
 examples/**/certs/
 examples/**/certs/**
 examples/**/*.log
+.playwright
+.playwright-cli
+test-results/
+output/
