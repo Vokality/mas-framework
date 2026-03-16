@@ -3,12 +3,14 @@ import {
   describeActivityEvent,
   describeActivityMeta,
   extractAlertTitle,
+  extractHostMetrics,
   extractHostServices,
   extractServiceName,
   extractServiceState,
   extractSnapshotHealth,
   findLatestAlert,
   findLatestSnapshot,
+  formatPercent,
   formatTimestamp,
 } from "./activity";
 
@@ -30,6 +32,7 @@ export function AssetDetailCard({ activity, asset }: AssetDetailCardProps) {
   const latestAlert = findLatestAlert(activity);
   const latestSnapshot = findLatestSnapshot(activity);
   const isHostAsset = asset.asset_kind === "linux_host" || asset.asset_kind === "windows_host";
+  const hostMetrics = latestSnapshot ? extractHostMetrics(latestSnapshot) : null;
   const hostServices = latestSnapshot ? extractHostServices(latestSnapshot) : [];
   const remediationHistory = activity.filter((event) => event.event_type.startsWith("remediation."));
   const latestRemediation = remediationHistory[0] ?? null;
@@ -73,6 +76,27 @@ export function AssetDetailCard({ activity, asset }: AssetDetailCardProps) {
           <p className="muted-copy">
             Platform: {asset.asset_kind === "linux_host" ? "Linux" : "Windows"}
           </p>
+          {hostMetrics ? (
+            <>
+              <h4>Latest host metrics</h4>
+              <div className="card-stat-grid">
+                <div>
+                  <span>CPU</span>
+                  <strong>{formatPercent(hostMetrics.cpuPercent)}</strong>
+                </div>
+                <div>
+                  <span>Memory</span>
+                  <strong>{formatPercent(hostMetrics.memoryPercent)}</strong>
+                </div>
+                <div>
+                  <span>Disk</span>
+                  <strong>{formatPercent(hostMetrics.diskPercent)}</strong>
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="muted-copy">No host metrics are available yet.</p>
+          )}
           {hostServices.length > 0 ? (
             <div className="list">
               {hostServices.map((service) => (

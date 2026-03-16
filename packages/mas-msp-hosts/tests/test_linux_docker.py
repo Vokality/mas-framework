@@ -61,6 +61,17 @@ class FakeDockerInspectRunner:
         raise AssertionError(f"unexpected inspect format: {format_string}")
 
 
+@dataclass(slots=True)
+class FakeDockerStatsRunner:
+    stats_calls: list[str]
+
+    async def stats(self, *, container_name: str, format_string: str) -> str:
+        self.stats_calls.append(f"{container_name}:{format_string}")
+        if format_string == "{{.CPUPerc}}":
+            return "37.42%"
+        raise AssertionError(f"unexpected stats format: {format_string}")
+
+
 def _asset():
     from mas_msp_contracts import AssetRef
 
@@ -139,16 +150,19 @@ async def test_docker_linux_host_poller_collects_running_container_observation()
 ):
     exec_runner = FakeDockerExecRunner(commands=[])
     inspect_runner = FakeDockerInspectRunner(inspections=[])
+    stats_runner = FakeDockerStatsRunner(stats_calls=[])
     poller = DockerLinuxHostPoller(
         container_name_resolver=lambda target: target.hostname or target.mgmt_address,
         exec_runner=exec_runner,
         inspect_runner=inspect_runner,
+        stats_runner=stats_runner,
     )
 
     observation = await poller.poll(_target())
 
     assert observation.collected_at >= datetime(2020, 1, 1, tzinfo=UTC)
     assert observation.metrics["container_status"] == "running"
+    assert observation.metrics["cpu_percent"] == 37.42
     assert observation.metrics["memory_percent"] == 61.75
     assert observation.metrics["disk_percent"] == 20.0
     assert observation.services == [
@@ -159,6 +173,7 @@ async def test_docker_linux_host_poller_collects_running_container_observation()
         "mas-runtime:{{.State.Status}}",
         "mas-runtime:{{if .State.Health}}{{.State.Health.Status}}{{end}}",
     ]
+    assert stats_runner.stats_calls == ["mas-runtime:{{.CPUPerc}}"]
 
 
 @pytest.mark.asyncio

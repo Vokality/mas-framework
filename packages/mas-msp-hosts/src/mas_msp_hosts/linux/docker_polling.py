@@ -11,8 +11,10 @@ from mas_msp_contracts.types import JSONObject
 from .docker import (
     CliDockerExecRunner,
     CliDockerInspectRunner,
+    CliDockerStatsRunner,
     DockerExecRunner,
     DockerInspectRunner,
+    DockerStatsRunner,
 )
 from .models import LinuxPollObservation, LinuxPollingTarget
 
@@ -26,6 +28,7 @@ class DockerLinuxHostPoller:
     container_name_resolver: ContainerTargetNameResolver | None = None
     exec_runner: DockerExecRunner | None = None
     inspect_runner: DockerInspectRunner | None = None
+    stats_runner: DockerStatsRunner | None = None
 
     async def poll(self, target: LinuxPollingTarget) -> LinuxPollObservation:
         """Collect one normalized host observation from a Docker container."""
@@ -62,6 +65,7 @@ class DockerLinuxHostPoller:
                 "/proc/meminfo"
             ),
         )
+        cpu_percent = await self._cpu_percent(container_name)
         disk_percent = await self._disk_percent(container_name)
         service_state = "unhealthy" if health_status == "unhealthy" else "running"
         findings: list[JSONObject] = []
@@ -74,6 +78,8 @@ class DockerLinuxHostPoller:
                 }
             )
         metrics: JSONObject = {"container_status": status}
+        if cpu_percent is not None:
+            metrics["cpu_percent"] = cpu_percent
         if memory_percent is not None:
             metrics["memory_percent"] = memory_percent
         if disk_percent is not None:
@@ -117,6 +123,19 @@ class DockerLinuxHostPoller:
         normalized = value.strip()
         return normalized or None
 
+    async def _cpu_percent(self, container_name: str) -> float | None:
+        try:
+            output = await self._stats_runner().stats(
+                container_name=container_name,
+                format_string="{{.CPUPerc}}",
+            )
+        except RuntimeError:
+            return None
+        normalized = output.strip().rstrip("%")
+        if not normalized or not _is_float(normalized):
+            return None
+        return float(normalized)
+
     async def _disk_percent(self, container_name: str) -> float | None:
         output = await self._exec_runner().run(
             container_name=container_name,
@@ -147,6 +166,9 @@ class DockerLinuxHostPoller:
 
     def _inspect_runner(self) -> DockerInspectRunner:
         return self.inspect_runner or CliDockerInspectRunner()
+
+    def _stats_runner(self) -> DockerStatsRunner:
+        return self.stats_runner or CliDockerStatsRunner()
 
 
 def _is_float(value: str) -> bool:

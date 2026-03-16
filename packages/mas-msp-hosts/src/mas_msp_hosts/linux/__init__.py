@@ -11,8 +11,10 @@ from .diagnostics import LinuxDiagnosticsAgent
 from .docker import (
     CliDockerExecRunner,
     CliDockerInspectRunner,
+    CliDockerStatsRunner,
     DockerExecRunner,
     DockerInspectRunner,
+    DockerStatsRunner,
     DockerLinuxDiagnosticsBackend,
 )
 from .docker_polling import DockerLinuxHostPoller
@@ -29,9 +31,11 @@ from .polling import LinuxPollingAgent
 __all__ = [
     "CliDockerExecRunner",
     "CliDockerInspectRunner",
+    "CliDockerStatsRunner",
     "DockerLinuxHostPoller",
     "DockerExecRunner",
     "DockerInspectRunner",
+    "DockerStatsRunner",
     "DockerLinuxDiagnosticsBackend",
     "LinuxDiagnosticsBackend",
     "LinuxDiagnosticsAgent",

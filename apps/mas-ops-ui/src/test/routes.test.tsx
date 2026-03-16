@@ -663,6 +663,9 @@ describe("MAS Ops UI Phase 1 routes", () => {
                   asset: { asset_id: ASSET_ID, hostname: "web-01" },
                   health_state: "critical",
                   metrics: {
+                    cpu_percent: 96,
+                    memory_percent: 72,
+                    disk_percent: 88,
                     services: [
                       { service_name: "nginx", service_state: "failed" },
                       { service_name: "sshd", service_state: "running" },
@@ -717,6 +720,9 @@ describe("MAS Ops UI Phase 1 routes", () => {
                   asset: { asset_id: ASSET_ID, hostname: "web-01" },
                   health_state: "critical",
                   metrics: {
+                    cpu_percent: 96,
+                    memory_percent: 72,
+                    disk_percent: 88,
                     services: [
                       { service_name: "nginx", service_state: "failed" },
                       { service_name: "sshd", service_state: "running" },
@@ -757,6 +763,10 @@ describe("MAS Ops UI Phase 1 routes", () => {
     renderOpsUi(`/clients/${CLIENT_ID}`);
 
     expect(await screen.findByText("Platform: Linux")).toBeInTheDocument();
+    expect(await screen.findByText("Latest host metrics")).toBeInTheDocument();
+    expect(await screen.findByText("96%")).toBeInTheDocument();
+    expect(await screen.findByText("72%")).toBeInTheDocument();
+    expect(await screen.findByText("88%")).toBeInTheDocument();
     expect(await screen.findByText("nginx")).toBeInTheDocument();
     expect(await screen.findByText("failed")).toBeInTheDocument();
     expect(await screen.findByText(/Latest remediation: nginx is running/)).toBeInTheDocument();

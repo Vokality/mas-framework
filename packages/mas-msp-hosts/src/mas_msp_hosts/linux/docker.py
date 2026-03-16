@@ -31,6 +31,12 @@ class DockerInspectRunner(Protocol):
     async def inspect(self, *, container_name: str, format_string: str) -> str: ...
 
 
+class DockerStatsRunner(Protocol):
+    """Read one formatted field from `docker stats --no-stream`."""
+
+    async def stats(self, *, container_name: str, format_string: str) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
 class CliDockerExecRunner:
     """Execute read-only commands via `docker exec`."""
@@ -73,6 +79,30 @@ class CliDockerInspectRunner:
         if process.returncode != 0:
             raise RuntimeError(
                 "docker inspect failed for "
+                f"{container_name}: {stderr.decode().strip() or format_string}"
+            )
+        return stdout.decode().strip()
+
+
+@dataclass(frozen=True, slots=True)
+class CliDockerStatsRunner:
+    """Inspect one container stats field via `docker stats --no-stream`."""
+
+    async def stats(self, *, container_name: str, format_string: str) -> str:
+        process = await asyncio.create_subprocess_exec(
+            "docker",
+            "stats",
+            "--no-stream",
+            "--format",
+            format_string,
+            container_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(
+                "docker stats failed for "
                 f"{container_name}: {stderr.decode().strip() or format_string}"
             )
         return stdout.decode().strip()
@@ -284,7 +314,9 @@ def _hinted_service_is_running(
 __all__ = [
     "CliDockerExecRunner",
     "CliDockerInspectRunner",
+    "CliDockerStatsRunner",
     "DockerExecRunner",
     "DockerInspectRunner",
+    "DockerStatsRunner",
     "DockerLinuxDiagnosticsBackend",
 ]

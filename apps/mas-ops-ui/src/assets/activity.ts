@@ -1,6 +1,11 @@
 import type { ActivityEventResponse } from "../api/client";
 
 type JsonRecord = Record<string, unknown>;
+type HostMetrics = {
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  diskPercent: number | null;
+};
 
 export function describeActivityEvent(event: ActivityEventResponse): string {
   if (event.event_type === "network.alert.raised" || event.event_type === "host.alert.raised") {
@@ -142,15 +147,54 @@ export function extractHostServices(
     .filter((entry): entry is { serviceName: string; serviceState: string } => entry !== null);
 }
 
+export function extractHostMetrics(event: ActivityEventResponse): HostMetrics | null {
+  const metrics = getSnapshotMetrics(event);
+  const hostMetrics = {
+    cpuPercent: getNumericMetric(metrics?.cpu_percent),
+    memoryPercent: getNumericMetric(metrics?.memory_percent),
+    diskPercent: getNumericMetric(metrics?.disk_percent),
+  };
+  if (
+    hostMetrics.cpuPercent === null &&
+    hostMetrics.memoryPercent === null &&
+    hostMetrics.diskPercent === null
+  ) {
+    return null;
+  }
+  return hostMetrics;
+}
+
+export function formatPercent(value: number | null): string {
+  if (value === null) {
+    return "unknown";
+  }
+  return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
+}
+
 function getServicesValue(event: ActivityEventResponse): Array<unknown> | null {
-  const snapshot = getRecord(event.payload.snapshot);
-  const metrics = getRecord(snapshot?.metrics);
+  const metrics = getSnapshotMetrics(event);
   const metricServices = metrics?.services;
   if (Array.isArray(metricServices)) {
     return metricServices;
   }
   const directServices = event.payload.services;
   return Array.isArray(directServices) ? directServices : null;
+}
+
+function getSnapshotMetrics(event: ActivityEventResponse): JsonRecord | null {
+  const snapshot = getRecord(event.payload.snapshot);
+  return getRecord(snapshot?.metrics);
+}
+
+function getNumericMetric(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 export function formatTimestamp(value: string | null | undefined): string {
