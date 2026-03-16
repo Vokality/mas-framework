@@ -1,0 +1,15 @@
+[[checks.required]]
+name = "types"
+command = "uv run ty check ."
+
+[[checks.required]]
+name = "lints"
+command = "uv run ruff check ."
+
+[[checks.required]]
+name = "format"
+command = "uv run ruff format ."
+
+[[checks.required]]
+name = "pytest"
+command = "uv run pytest"
