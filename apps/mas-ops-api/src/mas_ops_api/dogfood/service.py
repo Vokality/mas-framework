@@ -84,10 +84,10 @@ class DockerDogfoodMonitorService:
         target = self._build_target()
         observation = await self._poller.poll(target)
         raw_snapshot = self._polling_agent.normalize_poll(target, observation)
+        problem_signature = _problem_signature(raw_snapshot)
         snapshot = await self._ingest_snapshot(raw_snapshot)
-        self._record_start_time(snapshot)
+        self._record_start_time(raw_snapshot)
 
-        problem_signature = _problem_signature(snapshot)
         if problem_signature is None:
             self._problem_window = None
             return
@@ -99,14 +99,14 @@ class DockerDogfoodMonitorService:
                 first_seen_at=snapshot.collected_at.astimezone(UTC),
             )
             return
-        if self._problem_window.alerted or not self._problem_grace_satisfied(snapshot):
+        if self._problem_window.alerted or not self._problem_grace_satisfied(raw_snapshot):
             return
         alert = self._event_ingest_agent.normalize_journal_event(
             LinuxJournalEvent(
                 client_id=target.client_id,
                 fabric_id=target.fabric_id,
-                occurred_at=snapshot.collected_at,
-                message=_alert_message(snapshot),
+                occurred_at=raw_snapshot.collected_at,
+                message=_alert_message(raw_snapshot),
                 level="error",
                 hostname=target.hostname,
                 mgmt_address=target.mgmt_address,
@@ -178,6 +178,8 @@ def _problem_signature(snapshot: HealthSnapshot) -> str | None:
             service_name = first.get("service_name")
             service_state = first.get("service_state")
             if isinstance(service_name, str) and isinstance(service_state, str):
+                if service_state == "running":
+                    return None
                 return f"{service_name}:{service_state}"
     for finding in snapshot.findings:
         if not isinstance(finding, dict):

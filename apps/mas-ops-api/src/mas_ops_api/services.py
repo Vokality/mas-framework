@@ -20,10 +20,31 @@ from mas_msp_ai import DurableTaskRunner
 
 
 @dataclass(slots=True)
+class OpsApiReadiness:
+    """Startup/readiness state exposed to container liveness checks."""
+
+    ready: bool = False
+    detail: str = "startup_in_progress"
+
+    def mark_ready(self) -> None:
+        """Mark the app ready for health checks."""
+
+        self.ready = True
+        self.detail = "ok"
+
+    def mark_not_ready(self, detail: str) -> None:
+        """Mark the app not ready and record the reason."""
+
+        self.ready = False
+        self.detail = detail
+
+
+@dataclass(slots=True)
 class OpsApiServices:
     """Shared application services attached to FastAPI state."""
 
     settings: OpsApiSettings
+    readiness: OpsApiReadiness
     approval_service: ApprovalService
     database: Database
     audit_service: AuditService
@@ -41,4 +62,4 @@ class OpsApiServices:
     visibility_runtime: InProcessVisibilityRuntime
 
 
-__all__ = ["OpsApiServices"]
+__all__ = ["OpsApiReadiness", "OpsApiServices"]

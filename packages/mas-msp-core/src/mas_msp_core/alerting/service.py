@@ -114,12 +114,23 @@ class AlertPolicyService:
         watched_services = {
             service_name.lower() for service_name in host_policy.services.watch
         }
+        if not watched_services:
+            authoritative_snapshot = snapshot.model_copy(
+                update={
+                    "health_state": health_state,
+                    "findings": [*list(snapshot.findings), *derived_findings],
+                }
+            )
+            return HostSnapshotEvaluation(
+                authoritative_snapshot=authoritative_snapshot,
+                active_candidates=active_candidates,
+            )
         for service in _service_states(snapshot.metrics):
             service_name = service.get("service_name")
             service_state = service.get("service_state")
             if not isinstance(service_name, str) or not isinstance(service_state, str):
                 continue
-            if watched_services and service_name.lower() not in watched_services:
+            if service_name.lower() not in watched_services:
                 continue
             if service_state == "running":
                 continue

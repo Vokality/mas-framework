@@ -18,7 +18,7 @@ class OpsApiSettings(BaseSettings):
     )
     auto_create_schema: bool = Field(
         default=False,
-        description="Create database tables on startup for local development and tests.",
+        description="Apply Alembic migrations on startup for local development and tests.",
     )
     environment: Literal["development", "test", "production"] = Field(
         default="development",

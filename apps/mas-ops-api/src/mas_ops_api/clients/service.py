@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,7 @@ class ClientEnrollmentInput:
     client_id: str
     fabric_id: str
     display_name: str
+    initial_policy: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,7 @@ class ClientEnrollmentResult:
     desired_state: ConfigDesiredStateRecord
     client_created: bool
     desired_state_created: bool
+    desired_state_changed: bool
 
 
 class ClientEnrollmentService:
@@ -67,6 +70,7 @@ class ClientEnrollmentService:
         client_created = False
         client_changed = False
         desired_state_created = False
+        desired_state_changed = False
         stream_events = []
 
         resolved_name = _resolve_client_name(desired_state, payload.display_name)
@@ -92,10 +96,21 @@ class ClientEnrollmentService:
                 client_id=payload.client_id,
                 fabric_id=payload.fabric_id,
                 display_name=resolved_name,
+                policy=payload.initial_policy,
                 updated_at=now,
             )
             session.add(desired_state)
             desired_state_created = True
+        else:
+            merged_policy = _merge_policy_defaults(
+                existing_policy=desired_state.policy,
+                initial_policy=payload.initial_policy,
+            )
+            if merged_policy != desired_state.policy:
+                desired_state.policy = merged_policy
+                desired_state.desired_state_version += 1
+                desired_state.updated_at = max(desired_state.updated_at, now)
+                desired_state_changed = True
 
         await session.flush()
 
@@ -112,7 +127,7 @@ class ClientEnrollmentService:
                     occurred_at=client.updated_at,
                 )
             )
-        if desired_state_created:
+        if desired_state_created or desired_state_changed:
             stream_events.append(
                 self._stream_service.build_event(
                     event_name="client.updated",
@@ -145,6 +160,7 @@ class ClientEnrollmentService:
                     details={
                         "fabric_id": payload.fabric_id,
                         "desired_state_created": desired_state_created,
+                        "desired_state_changed": desired_state_changed,
                     },
                     occurred_at=now,
                 ),
@@ -159,6 +175,7 @@ class ClientEnrollmentService:
             desired_state=desired_state,
             client_created=client_created,
             desired_state_created=desired_state_created,
+            desired_state_changed=desired_state_changed,
         )
 
 
@@ -172,6 +189,18 @@ def _resolve_client_name(
     if isinstance(display_name, str) and display_name.strip():
         return display_name.strip()
     return requested_display_name
+
+
+def _merge_policy_defaults(
+    *,
+    existing_policy: dict[str, object],
+    initial_policy: dict[str, object],
+) -> dict[str, object]:
+    if not initial_policy:
+        return deepcopy(existing_policy)
+    merged = deepcopy(initial_policy)
+    merged.update(deepcopy(existing_policy))
+    return merged
 
 
 __all__ = [

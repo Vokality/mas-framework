@@ -12,12 +12,19 @@ from mas_msp_contracts import (
     AlertRaised,
     AssetKind,
     AssetRef,
+    ConfigDesiredState,
     HealthSnapshot,
     HealthState,
     Severity,
 )
+from mas_msp_core import AppliedAlertConfiguration
 from mas_ops_api.auth.types import UserRole
-from mas_ops_api.db.models import PortfolioAsset, PortfolioClient, PortfolioIncident
+from mas_ops_api.db.models import (
+    AppliedAlertPolicyRecord,
+    PortfolioAsset,
+    PortfolioClient,
+    PortfolioIncident,
+)
 
 from .conftest import CLIENT_A, FABRIC_A
 from .test_portfolio_ingest import _seed_desired_state
@@ -95,12 +102,43 @@ async def _wait_for_turn_state(
     raise AssertionError(f"chat turn did not reach {expected_state!r} in time")
 
 
+async def _apply_host_service_policy(session_factory) -> None:  # noqa: ANN001
+    configuration = AppliedAlertConfiguration.from_desired_state(
+        ConfigDesiredState(
+            client_id=CLIENT_A,
+            fabric_id=FABRIC_A,
+            desired_state_version=1,
+            tenant_metadata={},
+            policy={
+                "alerting": {
+                    "host_defaults": {
+                        "services": {
+                            "watch": ["nginx"],
+                        }
+                    }
+                }
+            },
+            inventory_sources=[],
+            notification_routes=[],
+        )
+    )
+    async with session_factory() as session:
+        session.add(
+            AppliedAlertPolicyRecord(
+                client_id=CLIENT_A,
+                configuration=configuration.model_dump(mode="json"),
+            )
+        )
+        await session.commit()
+
+
 @pytest.mark.asyncio
 async def test_host_visibility_projects_linux_assets_and_incidents(
     ops_app,
     session_factory,
 ) -> None:
     await _seed_desired_state(session_factory)
+    await _apply_host_service_policy(session_factory)
     await ops_app.state.services.visibility_runtime.ingest_contract(_linux_host_alert())
     await ops_app.state.services.visibility_runtime.ingest_contract(
         _linux_host_snapshot()

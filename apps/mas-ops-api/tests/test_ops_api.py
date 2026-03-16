@@ -270,7 +270,7 @@ async def test_approval_and_config_routes_enforce_roles(
             "tenant_metadata": {"display_name": "Acme Corp"},
             "policy": {"default_mode": "deny"},
             "inventory_sources": [{"kind": "snmp"}],
-            "notification_routes": [{"kind": "email"}],
+            "notification_routes": [{"kind": "email", "target": "noc@example.com"}],
         },
     )
     assert replace_response.status_code == 200

@@ -18,14 +18,19 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-settings = OpsApiSettings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+
+
+def _configured_database_url() -> str:
+    configured_url = config.get_main_option("sqlalchemy.url")
+    if configured_url:
+        return configured_url
+    return OpsApiSettings().database_url
 
 
 def run_migrations_offline() -> None:
     """Run migrations in offline mode."""
 
-    url = config.get_main_option("sqlalchemy.url")
+    url = _configured_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -40,6 +45,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations in online mode."""
 
+    config.set_main_option("sqlalchemy.url", _configured_database_url())
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

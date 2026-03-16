@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,12 +35,12 @@ from mas_ops_api.connectors import (
     OpsPlaneFabricConnector,
     PortfolioIngressRegistry,
 )
-from mas_ops_api.db.bootstrap import create_schema
+from mas_ops_api.db.migrations import assert_database_at_head, upgrade_to_head
 from mas_ops_api.db.session import Database
 from mas_ops_api.dogfood import DockerDogfoodMonitorService
 from mas_ops_api.incidents import IncidentProjectionService, OpsPlaneIncidentGateway
 from mas_ops_api.projections.portfolio_ingest import PortfolioIngestService
-from mas_ops_api.services import OpsApiServices
+from mas_ops_api.services import OpsApiReadiness, OpsApiServices
 from mas_ops_api.settings import OpsApiSettings
 from mas_ops_api.streams.service import StreamService
 from mas_ops_api.visibility import (
@@ -241,6 +242,7 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         portfolio_ingress_registry=portfolio_ingress_registry,
     )
     portfolio_assistant = PortfolioAssistant()
+    readiness = OpsApiReadiness()
     chat_execution_service = ChatExecutionService(
         database=database,
         chat_service=chat_service,
@@ -262,6 +264,7 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
         )
     services = OpsApiServices(
         settings=app_settings,
+        readiness=readiness,
         approval_service=approval_service,
         database=database,
         audit_service=audit_service,
@@ -295,11 +298,19 @@ def create_app(settings: OpsApiSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.services = services
-        if app_settings.auto_create_schema:
-            await create_schema(database.engine)
+        try:
+            if app_settings.auto_create_schema:
+                await asyncio.to_thread(upgrade_to_head, app_settings)
+            await asyncio.to_thread(assert_database_at_head, app_settings)
+        except Exception as exc:
+            readiness.mark_not_ready(str(exc))
+            await database.dispose()
+            raise
+        readiness.mark_ready()
         approval_service.start()
         dogfood_monitor_service.start()
         yield
+        readiness.mark_not_ready("shutting_down")
         await dogfood_monitor_service.stop()
         await approval_service.stop()
         await durable_task_runner.drain()

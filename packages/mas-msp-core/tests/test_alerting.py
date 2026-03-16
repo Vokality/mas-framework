@@ -223,6 +223,24 @@ def test_alert_policy_service_rewrites_host_snapshot_health_and_findings() -> No
     } == {"cpu_percent_critical", "service_not_running"}
 
 
+def test_alert_policy_service_ignores_service_states_when_watch_list_is_empty() -> None:
+    service = AlertPolicyService()
+    configuration = AppliedAlertConfiguration(client_id=CLIENT_ID)
+
+    evaluation = service.evaluate_host_snapshot(
+        _snapshot(
+            services=[
+                {"service_name": "nginx", "service_state": "failed"},
+            ]
+        ),
+        configuration=configuration,
+    )
+
+    assert evaluation.authoritative_snapshot.health_state is HealthState.HEALTHY
+    assert evaluation.active_candidates == []
+    assert evaluation.authoritative_snapshot.findings == []
+
+
 @pytest.mark.asyncio
 async def test_alert_policy_agent_resolves_service_condition_after_clear() -> None:
     applied_policy_store = InMemoryAppliedAlertPolicyStore()

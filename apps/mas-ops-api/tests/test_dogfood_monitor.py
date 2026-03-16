@@ -44,7 +44,7 @@ async def test_dogfood_monitor_projects_runtime_once_per_problem_signature(
     )
     service = DockerDogfoodMonitorService(
         settings=settings,
-        portfolio_ingress_registry=ops_app.state.services.portfolio_ingress_registry,
+        visibility_runtime=ops_app.state.services.visibility_runtime,
         poller=FakeHostPoller(
             observations=[
                 LinuxPollObservation(
@@ -97,7 +97,7 @@ async def test_dogfood_monitor_projects_runtime_once_per_problem_signature(
     assert client.open_alert_count == 1
     assert len(assets) == 1
     assert assets[0].asset_kind == "linux_host"
-    assert assets[0].health_state == HealthState.CRITICAL.value
+    assert assets[0].health_state == HealthState.HEALTHY.value
     assert len(incidents) == 1
     assert (
         incidents[0].summary
@@ -124,7 +124,7 @@ async def test_dogfood_monitor_ignores_one_poll_container_creation_transient(
     )
     service = DockerDogfoodMonitorService(
         settings=settings,
-        portfolio_ingress_registry=ops_app.state.services.portfolio_ingress_registry,
+        visibility_runtime=ops_app.state.services.visibility_runtime,
         poller=FakeHostPoller(
             observations=[
                 LinuxPollObservation(
@@ -188,7 +188,7 @@ async def test_dogfood_monitor_ignores_unhealthy_startup_window(
     )
     service = DockerDogfoodMonitorService(
         settings=settings,
-        portfolio_ingress_registry=ops_app.state.services.portfolio_ingress_registry,
+        visibility_runtime=ops_app.state.services.visibility_runtime,
         poller=FakeHostPoller(
             observations=[
                 LinuxPollObservation(

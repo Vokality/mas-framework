@@ -14,6 +14,7 @@ from mas_ops_api.app import create_app
 from mas_ops_api.bootstrap import (
     AdminBootstrapConfig,
     ClientBootstrapConfig,
+    build_dogfood_initial_policy,
     ensure_admin_user,
     ensure_client_enrollment,
 )
@@ -94,6 +95,10 @@ def main() -> None:
             client_id=args.client_id or settings.dogfood_client_id,
             fabric_id=args.fabric_id or settings.dogfood_fabric_id,
             display_name=args.display_name or settings.dogfood_client_display_name,
+            initial_policy=build_dogfood_initial_policy(
+                hostname=settings.dogfood_hostname
+            ),
+            materialize_initial_alert_policy=True,
         )
         asyncio.run(ensure_client_enrollment(settings, config=config))
         return

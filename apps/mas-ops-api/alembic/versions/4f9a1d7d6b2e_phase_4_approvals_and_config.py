@@ -32,24 +32,20 @@ def upgrade() -> None:
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
     )
-    op.add_column(
-        "config_apply_runs",
-        sa.Column("approval_id", sa.String(length=36), nullable=True),
-    )
-    op.create_foreign_key(
-        "fk_config_apply_runs_approval_id",
-        "config_apply_runs",
-        "approval_requests",
-        ["approval_id"],
-        ["approval_id"],
-        ondelete="SET NULL",
-    )
-    op.create_index(
-        op.f("ix_config_apply_runs_approval_id"),
-        "config_apply_runs",
-        ["approval_id"],
-        unique=False,
-    )
+    with op.batch_alter_table("config_apply_runs") as batch_op:
+        batch_op.add_column(sa.Column("approval_id", sa.String(length=36), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_config_apply_runs_approval_id",
+            "approval_requests",
+            ["approval_id"],
+            ["approval_id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_index(
+            batch_op.f("ix_config_apply_runs_approval_id"),
+            ["approval_id"],
+            unique=False,
+        )
     op.create_table(
         "config_apply_steps",
         sa.Column("config_apply_step_id", sa.Integer(), nullable=False),
@@ -183,15 +179,12 @@ def downgrade() -> None:
         op.f("ix_config_apply_steps_client_id"), table_name="config_apply_steps"
     )
     op.drop_table("config_apply_steps")
-    op.drop_index(
-        op.f("ix_config_apply_runs_approval_id"),
-        table_name="config_apply_runs",
-    )
-    op.drop_constraint(
-        "fk_config_apply_runs_approval_id",
-        "config_apply_runs",
-        type_="foreignkey",
-    )
-    op.drop_column("config_apply_runs", "approval_id")
+    with op.batch_alter_table("config_apply_runs") as batch_op:
+        batch_op.drop_index(batch_op.f("ix_config_apply_runs_approval_id"))
+        batch_op.drop_constraint(
+            "fk_config_apply_runs_approval_id",
+            type_="foreignkey",
+        )
+        batch_op.drop_column("approval_id")
     op.drop_column("config_validation_runs", "requested_at")
     op.drop_column("config_validation_runs", "requested_by_user_id")
