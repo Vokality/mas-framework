@@ -30,33 +30,16 @@ exclude = [
 
 [tool.ty.rules]
 
-[tool.ty.environment]
-root = [
-    "./packages/mas-proto/src/",
-    "./packages/mas-core/src/",
-    "./packages/mas-gateway/src/",
-    "./packages/mas-agent/src/",
-    "./packages/mas-msp-contracts/src/",
-    "./packages/mas-msp-core/src/",
-    "./packages/mas-msp-ai/src/",
-    "./packages/mas-msp-network/src/",
-    "./packages/mas-msp-hosts/src/",
-    "./packages/mas-server/src/",
-    "./apps/mas-ops-api/src/",
-    "./apps/mas-runtime/src/",
-]
-
 [dependency-groups]
 dev = [
-    "pytest>=8.3.3",
-    "pytest-asyncio>=0.24.0",
-    "pytest-cov>=4.1.0",
-    "ruff>=0.14.4",
-    "pytest-timeout>=2.3.1",
-    "openai>=2.16.0",
-    "pydantic-ai>=1.10.0",
-    "types-redis>=4.6.0.20241004",
-    "grpcio-tools>=1.76.0",
-    "types-protobuf>=6.32.1.20251210",
-    "ty>=0.0.8",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.20",
+    "pytest-timeout>=2.4.0",
+    "openai>=2.44.0",
+    "pydantic-ai>=2.0.0",
+    "grpcio-tools>=1.81.1",
+    "types-protobuf>=7.34.1.20260518",
+    "ty>=0.0.54",
 ]

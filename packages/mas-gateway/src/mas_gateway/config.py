@@ -46,9 +46,6 @@ class RedisSettings(BaseSettings):
         default="redis://localhost:6379",
         description="Redis connection URL",
     )
-    decode_responses: bool = Field(
-        default=True, description="Decode Redis responses to strings"
-    )
     socket_timeout: Optional[float] = Field(
         default=None, description="Socket timeout in seconds"
     )

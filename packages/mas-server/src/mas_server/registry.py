@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any
 
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 from .types import AgentDefinition
 
 
@@ -14,7 +14,7 @@ class RegistryService:
     """Manage allowlisted agents and discovery records."""
 
     def __init__(
-        self, *, redis: AsyncRedisProtocol, agents: dict[str, AgentDefinition]
+        self, *, redis: Redis[str], agents: dict[str, AgentDefinition]
     ) -> None:
         """Initialize registry service."""
         self._redis = redis

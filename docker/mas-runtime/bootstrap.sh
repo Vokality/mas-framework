@@ -62,7 +62,6 @@ tls_server_key_path: certs/server.key
 gateway:
   redis:
     url: ${redis_url}
-    decode_responses: true
   telemetry:
     enabled: false
 agents: []

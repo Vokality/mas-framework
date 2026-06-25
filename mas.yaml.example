@@ -9,7 +9,6 @@ tls_server_key_path: certs/server.key
 gateway:
   redis:
     url: redis://localhost:6379
-    decode_responses: true
     socket_timeout: null
   rate_limit:
     per_minute: 100

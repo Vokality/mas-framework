@@ -137,13 +137,13 @@ async def redis():
     Provides a Redis connection that is cleaned up after each test.
     Flushes the database before and after each test to ensure isolation.
     """
-    r = Redis.from_url("redis://localhost:6379", decode_responses=True)
+    r: Redis[str] = Redis.from_url("redis://localhost:6379", decode_responses=True)
     # Ensure a clean DB at the start of each test.
     await r.flushdb()
     yield r
     # Cleanup
     await r.flushdb()
-    await r.aclose()  # type: ignore[unresolved-attribute]
+    await r.aclose()
 
 
 @pytest.fixture(autouse=True)
@@ -160,53 +160,53 @@ async def cleanup_agent_keys():
     This runs before the redis fixture cleanup, so it's safe for tests
     that use the redis fixture.
     """
-    redis = Redis.from_url("redis://localhost:6379", decode_responses=True)
+    redis: Redis[str] = Redis.from_url("redis://localhost:6379", decode_responses=True)
 
     # Collect all keys/streams to delete
     keys_to_delete = []
 
     # Agent registration and heartbeat keys
-    async for key in redis.scan_iter("agent:*"):
+    async for key in redis.scan_iter(match="agent:*"):
         keys_to_delete.append(key)
 
     # Agent state keys
-    async for key in redis.scan_iter("agent.state:*"):
+    async for key in redis.scan_iter(match="agent.state:*"):
         keys_to_delete.append(key)
 
     # Agent delivery streams (including instance-specific streams)
-    async for key in redis.scan_iter("agent.stream:*"):
+    async for key in redis.scan_iter(match="agent.stream:*"):
         keys_to_delete.append(key)
 
     # Gateway streams (ingress, dlq, etc.)
-    async for key in redis.scan_iter("mas.gateway.*"):
+    async for key in redis.scan_iter(match="mas.gateway.*"):
         keys_to_delete.append(key)
 
     # DLQ streams
-    async for key in redis.scan_iter("dlq:*"):
+    async for key in redis.scan_iter(match="dlq:*"):
         keys_to_delete.append(key)
 
     # Rate limit keys
-    async for key in redis.scan_iter("rate_limit:*"):
+    async for key in redis.scan_iter(match="rate_limit:*"):
         keys_to_delete.append(key)
-    async for key in redis.scan_iter("ratelimit:*"):
+    async for key in redis.scan_iter(match="ratelimit:*"):
         keys_to_delete.append(key)
 
     # ACL keys
-    async for key in redis.scan_iter("acl:*"):
+    async for key in redis.scan_iter(match="acl:*"):
         keys_to_delete.append(key)
 
     # Audit keys
-    async for key in redis.scan_iter("audit:*"):
+    async for key in redis.scan_iter(match="audit:*"):
         keys_to_delete.append(key)
 
     # Circuit breaker keys
-    async for key in redis.scan_iter("circuit:*"):
+    async for key in redis.scan_iter(match="circuit:*"):
         keys_to_delete.append(key)
 
     if keys_to_delete:
         await redis.delete(*keys_to_delete)
 
-    await redis.aclose()  # type: ignore[unresolved-attribute]
+    await redis.aclose()
     yield
 
 
@@ -337,7 +337,6 @@ async def mas_server_factory(
     async def _start(agents: dict[str, AgentDefinition] | None = None) -> MASServer:
         agent_defs = agents or {}
         settings = MASServerSettings(
-            redis_url="redis://localhost:6379",
             listen_addr="127.0.0.1:0",
             tls=TlsConfig(
                 server_cert_path=test_tls.server_cert,

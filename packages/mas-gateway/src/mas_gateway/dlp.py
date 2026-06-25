@@ -101,7 +101,12 @@ class DLPModule:
     - ENCRYPT: Encrypt sensitive fields
 
     Usage:
-        dlp = DLPModule()
+        dlp = DLPModule(
+            custom_policies={},
+            custom_rules=[],
+            merge_strategy="append",
+            disable_defaults=[],
+        )
         result = await dlp.scan(message.data)
         if not result.clean and result.action == ActionPolicy.BLOCK:
             # Reject message
@@ -202,10 +207,10 @@ class DLPModule:
 
     def __init__(
         self,
-        custom_policies: dict[str | ViolationType, ActionPolicy] | None = None,
-        custom_rules: list[DlpRule] | None = None,
-        merge_strategy: Literal["append", "replace"] = "append",
-        disable_defaults: list[str | ViolationType] | None = None,
+        custom_policies: dict[str | ViolationType, ActionPolicy],
+        custom_rules: list[DlpRule],
+        merge_strategy: Literal["append", "replace"],
+        disable_defaults: list[str | ViolationType],
     ):
         """
         Initialize DLP module.
@@ -219,9 +224,7 @@ class DLPModule:
         if merge_strategy not in {"append", "replace"}:
             raise ValueError("merge_strategy must be 'append' or 'replace'")
 
-        disabled = {
-            self._normalize_violation_type(value) for value in (disable_defaults or [])
-        }
+        disabled = {self._normalize_violation_type(value) for value in disable_defaults}
 
         if merge_strategy == "append":
             self.patterns = {
@@ -244,7 +247,7 @@ class DLPModule:
             self.policies = {}
             self.severity_levels = {}
 
-        for rule in custom_rules or []:
+        for rule in custom_rules:
             if not rule.enabled:
                 continue
             violation_type = self._normalize_violation_type(rule.violation_type)
@@ -253,10 +256,9 @@ class DLPModule:
             self.policies[violation_type] = rule.action
             self.severity_levels[violation_type] = rule.severity
 
-        if custom_policies:
-            for violation_type, policy in custom_policies.items():
-                normalized = self._normalize_violation_type(violation_type)
-                self.policies[normalized] = policy
+        for violation_type, policy in custom_policies.items():
+            normalized = self._normalize_violation_type(violation_type)
+            self.policies[normalized] = policy
 
     async def scan(self, payload: dict[str, Any]) -> ScanResult:
         """

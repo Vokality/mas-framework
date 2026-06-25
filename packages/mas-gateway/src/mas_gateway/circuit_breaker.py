@@ -1,5 +1,7 @@
 """Circuit Breaker Module - Detect and handle target agent failures."""
 
+from __future__ import annotations
+
 import logging
 import time
 from enum import Enum
@@ -7,7 +9,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 from pydantic import BaseModel
 
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,7 @@ class CircuitBreakerModule:
     - HALF_OPEN: Testing recovery, limited messages pass through
 
     Usage:
-        breaker = CircuitBreakerModule(redis)
+        breaker = CircuitBreakerModule(redis, config)
         status = await breaker.check_circuit(target_id)
         if status.allowed:
             # Send message
@@ -69,8 +71,8 @@ class CircuitBreakerModule:
 
     def __init__(
         self,
-        redis: AsyncRedisProtocol,
-        config: Optional[CircuitBreakerConfig] = None,
+        redis: Redis[str],
+        config: CircuitBreakerConfig,
     ):
         """
         Initialize circuit breaker module.
@@ -79,8 +81,8 @@ class CircuitBreakerModule:
             redis: Redis connection
             config: Circuit breaker configuration
         """
-        self.redis: AsyncRedisProtocol = redis
-        self.config = config or CircuitBreakerConfig()
+        self.redis: Redis[str] = redis
+        self.config = config
 
     def _parse_circuit_data(
         self, circuit_data: Mapping[str, str]

@@ -13,13 +13,29 @@ from mas_gateway.dlp import (
 pytestmark = pytest.mark.asyncio
 
 
+def make_dlp(
+    *,
+    custom_policies: dict[str | ViolationType, ActionPolicy] | None = None,
+    custom_rules: list[DlpRule] | None = None,
+    merge_strategy: str = "append",
+    disable_defaults: list[str | ViolationType] | None = None,
+) -> DLPModule:
+    """Create a DLP module with explicit default test settings."""
+    return DLPModule(
+        custom_policies=custom_policies or {},
+        custom_rules=custom_rules or [],
+        merge_strategy=merge_strategy,
+        disable_defaults=disable_defaults or [],
+    )
+
+
 class TestDLPModule:
     """Test suite for DLP scanner."""
 
     @pytest.fixture
     def dlp(self) -> DLPModule:
         """Create DLP module instance."""
-        return DLPModule()
+        return make_dlp()
 
     async def test_clean_payload(self, dlp: DLPModule) -> None:
         """Test scanning clean payload with no violations."""
@@ -250,7 +266,7 @@ class TestDLPModule:
     async def test_redact_email(self, dlp: DLPModule) -> None:
         """Test email redaction."""
         # Configure to redact emails
-        dlp_custom = DLPModule(
+        dlp_custom = make_dlp(
             custom_policies={ViolationType.EMAIL: ActionPolicy.REDACT}
         )
         payload = {"contact": "user@example.com"}
@@ -263,7 +279,7 @@ class TestDLPModule:
 
     async def test_redact_phone(self, dlp: DLPModule) -> None:
         """Test phone number redaction."""
-        dlp_custom = DLPModule(
+        dlp_custom = make_dlp(
             custom_policies={ViolationType.PHONE: ActionPolicy.REDACT}
         )
         payload = {"phone": "555-123-4567"}
@@ -276,7 +292,7 @@ class TestDLPModule:
 
     async def test_redact_credit_card(self, dlp: DLPModule) -> None:
         """Test credit card redaction."""
-        dlp_custom = DLPModule(
+        dlp_custom = make_dlp(
             custom_policies={ViolationType.CREDIT_CARD: ActionPolicy.REDACT}
         )
         payload = {"card": "4532-0151-2345-6789"}
@@ -306,7 +322,9 @@ class TestDLPModule:
     async def test_custom_policy_override(self, dlp: DLPModule) -> None:
         """Test custom policy overrides."""
         # Override SSN to BLOCK instead of REDACT
-        dlp_custom = DLPModule(custom_policies={ViolationType.SSN: ActionPolicy.BLOCK})
+        dlp_custom = make_dlp(
+            custom_policies={ViolationType.SSN: ActionPolicy.BLOCK}
+        )
         payload = {"ssn": "123-45-6789"}
 
         result = await dlp_custom.scan(payload)
@@ -327,7 +345,7 @@ class TestDLPModule:
                 }
             )
         ]
-        dlp_custom = DLPModule(custom_rules=rules, merge_strategy="append")
+        dlp_custom = make_dlp(custom_rules=rules, merge_strategy="append")
         payload = {"account": "ACCT-ABCDEF1234"}
 
         result = await dlp_custom.scan(payload)

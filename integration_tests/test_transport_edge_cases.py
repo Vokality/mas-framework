@@ -105,7 +105,6 @@ async def test_reclaim_pending_after_instance_disconnect(test_tls) -> None:
         "worker": AgentDefinition(agent_id="worker", capabilities=[], metadata={}),
     }
     settings = MASServerSettings(
-        redis_url="redis://localhost:6379",
         listen_addr="127.0.0.1:0",
         tls=TlsConfig(
             server_cert_path=test_tls.server_cert,
@@ -176,7 +175,6 @@ async def test_transport_rejects_missing_spiffe_san(test_tls, tmp_path) -> None:
         "worker": AgentDefinition(agent_id="worker", capabilities=[], metadata={})
     }
     settings = MASServerSettings(
-        redis_url="redis://localhost:6379",
         listen_addr="127.0.0.1:0",
         tls=TlsConfig(
             server_cert_path=test_tls.server_cert,

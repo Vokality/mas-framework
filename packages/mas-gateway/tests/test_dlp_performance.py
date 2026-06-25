@@ -14,7 +14,12 @@ class TestDlpPerformance:
 
     async def test_scan_latency_under_budget(self) -> None:
         """Ensure DLP scan stays within latency budget."""
-        dlp = DLPModule()
+        dlp = DLPModule(
+            custom_policies={},
+            custom_rules=[],
+            merge_strategy="append",
+            disable_defaults=[],
+        )
         payload_text = (
             "User profile: John Doe, email user@example.com. "
             "Notes: SSN 123-45-6789. " + ("x" * 2000)

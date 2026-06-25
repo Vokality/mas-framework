@@ -5,7 +5,7 @@ import warnings
 
 from mas_proto.runtime.v1 import runtime_pb2 as mas__proto_dot_runtime_dot_v1_dot_runtime__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.81.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class RuntimeServiceStub(object):
+class RuntimeServiceStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -76,7 +76,7 @@ class RuntimeServiceStub(object):
                 _registered_method=True)
 
 
-class RuntimeServiceServicer(object):
+class RuntimeServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
     def Transport(self, request_iterator, context):
@@ -178,7 +178,7 @@ def add_RuntimeServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class RuntimeService(object):
+class RuntimeService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

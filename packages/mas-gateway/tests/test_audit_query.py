@@ -17,7 +17,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture
 async def audit_module(redis):
     """Create audit module instance."""
-    return AuditModule(redis)
+    return AuditModule(redis, file_sink=None)
 
 
 class TestAuditQueryByDecision:

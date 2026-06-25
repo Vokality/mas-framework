@@ -26,19 +26,16 @@ class TestRedisSettings:
         settings = RedisSettings()
 
         assert settings.url == "redis://localhost:6379"
-        assert settings.decode_responses is True
         assert settings.socket_timeout is None
 
     def test_custom_settings(self):
         """Test custom Redis settings."""
         settings = RedisSettings(
             url="redis://prod:6379",
-            decode_responses=False,
             socket_timeout=30.0,
         )
 
         assert settings.url == "redis://prod:6379"
-        assert settings.decode_responses is False
         assert settings.socket_timeout == 30.0
 
 

@@ -31,7 +31,6 @@ class TlsConfig:
 class MASServerSettings:
     """Configuration for MAS server runtime."""
 
-    redis_url: str
     listen_addr: str
     tls: TlsConfig
     agents: dict[str, AgentDefinition]

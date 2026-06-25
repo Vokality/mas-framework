@@ -12,11 +12,11 @@ from mas_proto.runtime.v1 import runtime_pb2_grpc as mas_pb2_grpc
 from mas_gateway.audit import AuditFileSink, AuditModule
 from mas_gateway.authorization import AuthorizationModule
 from mas_gateway.circuit_breaker import CircuitBreakerConfig, CircuitBreakerModule
-from mas_gateway.config import GatewaySettings, RedisSettings
+from mas_gateway.config import GatewaySettings
 from mas_gateway.dlp import DLPModule
 from mas_gateway.rate_limit import RateLimitModule
 from mas_core.redis_client import create_redis_client
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 from mas_core.telemetry import (
     SpanKind,
     TelemetryConfig,
@@ -43,15 +43,13 @@ class MASServer:
         self,
         *,
         settings: MASServerSettings,
-        gateway: GatewaySettings | None = None,
+        gateway: GatewaySettings,
     ) -> None:
         """Initialize server state and gateway settings."""
         self._settings = settings
-        self._gateway_settings = gateway or GatewaySettings(
-            redis=RedisSettings(url=settings.redis_url)
-        )
+        self._gateway_settings = gateway
 
-        self._redis: AsyncRedisProtocol | None = None
+        self._redis: Redis[str] | None = None
         self._grpc_server: grpc_aio.Server | None = None
         self._bound_addr: str | None = None
         self._running = False
@@ -91,7 +89,6 @@ class MASServer:
         """Start runtime internals after telemetry setup."""
         redis_conn = create_redis_client(
             url=self._gateway_settings.redis.url,
-            decode_responses=self._gateway_settings.redis.decode_responses,
             socket_timeout=self._gateway_settings.redis.socket_timeout,
         )
         self._redis = redis_conn

@@ -2,28 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from redis.asyncio import Redis
-
-from .redis_types import AsyncRedisProtocol
 
 
 def create_redis_client(
     *,
     url: str,
-    decode_responses: bool = True,
     **kwargs: Any,
-) -> AsyncRedisProtocol:
+) -> Redis[str]:
     """
-    Build a Redis client that satisfies AsyncRedisProtocol.
+    Build a Redis client for string-decoded MAS data.
 
     Additional keyword arguments are passed directly to Redis.from_url so callers
     can tune connection settings (timeouts, TLS, etc.).
     """
-    client = Redis.from_url(
+    return Redis.from_url(
         url,
-        decode_responses=decode_responses,
+        decode_responses=True,
         **kwargs,
     )
-    return cast(AsyncRedisProtocol, client)

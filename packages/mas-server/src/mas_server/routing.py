@@ -7,7 +7,7 @@ import logging
 import time
 
 from mas_core.protocol import EnvelopeMessage
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 from mas_core.telemetry import SpanKind, get_telemetry
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class MessageRouter:
     """Route envelopes into Redis streams and write DLQ entries."""
 
-    def __init__(self, *, redis: AsyncRedisProtocol, dlq_enabled: bool) -> None:
+    def __init__(self, *, redis: Redis[str], dlq_enabled: bool) -> None:
         """Initialize router with Redis connection."""
         self._redis = redis
         self._dlq_enabled = dlq_enabled

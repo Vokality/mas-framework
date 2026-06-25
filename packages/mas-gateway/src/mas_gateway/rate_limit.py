@@ -1,12 +1,14 @@
 """Rate Limiting Module for Gateway Service."""
 
+from __future__ import annotations
+
 import logging
 import time
 from typing import Optional
 
 from pydantic import BaseModel
 
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +95,9 @@ class RateLimitModule:
 
     def __init__(
         self,
-        redis: AsyncRedisProtocol,
-        default_per_minute: int = 100,
-        default_per_hour: int = 1000,
+        redis: Redis[str],
+        default_per_minute: int,
+        default_per_hour: int,
     ):
         """
         Initialize rate limiting module.
@@ -105,7 +107,7 @@ class RateLimitModule:
             default_per_minute: Default messages per minute
             default_per_hour: Default messages per hour
         """
-        self.redis: AsyncRedisProtocol = redis
+        self.redis: Redis[str] = redis
         self.default_per_minute = default_per_minute
         self.default_per_hour = default_per_hour
 

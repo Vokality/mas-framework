@@ -26,7 +26,6 @@ async def _start_server(
     gateway: GatewaySettings,
 ) -> MASServer:
     settings = MASServerSettings(
-        redis_url=gateway.redis.url,
         listen_addr="127.0.0.1:0",
         tls=TlsConfig(
             server_cert_path=test_tls.server_cert,
@@ -148,7 +147,7 @@ async def test_dlp_alert_logged(test_tls, redis) -> None:
             {"text": "Contact me at user@example.com"},
         )
 
-        audit = AuditModule(redis)
+        audit = AuditModule(redis, file_sink=None)
         deadline = time.monotonic() + 2.0
         entries = []
         while time.monotonic() < deadline:

@@ -64,7 +64,7 @@ class Nack(_message.Message):
     delivery_id: str
     reason: str
     retryable: bool
-    def __init__(self, delivery_id: _Optional[str] = ..., reason: _Optional[str] = ..., retryable: bool = ...) -> None: ...
+    def __init__(self, delivery_id: _Optional[str] = ..., reason: _Optional[str] = ..., retryable: _Optional[bool] = ...) -> None: ...
 
 class Heartbeat(_message.Message):
     __slots__ = ()

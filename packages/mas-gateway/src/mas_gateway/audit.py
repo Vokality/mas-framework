@@ -1,5 +1,7 @@
 """Audit Module for Gateway Service."""
 
+from __future__ import annotations
+
 import asyncio
 import csv
 import hashlib
@@ -12,7 +14,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 from mas_core.telemetry import SpanKind, get_telemetry
 
 logger = logging.getLogger(__name__)
@@ -109,9 +111,7 @@ class AuditModule:
         audit:last_hash → Last hash for chain integrity
     """
 
-    def __init__(
-        self, redis: AsyncRedisProtocol, *, file_sink: AuditFileSink | None = None
-    ) -> None:
+    def __init__(self, redis: Redis[str], *, file_sink: AuditFileSink | None) -> None:
         """
         Initialize audit module.
 

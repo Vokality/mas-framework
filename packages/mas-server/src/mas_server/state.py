@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 
 
 class StateStore:
     """Persist and load per-agent state."""
 
-    def __init__(self, redis: AsyncRedisProtocol) -> None:
+    def __init__(self, redis: Redis[str]) -> None:
         """Initialize state store."""
         self._redis = redis
 

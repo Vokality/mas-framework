@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Optional
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +39,15 @@ class AuthorizationModule:
         agent:{agent_id}:roles → Set of role names
     """
 
-    def __init__(self, redis: AsyncRedisProtocol, enable_rbac: bool = False):
+    def __init__(self, redis: Redis[str], enable_rbac: bool):
         """
         Initialize authorization module.
 
         Args:
             redis: Redis connection
-            enable_rbac: Enable RBAC authorization (default: False, ACL only)
+            enable_rbac: Enable RBAC authorization
         """
-        self.redis: AsyncRedisProtocol = redis
+        self.redis: Redis[str] = redis
         self.enable_rbac = enable_rbac
 
     async def authorize(

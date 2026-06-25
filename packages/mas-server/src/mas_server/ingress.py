@@ -10,7 +10,7 @@ from math import ceil
 from typing import Any
 
 from mas_core.protocol import EnvelopeMessage, MessageMeta
-from mas_core.redis_types import AsyncRedisProtocol
+from redis.asyncio import Redis
 from mas_core.telemetry import SpanKind, get_telemetry
 from .errors import FailedPreconditionError, InvalidArgumentError
 from .policy import PolicyPipeline
@@ -27,7 +27,7 @@ class IngressService:
         *,
         sessions: SessionManager,
         policy: PolicyPipeline,
-        redis: AsyncRedisProtocol,
+        redis: Redis[str],
     ) -> None:
         """Initialize ingress service."""
         self._sessions = sessions
