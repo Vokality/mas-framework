@@ -360,40 +360,45 @@ class TelemetryRuntime:
 
 
 _runtime_lock = Lock()
-_runtime: TelemetryRuntime | None = None
+
+
+@dataclass(slots=True)
+class _TelemetryRuntimeRef:
+    value: TelemetryRuntime | None = None
+
+
+_runtime = _TelemetryRuntimeRef()
 
 
 def get_telemetry() -> TelemetryRuntime:
     """Return process telemetry runtime (disabled by default)."""
-    global _runtime
     with _runtime_lock:
-        if _runtime is None:
-            _runtime = TelemetryRuntime(
+        if _runtime.value is None:
+            _runtime.value = TelemetryRuntime(
                 enabled=False,
                 tracer=None,
                 tracer_provider=None,
                 meter_provider=None,
             )
-        return _runtime
+        return _runtime.value
 
 
 def configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
     """Configure global telemetry runtime once per process."""
-    global _runtime
-
     with _runtime_lock:
-        if _runtime is not None and _runtime.enabled and not _runtime.is_shutdown:
-            return _runtime
+        runtime = _runtime.value
+        if runtime is not None and runtime.enabled and not runtime.is_shutdown:
+            return runtime
 
         if not settings.enabled:
-            if _runtime is None:
-                _runtime = TelemetryRuntime(
+            if _runtime.value is None:
+                _runtime.value = TelemetryRuntime(
                     enabled=False,
                     tracer=None,
                     tracer_provider=None,
                     meter_provider=None,
                 )
-            return _runtime
+            return _runtime.value
 
         resource = Resource.create(
             {
@@ -431,13 +436,13 @@ def configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
         metrics.set_meter_provider(meter_provider)
         tracer = trace.get_tracer("mas.telemetry")
 
-        _runtime = TelemetryRuntime(
+        _runtime.value = TelemetryRuntime(
             enabled=True,
             tracer=tracer,
             tracer_provider=tracer_provider,
             meter_provider=meter_provider,
         )
-        _runtime.install_log_correlation()
+        _runtime.value.install_log_correlation()
 
         logger.info(
             "OpenTelemetry enabled",
@@ -449,4 +454,4 @@ def configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
                 "export_metrics": settings.export_metrics,
             },
         )
-        return _runtime
+        return _runtime.value

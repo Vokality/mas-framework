@@ -99,9 +99,7 @@ class IngressService:
             payload = self._parse_payload_json(data_json)
             correlation_id = uuid.uuid4().hex
 
-            ttl_seconds = (
-                max(1, int(ceil(timeout_ms / 1000.0))) if timeout_ms > 0 else 60
-            )
+            ttl_seconds = max(1, ceil(timeout_ms / 1000.0)) if timeout_ms > 0 else 60
             expires_at = time.time() + float(ttl_seconds)
             await self._redis.setex(
                 f"mas.pending_request:{correlation_id}",

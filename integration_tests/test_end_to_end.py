@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import grpc
+import grpc.aio as grpc_aio
 import pytest
 from mas_agent import Agent
 from mas_server import AgentDefinition
@@ -151,7 +152,7 @@ async def test_correlation_id_expiry_on_late_reply(
             await requester.request("responder", "req", {"x": 1}, timeout=0.1)
 
         await responder.reply_done.wait()
-        assert isinstance(responder.reply_error, grpc.aio.AioRpcError)
+        assert isinstance(responder.reply_error, grpc_aio.AioRpcError)
         assert responder.reply_error.code() in {
             grpc.StatusCode.INVALID_ARGUMENT,
             grpc.StatusCode.FAILED_PRECONDITION,

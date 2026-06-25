@@ -4,7 +4,6 @@ import asyncio
 
 import pytest
 from mas_agent import Agent
-from mas_core import JsonObject
 from mas_server import AgentDefinition
 from pydantic import BaseModel
 
@@ -15,7 +14,7 @@ class Ping(BaseModel):
     value: int
 
 
-class TypedResponder(Agent[JsonObject]):
+class TypedResponder(Agent):
     @Agent.on("ping", model=Ping)
     async def handle_ping(self, message, payload: Ping) -> None:
         await self.send_reply_envelope(message, "pong", {"value": payload.value + 1})

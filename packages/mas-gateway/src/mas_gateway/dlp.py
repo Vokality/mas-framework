@@ -5,16 +5,17 @@ import json
 import logging
 import re
 import time
-from enum import Enum
-from typing import Literal
+from collections.abc import Mapping
+from enum import StrEnum
+from typing import ClassVar, Literal
 
-from mas_core import JsonObject, JsonValue
+from mas_core import JsonObject, JsonValue, validate_json_object
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
 
-class ViolationType(str, Enum):
+class ViolationType(StrEnum):
     """Types of DLP violations."""
 
     # PII - Personally Identifiable Information
@@ -40,7 +41,7 @@ class ViolationType(str, Enum):
     PASSWORD = "password"
 
 
-class ActionPolicy(str, Enum):
+class ActionPolicy(StrEnum):
     """DLP action policies."""
 
     BLOCK = "block"  # Reject message, alert security
@@ -114,7 +115,7 @@ class DLPModule:
     """
 
     # Pattern definitions
-    DEFAULT_PATTERNS: dict[str, list[re.Pattern[str]]] = {
+    DEFAULT_PATTERNS: ClassVar[dict[str, list[re.Pattern[str]]]] = {
         # PII Patterns
         ViolationType.SSN.value: [re.compile(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")],
         ViolationType.EMAIL.value: [
@@ -167,7 +168,7 @@ class DLPModule:
     }
 
     # Default action policies by violation type
-    DEFAULT_POLICIES: dict[str, ActionPolicy] = {
+    DEFAULT_POLICIES: ClassVar[dict[str, ActionPolicy]] = {
         # PII - Redact by default
         ViolationType.SSN.value: ActionPolicy.REDACT,
         ViolationType.EMAIL.value: ActionPolicy.ALERT,
@@ -189,7 +190,7 @@ class DLPModule:
     }
 
     # Severity levels by violation type
-    SEVERITY_LEVELS: dict[str, str] = {
+    SEVERITY_LEVELS: ClassVar[dict[str, str]] = {
         ViolationType.SSN.value: "high",
         ViolationType.EMAIL.value: "low",
         ViolationType.PHONE.value: "low",
@@ -261,7 +262,7 @@ class DLPModule:
             normalized = self._normalize_violation_type(violation_type)
             self.policies[normalized] = policy
 
-    async def scan(self, payload: JsonObject) -> ScanResult:
+    async def scan(self, payload: Mapping[str, object]) -> ScanResult:
         """
         Scan payload for sensitive data violations.
 
@@ -271,11 +272,13 @@ class DLPModule:
         Returns:
             ScanResult with violations and action policy
         """
+        payload_json = validate_json_object(dict(payload))
+
         # Track scan duration
         scan_start = time.time()
 
         # Convert payload to text for scanning
-        payload_text = json.dumps(payload, default=str)
+        payload_text = json.dumps(payload_json, default=str)
         payload_hash = hashlib.sha256(payload_text.encode()).hexdigest()
 
         # Detect violations
@@ -297,7 +300,7 @@ class DLPModule:
         # Apply redaction if needed
         redacted_payload = None
         if action == ActionPolicy.REDACT:
-            redacted_payload = await self._apply_redaction(payload, violations)
+            redacted_payload = await self._apply_redaction(payload_json, violations)
 
         logger.info(
             "DLP scan completed",

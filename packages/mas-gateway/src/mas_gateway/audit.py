@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import hashlib
 import io
@@ -73,10 +74,8 @@ class AuditFileSink:
 
     def _rotate_files(self) -> None:
         if self._backup_count <= 0:
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 self._path.unlink()
-            except FileNotFoundError:
-                pass
             return
 
         for index in range(self._backup_count - 1, 0, -1):
@@ -700,10 +699,8 @@ class AuditModule:
             except (json.JSONDecodeError, TypeError):
                 data["violations"] = []
         if "details" in data:
-            try:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
                 data["details"] = validate_json_value(json.loads(str(data["details"])))
-            except (json.JSONDecodeError, TypeError):
-                pass
         data["stream_id"] = stream_id
         return data
 

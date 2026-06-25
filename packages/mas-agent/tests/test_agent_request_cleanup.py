@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 from mas_agent import Agent
-from mas_core.protocol import EnvelopeMessage, JsonObject, MessageMeta
+from mas_core import EnvelopeMessage, MessageMeta
 from mas_proto.runtime.v1 import (
     runtime_pb2 as mas_pb2,
 )
@@ -36,7 +36,7 @@ class _RequestStub(mas_pb2_grpc.RuntimeServiceStub):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_request_timeout_cleans_pending_correlation() -> None:
-    agent: Agent[JsonObject] = Agent("sender")
+    agent = Agent("sender")
     correlation_id = "corr-timeout"
     agent._stub = _RequestStub(correlation_id)
 
@@ -49,7 +49,7 @@ async def test_request_timeout_cleans_pending_correlation() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_request_early_reply_cleans_pending_correlation() -> None:
-    agent: Agent[JsonObject] = Agent("sender")
+    agent = Agent("sender")
     correlation_id = "corr-early"
     agent._stub = _RequestStub(correlation_id)
     agent._early_replies[correlation_id] = EnvelopeMessage(

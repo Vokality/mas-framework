@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
-from enum import Enum
+from enum import StrEnum
 from typing import TypedDict
 
 from mas_core import JsonObject
@@ -25,7 +25,7 @@ class DLQMessage(TypedDict):
     timestamp: float
 
 
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     """Circuit breaker states."""
 
     CLOSED = "closed"  # Normal operation, requests pass through
@@ -119,9 +119,12 @@ class CircuitBreakerModule:
         current_time: float,
     ) -> tuple[CircuitState, int, bool]:
         """Transition OPEN to HALF_OPEN when timeout expires."""
-        if state == CircuitState.OPEN and opened_at:
-            if (current_time - opened_at) >= self.config.timeout_seconds:
-                return CircuitState.HALF_OPEN, 0, True
+        if (
+            state == CircuitState.OPEN
+            and opened_at
+            and (current_time - opened_at) >= self.config.timeout_seconds
+        ):
+            return CircuitState.HALF_OPEN, 0, True
         return state, success_count, False
 
     def _next_failure_count(
@@ -227,7 +230,9 @@ class CircuitBreakerModule:
                 failure_count = 0
                 success_count = 0
                 logger.info(
-                    f"Circuit breaker CLOSED for {target_id} after {self.config.success_threshold} successes",
+                    "Circuit breaker CLOSED for %s after %s successes",
+                    target_id,
+                    self.config.success_threshold,
                     extra={"target_id": target_id, "state": state},
                 )
 

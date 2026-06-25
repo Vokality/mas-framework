@@ -405,7 +405,7 @@ class DeliveryService:
                 telemetry.record_redis_error(
                     component="delivery", operation="xinfo_groups"
                 )
-                raise create_error
+                raise create_error from None
 
             for group_info in groups:
                 raw_name = group_info.get("name")

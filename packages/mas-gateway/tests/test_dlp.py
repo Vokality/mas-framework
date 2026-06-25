@@ -1,5 +1,7 @@
 """Tests for DLP (Data Loss Prevention) Module."""
 
+from typing import Literal
+
 import pytest
 from mas_gateway.dlp import (
     ActionPolicy,
@@ -16,7 +18,7 @@ def make_dlp(
     *,
     custom_policies: dict[str | ViolationType, ActionPolicy] | None = None,
     custom_rules: list[DlpRule] | None = None,
-    merge_strategy: str = "append",
+    merge_strategy: Literal["append", "replace"] = "append",
     disable_defaults: list[str | ViolationType] | None = None,
 ) -> DLPModule:
     """Create a DLP module with explicit default test settings."""
@@ -321,9 +323,7 @@ class TestDLPModule:
     async def test_custom_policy_override(self, dlp: DLPModule) -> None:
         """Test custom policy overrides."""
         # Override SSN to BLOCK instead of REDACT
-        dlp_custom = make_dlp(
-            custom_policies={ViolationType.SSN: ActionPolicy.BLOCK}
-        )
+        dlp_custom = make_dlp(custom_policies={ViolationType.SSN: ActionPolicy.BLOCK})
         payload = {"ssn": "123-45-6789"}
 
         result = await dlp_custom.scan(payload)

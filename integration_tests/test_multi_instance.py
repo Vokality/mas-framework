@@ -162,7 +162,9 @@ class TestMultiInstance:
         try:
             await agent1.update_state({"count": 42})
             await agent2.refresh_state()
-            assert agent2.state.count == 42
+            state = agent2.state
+            assert isinstance(state, CounterState)
+            assert state.count == 42
         finally:
             await agent1.stop()
             await agent2.stop()

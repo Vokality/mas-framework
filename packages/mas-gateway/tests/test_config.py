@@ -182,9 +182,11 @@ class TestGatewaySettings:
 
     def test_nested_dict_initialization(self):
         """Test initialization with nested dictionaries."""
-        settings = GatewaySettings(
-            redis={"url": "redis://dict:6379"},
-            rate_limit={"per_minute": 150},
+        settings = GatewaySettings.model_validate(
+            {
+                "redis": {"url": "redis://dict:6379"},
+                "rate_limit": {"per_minute": 150},
+            }
         )
 
         assert settings.redis.url == "redis://dict:6379"
@@ -197,7 +199,7 @@ class TestGatewaySettings:
 
     def test_unknown_telemetry_key_rejected(self):
         """Test unknown telemetry keys are rejected."""
-        with pytest.raises(ValueError, match="Unknown keys in gateway.telemetry"):
+        with pytest.raises(ValueError, match=r"Unknown keys in gateway\.telemetry"):
             validate_gateway_config({"telemetry": {"unknown": True}})
 
 

@@ -13,7 +13,6 @@ from .protocol import (
     EnvelopeMessage as Message,
 )
 from .redis_client import create_redis_client
-from .state import StateType
 from .telemetry import (
     SpanKind,
     TelemetryConfig,
@@ -31,7 +30,6 @@ __all__ = [
     "MessageMeta",
     "MessageType",
     "SpanKind",
-    "StateType",
     "TelemetryConfig",
     "TelemetryRuntime",
     "TelemetrySpan",

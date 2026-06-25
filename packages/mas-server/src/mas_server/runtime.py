@@ -28,6 +28,7 @@ from redis.asyncio import Redis
 
 from .delivery import DeliveryService
 from .ingress import IngressService
+from .policy import PolicyPipeline
 from .registry import RegistryService
 from .routing import MessageRouter
 from .servicer import MasGrpcServicer
@@ -383,8 +384,6 @@ class MASServer:
 
     def _build_policy_pipeline(self):
         """Build policy pipeline from initialized modules."""
-        from .policy import PolicyPipeline
-
         if (
             self._authz is None
             or self._rate_limit is None

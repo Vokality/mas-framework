@@ -44,10 +44,7 @@ class MasGrpcServicer(mas_pb2_grpc.RuntimeServiceServicer):
         """Extract tracing context from inbound gRPC metadata."""
         raw_metadata = context.invocation_metadata()
         metadata: list[object] | None
-        if raw_metadata is None:
-            metadata = None
-        else:
-            metadata = list(raw_metadata)
+        metadata = None if raw_metadata is None else list(raw_metadata)
         return get_telemetry().extract_grpc_context(metadata)
 
     async def Transport(

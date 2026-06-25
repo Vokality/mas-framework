@@ -9,6 +9,8 @@ import time
 from mas_core import EnvelopeMessage, SpanKind, get_telemetry
 from redis.asyncio import Redis
 
+from .errors import InvalidArgumentError
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,10 +39,11 @@ class MessageRouter:
 
             if message.meta.is_reply:
                 if not message.meta.reply_to_instance_id:
-                    from .errors import InvalidArgumentError
-
                     raise InvalidArgumentError("missing_reply_to_instance_id")
-                stream_name = f"agent.stream:{message.target_id}:{message.meta.reply_to_instance_id}"
+                stream_name = (
+                    f"agent.stream:{message.target_id}:"
+                    f"{message.meta.reply_to_instance_id}"
+                )
             else:
                 stream_name = f"agent.stream:{message.target_id}"
 

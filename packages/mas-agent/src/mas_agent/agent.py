@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from types import FunctionType
-from typing import (
-    Generic,
-)
 
 import grpc
 import grpc.aio as grpc_aio
@@ -20,7 +18,6 @@ from mas_core import (
     JsonObject,
     JsonValue,
     SpanKind,
-    StateType,
     get_telemetry,
     validate_json_object,
 )
@@ -38,8 +35,10 @@ logger = logging.getLogger(__name__)
 
 # Public alias so external imports continue to work
 AgentMessage = EnvelopeMessage
-JSONDict = JsonObject
-MutableJSONMapping = MutableMapping[str, JsonValue]
+HandlerMarker = tuple[str, type[BaseModel] | None]
+HandlerFunction = Callable[..., Awaitable[None]]
+
+_DECORATED_HANDLERS: dict[HandlerFunction, list[HandlerMarker]] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,14 +50,14 @@ class TlsClientConfig:
     client_key_path: str
 
 
-class Agent(Generic[StateType]):
+class Agent[AgentState: BaseModel = BaseModel]:
     """Agent client that connects to MAS server over gRPC (no Redis access)."""
 
     @dataclass(frozen=True, slots=True)
     class _HandlerSpec:
         """Typed handler registration entry."""
 
-        fn: Callable[..., Awaitable[None]]
+        fn: HandlerFunction
         model: type[BaseModel] | None
 
     def __init__(
@@ -68,7 +67,7 @@ class Agent(Generic[StateType]):
         capabilities: list[str] | None = None,
         server_addr: str = "localhost:50051",
         tls: TlsClientConfig | None = None,
-        state_model: type[StateType] | None = None,
+        state_model: type[AgentState] | None = None,
     ) -> None:
         """Initialize an Agent client."""
         self.id = agent_id
@@ -77,8 +76,8 @@ class Agent(Generic[StateType]):
         self.server_addr = server_addr
         self.tls = tls
 
-        self._state_model: type[StateType] | None = state_model
-        self._state: StateType | MutableJSONMapping | None = None
+        self._state_model: type[AgentState] | None = state_model
+        self._state: AgentState | None = None
 
         self._running = False
         self._channel: grpc_aio.Channel | None = None
@@ -90,10 +89,16 @@ class Agent(Generic[StateType]):
 
         self._pending_requests: dict[str, asyncio.Future[AgentMessage]] = {}
         self._early_replies: dict[str, AgentMessage] = {}
+        self._handler_tasks: set[asyncio.Task[None]] = set()
 
     @property
-    def state(self) -> StateType | MutableJSONMapping:
+    def state(self) -> AgentState:
         """Return the current agent state after startup."""
+        if self._state_model is None:
+            raise RuntimeError(
+                "Agent has no state_model. Pass a Pydantic model type to use "
+                "typed state."
+            )
         if self._state is None:
             raise RuntimeError(
                 "Agent not started. State is only available after calling start()."
@@ -156,6 +161,11 @@ class Agent(Generic[StateType]):
                 self._transport_task.cancel()
                 await asyncio.gather(self._transport_task, return_exceptions=True)
                 self._transport_task = None
+            if self._handler_tasks:
+                for task in self._handler_tasks:
+                    task.cancel()
+                await asyncio.gather(*self._handler_tasks, return_exceptions=True)
+                self._handler_tasks.clear()
 
             if self._channel is not None:
                 await self._channel.close()
@@ -316,15 +326,16 @@ class Agent(Generic[StateType]):
             attributes={"mas.agent_id": self.id},
         ):
             stub = self._require_stub()
-            current = self.state
 
-            if isinstance(current, BaseModel):
-                for k, v in updates.items():
-                    setattr(current, k, v)
-                state_dict = current.model_dump()
-            else:
-                current.update(updates)
-                state_dict = dict(current)
+            if self._state_model is None:
+                raise RuntimeError(
+                    "Agent state updates require a Pydantic state_model."
+                )
+
+            current = self.state
+            for k, v in updates.items():
+                setattr(current, k, v)
+            state_dict = current.model_dump()
 
             redis_data: dict[str, str] = {}
             for k, v in state_dict.items():
@@ -351,9 +362,7 @@ class Agent(Generic[StateType]):
                 mas_pb2.ResetStateRequest(),
                 metadata=telemetry.grpc_metadata(),
             )
-            if self._state_model is None:
-                self._state = {}
-            else:
+            if self._state_model is not None:
                 self._state = self._state_model()
 
     async def refresh_state(self) -> None:
@@ -435,13 +444,15 @@ class Agent(Generic[StateType]):
             return
 
         parent_context = telemetry.extract_message_meta_context(msg.meta)
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._handle_message_and_ack(
                 delivery.delivery_id,
                 msg,
                 parent_context=parent_context,
             )
         )
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
 
     async def _handle_message_and_ack(
         self,
@@ -488,18 +499,16 @@ class Agent(Generic[StateType]):
 
     async def _send_ack(self, delivery_id: str) -> None:
         """Send an ACK for a delivery."""
-        try:
+        with contextlib.suppress(Exception):
             await self._outgoing.put(
                 mas_pb2.ClientEvent(ack=mas_pb2.Ack(delivery_id=delivery_id))
             )
-        except Exception:
-            pass
 
     async def _send_nack(
         self, delivery_id: str, *, reason: str, retryable: bool
     ) -> None:
         """Send a NACK for a delivery."""
-        try:
+        with contextlib.suppress(Exception):
             await self._outgoing.put(
                 mas_pb2.ClientEvent(
                     nack=mas_pb2.Nack(
@@ -509,8 +518,6 @@ class Agent(Generic[StateType]):
                     )
                 )
             )
-        except Exception:
-            pass
 
     async def _load_state(self) -> None:
         """Load initial agent state from the server."""
@@ -528,17 +535,13 @@ class Agent(Generic[StateType]):
             data = dict(resp.state)
 
             if data:
-                if self._state_model is None:
-                    self._state = data
-                else:
+                if self._state_model is not None:
                     try:
                         self._state = self._state_model(**data)
                     except Exception:
                         self._state = self._state_model()
             else:
-                if self._state_model is None:
-                    self._state = {}
-                else:
+                if self._state_model is not None:
                     self._state = self._state_model()
 
     def _require_stub(self) -> mas_pb2_grpc.RuntimeServiceStub:
@@ -552,12 +555,12 @@ class Agent(Generic[StateType]):
     @classmethod
     def on(
         cls, message_type: str, *, model: type[BaseModel] | None = None
-    ) -> Callable[[Callable[..., Awaitable[None]]], Callable[..., Awaitable[None]]]:
+    ) -> Callable[[HandlerFunction], HandlerFunction]:
         """Decorator to register a handler for a message_type."""
 
         def decorator(
-            fn: Callable[..., Awaitable[None]],
-        ) -> Callable[..., Awaitable[None]]:
+            fn: HandlerFunction,
+        ) -> HandlerFunction:
             """Register a function as a handler for this agent class."""
             if not callable(fn):
                 raise TypeError("handler must be callable")
@@ -570,12 +573,7 @@ class Agent(Generic[StateType]):
 
             qualname_parts = fn.__qualname__.split(".")
             if len(qualname_parts) >= 2:
-                if not hasattr(fn, "_agent_handlers"):
-                    fn._agent_handlers = []
-                handler_list: list[tuple[str, type[BaseModel] | None]] = (
-                    fn._agent_handlers
-                )
-                handler_list.append((message_type, model))
+                _DECORATED_HANDLERS.setdefault(fn, []).append((message_type, model))
             else:
                 registry = dict(getattr(cls, "_handlers", {}))
                 registry[message_type] = Agent._HandlerSpec(fn=fn, model=model)
@@ -592,14 +590,12 @@ class Agent(Generic[StateType]):
         for name in dir(cls):
             try:
                 attr = getattr(cls, name)
-                if hasattr(attr, "_agent_handlers"):
-                    handler_list: list[tuple[str, type[BaseModel] | None]] = (
-                        attr._agent_handlers
+                if not callable(attr):
+                    continue
+                for message_type, model in _DECORATED_HANDLERS.get(attr, []):
+                    cls._handlers[message_type] = Agent._HandlerSpec(
+                        fn=attr, model=model
                     )
-                    for message_type, model in handler_list:
-                        cls._handlers[message_type] = Agent._HandlerSpec(
-                            fn=attr, model=model
-                        )
             except AttributeError:
                 pass
 

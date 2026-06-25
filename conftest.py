@@ -327,7 +327,9 @@ def test_tls(tmp_path_factory) -> TestTlsPaths:
 @pytest.fixture
 async def mas_server_factory(
     test_tls: TestTlsPaths,
-) -> AsyncGenerator[Callable[[dict[str, AgentDefinition] | None], Awaitable[MASServer]]]:
+) -> AsyncGenerator[
+    Callable[[dict[str, AgentDefinition] | None], Awaitable[MASServer]]
+]:
     servers: list[MASServer] = []
 
     async def _start(agents: dict[str, AgentDefinition] | None = None) -> MASServer:

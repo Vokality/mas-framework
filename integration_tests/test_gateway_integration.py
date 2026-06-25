@@ -4,6 +4,7 @@ import asyncio
 import time
 
 import grpc
+import grpc.aio as grpc_aio
 import pytest
 from mas_agent import Agent
 from mas_gateway import (
@@ -64,7 +65,7 @@ async def test_dlp_blocks_sensitive_payload(test_tls) -> None:
     await worker.start()
     await sender.start()
     try:
-        with pytest.raises(grpc.aio.AioRpcError) as excinfo:
+        with pytest.raises(grpc_aio.AioRpcError) as excinfo:
             await sender.send(
                 "worker",
                 "payload",
@@ -105,7 +106,7 @@ async def test_rate_limit_blocks_excess_messages(test_tls) -> None:
     await sender.start()
     try:
         await sender.send("worker", "payload", {"ok": True})
-        with pytest.raises(grpc.aio.AioRpcError) as excinfo:
+        with pytest.raises(grpc_aio.AioRpcError) as excinfo:
             await sender.send("worker", "payload", {"ok": False})
         assert excinfo.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
     finally:
@@ -156,7 +157,11 @@ async def test_dlp_alert_logged(test_tls, redis) -> None:
             await asyncio.sleep(0.05)
 
         assert entries, "Expected ALERT audit entry for DLP email detection"
-        assert any("email" in entry.get("violations", []) for entry in entries)
+        assert any(
+            "email" in violations
+            for entry in entries
+            if isinstance((violations := entry.get("violations")), list)
+        )
     finally:
         await sender.stop()
         await worker.stop()

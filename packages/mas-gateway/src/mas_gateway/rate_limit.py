@@ -31,8 +31,10 @@ local default_per_minute = tonumber(ARGV[3])
 local default_per_hour = tonumber(ARGV[4])
 
 -- Get custom limits or use defaults
-local per_minute = tonumber(redis.call('HGET', limits_key, 'per_minute')) or default_per_minute
-local per_hour = tonumber(redis.call('HGET', limits_key, 'per_hour')) or default_per_hour
+local per_minute_raw = redis.call('HGET', limits_key, 'per_minute')
+local per_hour_raw = redis.call('HGET', limits_key, 'per_hour')
+local per_minute = tonumber(per_minute_raw) or default_per_minute
+local per_hour = tonumber(per_hour_raw) or default_per_hour
 
 -- Check minute window
 local minute_start = now - 60

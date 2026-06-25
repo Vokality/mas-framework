@@ -318,7 +318,8 @@ class GatewaySettings(BaseSettings):
         lines = [
             "Gateway Configuration:",
             f"  Redis: {self.redis.url}",
-            f"  Rate Limits: {self.rate_limit.per_minute}/min, {self.rate_limit.per_hour}/hour",
+            "  Rate Limits: "
+            f"{self.rate_limit.per_minute}/min, {self.rate_limit.per_hour}/hour",
             f"  Telemetry: {'enabled' if self.telemetry.enabled else 'disabled'}",
             "",
             "Features:",
