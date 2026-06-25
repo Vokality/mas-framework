@@ -3,4 +3,4 @@
 from .runtime import MASServer
 from .types import AgentDefinition, MASServerSettings, TlsConfig
 
-__all__ = ["MASServer", "MASServerSettings", "TlsConfig", "AgentDefinition"]
+__all__ = ["AgentDefinition", "MASServer", "MASServerSettings", "TlsConfig"]

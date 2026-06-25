@@ -10,16 +10,14 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
 
+from mas_core import JsonObject, SpanKind, get_telemetry, validate_json_value
 from pydantic import BaseModel, Field
-
 from redis.asyncio import Redis
-from mas_core.telemetry import SpanKind, get_telemetry
 
 logger = logging.getLogger(__name__)
 
-AuditRecord = dict[str, Any]
+AuditRecord = JsonObject
 
 
 class AuditEntry(BaseModel):
@@ -28,15 +26,15 @@ class AuditEntry(BaseModel):
     message_id: str
     timestamp: float = Field(default_factory=time.time)
     sender_id: str
-    sender_instance_id: Optional[str] = None
+    sender_instance_id: str | None = None
     target_id: str
-    message_type: Optional[str] = None
-    correlation_id: Optional[str] = None
+    message_type: str | None = None
+    correlation_id: str | None = None
     decision: str  # ALLOWED, DENIED, RATE_LIMITED, DLP_BLOCKED, etc.
     latency_ms: float
     payload_hash: str
     violations: list[str] = Field(default_factory=list)
-    previous_hash: Optional[str] = None
+    previous_hash: str | None = None
 
 
 class AuditFileSink:
@@ -130,11 +128,11 @@ class AuditModule:
         decision: str,
         latency_ms: float,
         payload: AuditRecord,
-        violations: Optional[list[str]] = None,
+        violations: list[str] | None = None,
         *,
-        message_type: Optional[str] = None,
-        correlation_id: Optional[str] = None,
-        sender_instance_id: Optional[str] = None,
+        message_type: str | None = None,
+        correlation_id: str | None = None,
+        sender_instance_id: str | None = None,
     ) -> str:
         """
         Log message to audit stream.
@@ -252,8 +250,8 @@ class AuditModule:
     async def query_by_sender(
         self,
         sender_id: str,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
+        start_time: float | None = None,
+        end_time: float | None = None,
         count: int = 100,
     ) -> list[AuditRecord]:
         """
@@ -275,8 +273,8 @@ class AuditModule:
     async def query_by_target(
         self,
         target_id: str,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
+        start_time: float | None = None,
+        end_time: float | None = None,
         count: int = 100,
     ) -> list[AuditRecord]:
         """
@@ -297,8 +295,8 @@ class AuditModule:
 
     async def query_security_events(
         self,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
+        start_time: float | None = None,
+        end_time: float | None = None,
         count: int = 100,
     ) -> list[AuditRecord]:
         """
@@ -320,8 +318,8 @@ class AuditModule:
         self,
         prefix: str,
         key: str,
-        start_time: Optional[float],
-        end_time: Optional[float],
+        start_time: float | None,
+        end_time: float | None,
         count: int,
     ) -> list[AuditRecord]:
         """Query an index stream keyed by sender/target."""
@@ -330,8 +328,8 @@ class AuditModule:
 
     async def _query_messages(
         self,
-        start_time: Optional[float],
-        end_time: Optional[float],
+        start_time: float | None,
+        end_time: float | None,
         count: int | None,
     ) -> list[AuditRecord]:
         """Query the main audit message stream."""
@@ -340,8 +338,8 @@ class AuditModule:
     async def _query_stream(
         self,
         stream: str,
-        start_time: Optional[float],
-        end_time: Optional[float],
+        start_time: float | None,
+        end_time: float | None,
         count: int | None,
     ) -> list[AuditRecord]:
         """
@@ -462,8 +460,8 @@ class AuditModule:
     async def query_by_decision(
         self,
         decision: str,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
+        start_time: float | None = None,
+        end_time: float | None = None,
         count: int = 100,
     ) -> list[AuditRecord]:
         """
@@ -487,8 +485,8 @@ class AuditModule:
     async def query_by_violation(
         self,
         violation_type: str,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
+        start_time: float | None = None,
+        end_time: float | None = None,
         count: int = 100,
     ) -> list[AuditRecord]:
         """
@@ -520,8 +518,8 @@ class AuditModule:
 
     async def query_all(
         self,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
+        start_time: float | None = None,
+        end_time: float | None = None,
         count: int = 100,
     ) -> list[AuditRecord]:
         """
@@ -577,8 +575,11 @@ class AuditModule:
         for entry in entries:
             # Convert violations list to string
             entry_copy = entry.copy()
-            if isinstance(entry_copy.get("violations"), list):
-                entry_copy["violations"] = ";".join(entry_copy["violations"])
+            violations = entry_copy.get("violations")
+            if isinstance(violations, list):
+                entry_copy["violations"] = ";".join(
+                    item for item in violations if isinstance(item, str)
+                )
             writer.writerow(entry_copy)
 
         return output.getvalue()
@@ -700,7 +701,7 @@ class AuditModule:
                 data["violations"] = []
         if "details" in data:
             try:
-                data["details"] = json.loads(str(data["details"]))
+                data["details"] = validate_json_value(json.loads(str(data["details"])))
             except (json.JSONDecodeError, TypeError):
                 pass
         data["stream_id"] = stream_id

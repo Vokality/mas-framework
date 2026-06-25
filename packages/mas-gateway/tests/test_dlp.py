@@ -1,7 +1,6 @@
 """Tests for DLP (Data Loss Prevention) Module."""
 
 import pytest
-
 from mas_gateway.dlp import (
     ActionPolicy,
     DLPModule,

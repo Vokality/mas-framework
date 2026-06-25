@@ -1,27 +1,27 @@
-"""
-Protocol types for strongly-typed agent messaging.
-"""
+"""Core types for strongly typed agent messaging."""
 
 from __future__ import annotations
 
 import time
-from typing import Any, Optional, Protocol, TypeAlias
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter
 
 # External domains should define their own enums/constants; we use a string alias.
-MessageType: TypeAlias = str
+type MessageType = str
+type JsonObject = dict[str, JsonValue]
+
+_JSON_OBJECT_ADAPTER = TypeAdapter(JsonObject)
+_JSON_VALUE_ADAPTER = TypeAdapter(JsonValue)
 
 
-class ReplyAgent(Protocol):
-    """Reply capability needed by an attached message agent."""
+def validate_json_value(value: object) -> JsonValue:
+    """Validate a raw value using Pydantic's JSON contract."""
+    return _JSON_VALUE_ADAPTER.validate_python(value)
 
-    async def send_reply_envelope(
-        self,
-        original: "EnvelopeMessage",
-        message_type: MessageType,
-        payload: dict[str, Any],
-    ) -> None: ...
+
+def validate_json_object(value: object) -> JsonObject:
+    """Validate a raw value using Pydantic's JSON object contract."""
+    return _JSON_OBJECT_ADAPTER.validate_python(value)
 
 
 class MessageMeta(BaseModel):
@@ -30,16 +30,16 @@ class MessageMeta(BaseModel):
     """
 
     version: int = 1
-    correlation_id: Optional[str] = None
+    correlation_id: str | None = None
     expects_reply: bool = False
     is_reply: bool = False
     # Instance ID of the sending process (used for auditing/authn and debugging).
-    sender_instance_id: Optional[str] = None
+    sender_instance_id: str | None = None
     # Instance ID to route replies to (set on reply messages).
-    reply_to_instance_id: Optional[str] = None
+    reply_to_instance_id: str | None = None
     # W3C Trace Context fields for distributed tracing across hops.
-    traceparent: Optional[str] = None
-    tracestate: Optional[str] = None
+    traceparent: str | None = None
+    tracestate: str | None = None
 
 
 class EnvelopeMessage(BaseModel):
@@ -54,41 +54,7 @@ class EnvelopeMessage(BaseModel):
     sender_id: str
     target_id: str
     message_type: MessageType
-    data: dict[str, Any]
+    data: JsonObject
     meta: MessageMeta = Field(default_factory=MessageMeta)
     timestamp: float = Field(default_factory=time.time)
     message_id: str = Field(default_factory=lambda: str(time.time_ns()))
-
-    # Allow attaching agent reference for reply() convenience
-    _agent: Optional[ReplyAgent] = PrivateAttr(default=None)
-
-    model_config = {"arbitrary_types_allowed": True}
-
-    def attach_agent(self, agent: ReplyAgent) -> None:
-        """Attach an agent instance for replies."""
-        self._agent = agent
-
-    async def reply(self, message_type: MessageType, payload: dict[str, Any]) -> None:
-        """
-        Reply to this message using correlation metadata.
-
-        Args:
-            message_type: Message type for the reply
-            payload: Response payload dictionary
-
-        Raises:
-            RuntimeError: If agent is not available or message doesn't expect reply
-        """
-        if not self._agent:
-            raise RuntimeError(
-                "Cannot reply: message not associated with agent. "
-                "This should not happen in normal operation."
-            )
-
-        if not self.meta.correlation_id:
-            raise RuntimeError(
-                "Cannot reply: message does not have correlation ID. "
-                "Only messages sent via request() can be replied to."
-            )
-
-        await self._agent.send_reply_envelope(self, message_type, payload)

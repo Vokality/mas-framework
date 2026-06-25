@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import subprocess
 import textwrap
-from typing import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
-from redis.asyncio import Redis
-
 from mas_agent import TlsClientConfig
 from mas_gateway.config import GatewaySettings, RedisSettings
 from mas_server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
+from redis.asyncio import Redis
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
@@ -328,10 +327,7 @@ def test_tls(tmp_path_factory) -> TestTlsPaths:
 @pytest.fixture
 async def mas_server_factory(
     test_tls: TestTlsPaths,
-) -> AsyncGenerator[
-    Callable[[dict[str, AgentDefinition] | None], Awaitable[MASServer]],
-    None,
-]:
+) -> AsyncGenerator[Callable[[dict[str, AgentDefinition] | None], Awaitable[MASServer]]]:
     servers: list[MASServer] = []
 
     async def _start(agents: dict[str, AgentDefinition] | None = None) -> MASServer:

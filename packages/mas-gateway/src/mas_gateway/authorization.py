@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
+
 from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
@@ -140,8 +140,8 @@ class AuthorizationModule:
     async def set_permissions(
         self,
         agent_id: str,
-        allowed_targets: Optional[list[str]] = None,
-        blocked_targets: Optional[list[str]] = None,
+        allowed_targets: list[str] | None = None,
+        blocked_targets: list[str] | None = None,
     ) -> None:
         """
         Set ACL permissions for an agent.
@@ -342,7 +342,7 @@ class AuthorizationModule:
         self,
         role_name: str,
         description: str = "",
-        permissions: Optional[list[str]] = None,
+        permissions: list[str] | None = None,
     ) -> None:
         """
         Create a new role with permissions.

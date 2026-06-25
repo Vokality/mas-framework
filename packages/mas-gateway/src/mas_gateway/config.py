@@ -1,14 +1,17 @@
 """Gateway Configuration Module."""
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Literal
 
 import yaml
-from pydantic import Field
+from pydantic import Field, TypeAdapter, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .dlp import ActionPolicy, DlpRule
+
+_CONFIG_MAPPING_ADAPTER = TypeAdapter(dict[str, object])
 
 
 class CircuitBreakerSettings(BaseSettings):
@@ -27,7 +30,9 @@ class CircuitBreakerSettings(BaseSettings):
         default=300.0, gt=0, description="Failure counting window"
     )
 
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_CIRCUIT_BREAKER_")
+    model_config = SettingsConfigDict(
+        env_prefix="GATEWAY_CIRCUIT_BREAKER_", extra="forbid"
+    )
 
 
 class RateLimitSettings(BaseSettings):
@@ -36,7 +41,7 @@ class RateLimitSettings(BaseSettings):
     per_minute: int = Field(default=100, ge=0, description="Messages per minute")
     per_hour: int = Field(default=1000, ge=0, description="Messages per hour")
 
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_RATE_LIMIT_")
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_RATE_LIMIT_", extra="forbid")
 
 
 class RedisSettings(BaseSettings):
@@ -46,11 +51,11 @@ class RedisSettings(BaseSettings):
         default="redis://localhost:6379",
         description="Redis connection URL",
     )
-    socket_timeout: Optional[float] = Field(
+    socket_timeout: float | None = Field(
         default=None, description="Socket timeout in seconds"
     )
 
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_REDIS_")
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_REDIS_", extra="forbid")
 
 
 class FeaturesSettings(BaseSettings):
@@ -69,7 +74,7 @@ class FeaturesSettings(BaseSettings):
     rbac: bool = Field(default=False, description="Enable RBAC authorization")
     circuit_breaker: bool = Field(default=True, description="Enable circuit breakers")
 
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_FEATURES_")
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_FEATURES_", extra="forbid")
 
 
 class DlpSettings(BaseSettings):
@@ -92,13 +97,13 @@ class DlpSettings(BaseSettings):
         description="Additional DLP rules",
     )
 
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_DLP_")
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_DLP_", extra="forbid")
 
 
 class AuditSettings(BaseSettings):
     """Audit log configuration settings."""
 
-    file_path: Optional[str] = Field(
+    file_path: str | None = Field(
         default=None,
         description="Optional JSONL audit log path",
     )
@@ -113,7 +118,7 @@ class AuditSettings(BaseSettings):
         description="Number of rotated audit files to keep",
     )
 
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_AUDIT_")
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_AUDIT_", extra="forbid")
 
 
 class TelemetrySettings(BaseSettings):
@@ -129,7 +134,7 @@ class TelemetrySettings(BaseSettings):
     environment: str = Field(
         default="dev", description="OTel deployment.environment resource attribute"
     )
-    otlp_endpoint: Optional[str] = Field(
+    otlp_endpoint: str | None = Field(
         default=None,
         description="OTLP/HTTP endpoint (for example http://localhost:4318)",
     )
@@ -153,7 +158,7 @@ class TelemetrySettings(BaseSettings):
         description="Optional OTLP exporter headers",
     )
 
-    model_config = SettingsConfigDict(env_prefix="GATEWAY_TELEMETRY_")
+    model_config = SettingsConfigDict(env_prefix="GATEWAY_TELEMETRY_", extra="forbid")
 
 
 class GatewaySettings(BaseSettings):
@@ -188,7 +193,7 @@ class GatewaySettings(BaseSettings):
     """
 
     # Config file path
-    config_file: Optional[str] = Field(
+    config_file: str | None = Field(
         default=None,
         description="Path to YAML config file",
     )
@@ -213,32 +218,31 @@ class GatewaySettings(BaseSettings):
         extra="ignore",
     )
 
-    def __init__(self, **data: Any):
-        """
-        Initialize settings.
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_config_file(cls, raw_data: object) -> object:
+        """Merge YAML config before Pydantic validates settings fields."""
+        if not isinstance(raw_data, Mapping):
+            return raw_data
 
-        If config_file is provided or GATEWAY_CONFIG_FILE env var is set,
-        load configuration from YAML file and merge with other sources.
-        """
-        merged = data.pop("_merged", False)
-        if merged:
-            super().__init__(**data)
-            return
-
-        config_file = self._resolve_config_file(data)
-        if config_file:
-            merged_data = self._merge_yaml(config_file, data)
-            super().__init__(**merged_data)
-        else:
-            super().__init__(**data)
+        data = _CONFIG_MAPPING_ADAPTER.validate_python(raw_data)
+        config_file = cls._resolve_config_file(data)
+        if not config_file:
+            return data
+        return cls._merge_yaml(config_file, data)
 
     @classmethod
-    def _resolve_config_file(cls, data: dict[str, Any]) -> Optional[str]:
+    def _resolve_config_file(cls, data: Mapping[str, object]) -> str | None:
         """Resolve config file from parameters or environment."""
-        return data.get("config_file") or os.getenv("GATEWAY_CONFIG_FILE")
+        config_file = data.get("config_file")
+        if isinstance(config_file, str):
+            return config_file
+        return os.getenv("GATEWAY_CONFIG_FILE")
 
     @classmethod
-    def _merge_yaml(cls, config_file: str, data: dict[str, Any]) -> dict[str, Any]:
+    def _merge_yaml(
+        cls, config_file: str, data: Mapping[str, object]
+    ) -> dict[str, object]:
         """Load YAML config and merge with explicit parameters."""
         yaml_data = cls._load_yaml(config_file)
         merged_data = {**yaml_data, **data}
@@ -246,7 +250,7 @@ class GatewaySettings(BaseSettings):
         return merged_data
 
     @staticmethod
-    def _load_yaml(file_path: str) -> dict[str, Any]:
+    def _load_yaml(file_path: str) -> dict[str, object]:
         """
         Load configuration from YAML file.
 
@@ -265,14 +269,16 @@ class GatewaySettings(BaseSettings):
             raise FileNotFoundError(f"Config file not found: {file_path}")
 
         with path.open("r") as f:
-            data = yaml.safe_load(f)
+            raw_data: object = yaml.safe_load(f)
 
-        if data is None:
+        if raw_data is None:
             return {}
 
-        if isinstance(data, dict):
-            validate_gateway_config(data)
+        if not isinstance(raw_data, Mapping):
+            raise ValueError("Gateway config must be a mapping")
 
+        data = _CONFIG_MAPPING_ADAPTER.validate_python(raw_data)
+        validate_gateway_config(data)
         return data
 
     @classmethod
@@ -286,8 +292,7 @@ class GatewaySettings(BaseSettings):
         Returns:
             GatewaySettings instance
         """
-        merged = cls._merge_yaml(file_path, {})
-        return cls(_merged=True, **merged)
+        return cls(config_file=file_path)
 
     def to_yaml(self, file_path: str) -> None:
         """
@@ -337,7 +342,15 @@ class GatewaySettings(BaseSettings):
 
 # Convenience function to load settings
 def load_settings(
-    config_file: Optional[str] = None, **overrides: Any
+    config_file: str | None = None,
+    *,
+    redis: RedisSettings | Mapping[str, object] | None = None,
+    rate_limit: RateLimitSettings | Mapping[str, object] | None = None,
+    features: FeaturesSettings | Mapping[str, object] | None = None,
+    dlp: DlpSettings | Mapping[str, object] | None = None,
+    audit: AuditSettings | Mapping[str, object] | None = None,
+    telemetry: TelemetrySettings | Mapping[str, object] | None = None,
+    circuit_breaker: CircuitBreakerSettings | Mapping[str, object] | None = None,
 ) -> GatewaySettings:
     """
     Load gateway settings with optional overrides.
@@ -362,48 +375,54 @@ def load_settings(
             redis={"url": "redis://override:6379"},
         )
     """
-    if config_file:
-        overrides["config_file"] = config_file
+    settings = GatewaySettings(config_file=config_file)
+    updates: dict[str, object] = {}
+    if redis is not None:
+        updates["redis"] = RedisSettings.model_validate(redis)
+    if rate_limit is not None:
+        updates["rate_limit"] = RateLimitSettings.model_validate(rate_limit)
+    if features is not None:
+        updates["features"] = FeaturesSettings.model_validate(features)
+    if dlp is not None:
+        updates["dlp"] = DlpSettings.model_validate(dlp)
+    if audit is not None:
+        updates["audit"] = AuditSettings.model_validate(audit)
+    if telemetry is not None:
+        updates["telemetry"] = TelemetrySettings.model_validate(telemetry)
+    if circuit_breaker is not None:
+        updates["circuit_breaker"] = CircuitBreakerSettings.model_validate(
+            circuit_breaker
+        )
 
-    return GatewaySettings(**overrides)
+    if not updates:
+        return settings
+    return settings.model_copy(update=updates)
 
 
-def validate_gateway_config(data: dict[str, Any]) -> None:
+def validate_gateway_config(data: Mapping[str, object]) -> None:
     """Validate gateway config keys against known settings."""
+    gateway_keys = set(GatewaySettings.model_fields)
+    unknown = {
+        key
+        for key in set(data) - gateway_keys
+        if key.upper() not in os.environ and f"GATEWAY_{key.upper()}" not in os.environ
+    }
+    if unknown:
+        unknown_text = ", ".join(sorted(unknown))
+        raise ValueError(f"Unknown keys in gateway: {unknown_text}")
 
-    def validate_keys(value: dict[str, Any], allowed: set[str], path: str) -> None:
-        unknown = set(value) - allowed
-        if unknown:
-            raise ValueError(f"Unknown keys in {path}: {', '.join(sorted(unknown))}")
-
-    gateway_keys = set(GatewaySettings.model_fields) - {"config_file"}
-    validate_keys(data, gateway_keys, "gateway")
-
-    if isinstance(data.get("redis"), dict):
-        validate_keys(data["redis"], set(RedisSettings.model_fields), "gateway.redis")
-    if isinstance(data.get("rate_limit"), dict):
-        validate_keys(
-            data["rate_limit"],
-            set(RateLimitSettings.model_fields),
-            "gateway.rate_limit",
-        )
-    if isinstance(data.get("features"), dict):
-        validate_keys(
-            data["features"], set(FeaturesSettings.model_fields), "gateway.features"
-        )
-    if isinstance(data.get("dlp"), dict):
-        validate_keys(data["dlp"], set(DlpSettings.model_fields), "gateway.dlp")
-    if isinstance(data.get("audit"), dict):
-        validate_keys(data["audit"], set(AuditSettings.model_fields), "gateway.audit")
-    if isinstance(data.get("telemetry"), dict):
-        validate_keys(
-            data["telemetry"],
-            set(TelemetrySettings.model_fields),
-            "gateway.telemetry",
-        )
-    if isinstance(data.get("circuit_breaker"), dict):
-        validate_keys(
-            data["circuit_breaker"],
-            set(CircuitBreakerSettings.model_fields),
-            "gateway.circuit_breaker",
-        )
+    for field_name, settings_type in (
+        ("redis", RedisSettings),
+        ("rate_limit", RateLimitSettings),
+        ("features", FeaturesSettings),
+        ("dlp", DlpSettings),
+        ("audit", AuditSettings),
+        ("telemetry", TelemetrySettings),
+        ("circuit_breaker", CircuitBreakerSettings),
+    ):
+        value = data.get(field_name)
+        if isinstance(value, Mapping):
+            try:
+                settings_type.model_validate(value)
+            except ValueError as exc:
+                raise ValueError(f"Unknown keys in gateway.{field_name}") from exc

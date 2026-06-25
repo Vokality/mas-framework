@@ -5,9 +5,8 @@ import logging
 import signal
 from typing import Any, override
 
-from pydantic import BaseModel, Field
-
 from mas_agent import Agent, AgentMessage
+from pydantic import BaseModel, Field
 
 
 def _configure_logging() -> None:

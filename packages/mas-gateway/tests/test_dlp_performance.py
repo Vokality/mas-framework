@@ -3,7 +3,6 @@
 import time
 
 import pytest
-
 from mas_gateway.dlp import DLPModule
 
 pytestmark = pytest.mark.asyncio

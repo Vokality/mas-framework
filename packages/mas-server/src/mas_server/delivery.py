@@ -7,10 +7,11 @@ import logging
 import time
 import uuid
 
+from mas_core import SpanKind, get_telemetry
+from mas_gateway import CircuitBreakerModule
 from mas_proto.runtime.v1 import runtime_pb2 as mas_pb2
-from mas_gateway.circuit_breaker import CircuitBreakerModule
 from redis.asyncio import Redis
-from mas_core.telemetry import SpanKind, get_telemetry
+
 from .routing import MessageRouter
 from .sessions import SessionManager
 from .types import InflightDelivery, MASServerSettings

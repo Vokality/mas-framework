@@ -5,10 +5,7 @@ import json
 import time
 
 import pytest
-
-from mas_gateway.audit import AuditFileSink
-
-from mas_gateway.audit import AuditModule
+from mas_gateway.audit import AuditFileSink, AuditModule
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from mas_agent import Agent
 from mas_server import AgentDefinition
 from pydantic import BaseModel
@@ -89,7 +88,8 @@ class TestMultiInstance:
 
         class Responder(Agent):
             async def on_message(self, message):
-                await message.reply(
+                await self.send_reply_envelope(
+                    message,
                     "reply.message",
                     {"saw_sender_instance": message.meta.sender_instance_id},
                 )

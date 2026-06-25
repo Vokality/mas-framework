@@ -4,14 +4,25 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from enum import Enum
-from typing import Any, Mapping, Optional, Tuple
+from typing import TypedDict
 
+from mas_core import JsonObject
 from pydantic import BaseModel
-
 from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
+
+
+class DLQMessage(TypedDict):
+    """Message read from the circuit breaker DLQ."""
+
+    id: str
+    message_id: str | None
+    target_id: str | None
+    reason: str | None
+    timestamp: float
 
 
 class CircuitState(str, Enum):
@@ -37,8 +48,8 @@ class CircuitStatus(BaseModel):
     state: CircuitState
     failure_count: int
     success_count: int
-    last_failure_time: Optional[float] = None
-    opened_at: Optional[float] = None
+    last_failure_time: float | None = None
+    opened_at: float | None = None
     allowed: bool  # Whether message is allowed through
 
 
@@ -86,7 +97,7 @@ class CircuitBreakerModule:
 
     def _parse_circuit_data(
         self, circuit_data: Mapping[str, str]
-    ) -> Tuple[CircuitState, int, int, Optional[float], Optional[float]]:
+    ) -> tuple[CircuitState, int, int, float | None, float | None]:
         """Parse Redis circuit data into typed values."""
         state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
         failure_count = int(circuit_data.get("failure_count", 0))
@@ -103,10 +114,10 @@ class CircuitBreakerModule:
     def _maybe_transition_half_open(
         self,
         state: CircuitState,
-        opened_at: Optional[float],
+        opened_at: float | None,
         success_count: int,
         current_time: float,
-    ) -> Tuple[CircuitState, int, bool]:
+    ) -> tuple[CircuitState, int, bool]:
         """Transition OPEN to HALF_OPEN when timeout expires."""
         if state == CircuitState.OPEN and opened_at:
             if (current_time - opened_at) >= self.config.timeout_seconds:
@@ -117,7 +128,7 @@ class CircuitBreakerModule:
         self,
         *,
         has_data: bool,
-        last_failure_time: Optional[float],
+        last_failure_time: float | None,
         current_time: float,
         failure_count: int,
     ) -> int:
@@ -237,7 +248,7 @@ class CircuitBreakerModule:
 
     async def check_and_record_success(
         self, target_id: str
-    ) -> Tuple[CircuitStatus, CircuitStatus]:
+    ) -> tuple[CircuitStatus, CircuitStatus]:
         """
         Check circuit and record success in one operation.
 
@@ -307,7 +318,7 @@ class CircuitBreakerModule:
 
     async def check_and_record_failure(
         self, target_id: str, reason: str = "unknown"
-    ) -> Tuple[CircuitStatus, CircuitStatus]:
+    ) -> tuple[CircuitStatus, CircuitStatus]:
         """
         Check circuit and record failure in one operation.
 
@@ -326,7 +337,7 @@ class CircuitBreakerModule:
         circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
 
         current_time = time.time()
-        opened_at: Optional[float] = None
+        opened_at: float | None = None
         has_data = bool(circuit_data)
 
         if not circuit_data:
@@ -428,7 +439,7 @@ class CircuitBreakerModule:
         circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
 
         current_time = time.time()
-        opened_at: Optional[float] = None
+        opened_at: float | None = None
         has_data = bool(circuit_data)
 
         if not circuit_data:
@@ -562,7 +573,7 @@ class CircuitBreakerModule:
         return circuits
 
     async def add_to_dlq(
-        self, target_id: str, message_id: str, payload: dict[str, Any], reason: str
+        self, target_id: str, message_id: str, payload: JsonObject, reason: str
     ) -> None:
         """
         Add failed message to Dead Letter Queue.
@@ -595,7 +606,7 @@ class CircuitBreakerModule:
             },
         )
 
-    async def get_dlq_messages(self, count: int = 100) -> list[dict[str, Any]]:
+    async def get_dlq_messages(self, count: int = 100) -> list[DLQMessage]:
         """
         Get messages from Dead Letter Queue.
 
@@ -608,7 +619,7 @@ class CircuitBreakerModule:
         dlq_key = "dlq:messages"
         messages = await self.redis.xrange(dlq_key, "-", "+", count=count)
 
-        result: list[dict[str, Any]] = []
+        result: list[DLQMessage] = []
         for msg_id, msg_data in messages:
             normalized = {str(k): str(v) for k, v in msg_data.items()}
             timestamp_value = normalized.get("timestamp")

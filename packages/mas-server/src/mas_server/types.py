@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import TypedDict
 
+from mas_core import JsonObject
 from mas_proto.runtime.v1 import runtime_pb2 as mas_pb2
 
 
@@ -15,7 +16,16 @@ class AgentDefinition:
 
     agent_id: str
     capabilities: list[str]
-    metadata: dict[str, Any]
+    metadata: JsonObject
+
+
+class AgentDiscoveryRecord(TypedDict):
+    """Discoverable agent record returned by registry lookups."""
+
+    id: str
+    capabilities: list[str]
+    metadata: JsonObject
+    status: str
 
 
 @dataclass(frozen=True, slots=True)

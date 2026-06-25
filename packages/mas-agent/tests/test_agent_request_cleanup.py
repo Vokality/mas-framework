@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 import pytest
-
+from mas_agent import Agent
+from mas_core.protocol import EnvelopeMessage, JsonObject, MessageMeta
 from mas_proto.runtime.v1 import (
     runtime_pb2 as mas_pb2,
+)
+from mas_proto.runtime.v1 import (
     runtime_pb2_grpc as mas_pb2_grpc,
 )
-from mas_agent import Agent
-from mas_core.protocol import EnvelopeMessage, MessageMeta
 
 
-class _RequestStub:
+class _RequestStub(mas_pb2_grpc.RuntimeServiceStub):
     """Minimal stub implementing the Request RPC used by Agent.request()."""
 
     def __init__(self, correlation_id: str) -> None:
@@ -36,9 +36,9 @@ class _RequestStub:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_request_timeout_cleans_pending_correlation() -> None:
-    agent: Agent[dict[str, object]] = Agent("sender")
+    agent: Agent[JsonObject] = Agent("sender")
     correlation_id = "corr-timeout"
-    agent._stub = cast(mas_pb2_grpc.RuntimeServiceStub, _RequestStub(correlation_id))
+    agent._stub = _RequestStub(correlation_id)
 
     with pytest.raises(asyncio.TimeoutError):
         await agent.request("target", "test", {}, timeout=0.01)
@@ -49,9 +49,9 @@ async def test_request_timeout_cleans_pending_correlation() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_request_early_reply_cleans_pending_correlation() -> None:
-    agent: Agent[dict[str, object]] = Agent("sender")
+    agent: Agent[JsonObject] = Agent("sender")
     correlation_id = "corr-early"
-    agent._stub = cast(mas_pb2_grpc.RuntimeServiceStub, _RequestStub(correlation_id))
+    agent._stub = _RequestStub(correlation_id)
     agent._early_replies[correlation_id] = EnvelopeMessage(
         message_id="reply-1",
         sender_id="target",

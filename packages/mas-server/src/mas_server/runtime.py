@@ -4,25 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 import grpc.aio as grpc_aio
-
-from mas_proto.runtime.v1 import runtime_pb2_grpc as mas_pb2_grpc
-from mas_gateway.audit import AuditFileSink, AuditModule
-from mas_gateway.authorization import AuthorizationModule
-from mas_gateway.circuit_breaker import CircuitBreakerConfig, CircuitBreakerModule
-from mas_gateway.config import GatewaySettings
-from mas_gateway.dlp import DLPModule
-from mas_gateway.rate_limit import RateLimitModule
-from mas_core.redis_client import create_redis_client
-from redis.asyncio import Redis
-from mas_core.telemetry import (
+from mas_core import (
     SpanKind,
     TelemetryConfig,
     configure_telemetry,
+    create_redis_client,
     get_telemetry,
 )
+from mas_gateway import (
+    AuditFileSink,
+    AuditModule,
+    AuthorizationModule,
+    CircuitBreakerConfig,
+    CircuitBreakerModule,
+    DLPModule,
+    GatewaySettings,
+    RateLimitModule,
+)
+from mas_proto.runtime.v1 import runtime_pb2_grpc as mas_pb2_grpc
+from redis.asyncio import Redis
+
 from .delivery import DeliveryService
 from .ingress import IngressService
 from .registry import RegistryService
@@ -31,7 +34,7 @@ from .servicer import MasGrpcServicer
 from .sessions import SessionManager
 from .state import StateStore
 from .tls import load_server_credentials
-from .types import MASServerSettings, Session
+from .types import AgentDiscoveryRecord, MASServerSettings, Session
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +360,7 @@ class MASServer:
         *,
         agent_id: str,
         capabilities: list[str],
-    ) -> list[dict[str, Any]]:
+    ) -> list[AgentDiscoveryRecord]:
         """List discoverable agents for a sender and capability filter."""
         return await self._require_registry().discover(
             agent_id=agent_id,

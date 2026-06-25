@@ -7,11 +7,17 @@ import logging
 import time
 import uuid
 from math import ceil
-from typing import Any
 
-from mas_core.protocol import EnvelopeMessage, MessageMeta
+from mas_core import (
+    EnvelopeMessage,
+    JsonObject,
+    MessageMeta,
+    SpanKind,
+    get_telemetry,
+    validate_json_object,
+)
 from redis.asyncio import Redis
-from mas_core.telemetry import SpanKind, get_telemetry
+
 from .errors import FailedPreconditionError, InvalidArgumentError
 from .policy import PolicyPipeline
 from .sessions import SessionManager
@@ -246,7 +252,7 @@ class IngressService:
         sender_id: str,
         target_id: str,
         message_type: str,
-        data: dict[str, Any],
+        data: JsonObject,
         meta: MessageMeta,
     ) -> EnvelopeMessage:
         """Build a message envelope from parsed payload and metadata."""
@@ -259,12 +265,13 @@ class IngressService:
         )
 
     @staticmethod
-    def _parse_payload_json(data_json: str) -> dict[str, Any]:
+    def _parse_payload_json(data_json: str) -> JsonObject:
         """Parse payload JSON into a dictionary."""
         try:
             obj = json.loads(data_json) if data_json else {}
         except json.JSONDecodeError as exc:
             raise InvalidArgumentError("invalid_json") from exc
-        if not isinstance(obj, dict):
-            raise InvalidArgumentError("payload_must_be_object")
-        return obj
+        try:
+            return validate_json_object(obj)
+        except ValueError as exc:
+            raise InvalidArgumentError("payload_must_be_object") from exc

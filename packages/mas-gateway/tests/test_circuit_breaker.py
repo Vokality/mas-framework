@@ -1,12 +1,12 @@
 """Tests for Circuit Breaker Module."""
 
 import asyncio
-import pytest
 
+import pytest
 from mas_gateway.circuit_breaker import (
+    CircuitBreakerConfig,
     CircuitBreakerModule,
     CircuitState,
-    CircuitBreakerConfig,
 )
 
 # Use anyio for async test support

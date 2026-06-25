@@ -4,7 +4,6 @@ import asyncio
 
 import grpc
 import pytest
-
 from mas_agent import Agent
 from mas_server import AgentDefinition
 
@@ -128,7 +127,7 @@ async def test_correlation_id_expiry_on_late_reply(
         async def on_message(self, message) -> None:
             await asyncio.sleep(1.2)
             try:
-                await message.reply("reply", {"ok": True})
+                await self.send_reply_envelope(message, "reply", {"ok": True})
             except Exception as exc:
                 self.reply_error = exc
             finally:

@@ -10,10 +10,10 @@ from .runtime import (
 )
 
 __all__ = [
+    "SpanKind",
+    "TelemetryConfig",
     "TelemetryRuntime",
     "TelemetrySpan",
-    "TelemetryConfig",
-    "SpanKind",
     "configure_telemetry",
     "get_telemetry",
 ]

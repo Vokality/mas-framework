@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import time
 
-from mas_gateway.audit import AuditModule
-from mas_gateway.authorization import AuthorizationModule
-from mas_gateway.circuit_breaker import CircuitBreakerModule
-from mas_gateway.dlp import ActionPolicy, DLPModule
-from mas_gateway.rate_limit import RateLimitModule
-from mas_core.protocol import EnvelopeMessage
-from mas_core.telemetry import SpanKind, get_telemetry
+from mas_core import EnvelopeMessage, SpanKind, get_telemetry
+from mas_gateway import (
+    ActionPolicy,
+    AuditModule,
+    AuthorizationModule,
+    CircuitBreakerModule,
+    DLPModule,
+    RateLimitModule,
+)
+
 from .errors import (
     FailedPreconditionError,
     PermissionDeniedError,

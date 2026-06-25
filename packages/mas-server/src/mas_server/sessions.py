@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 
 from mas_proto.runtime.v1 import runtime_pb2 as mas_pb2
+
 from .errors import FailedPreconditionError, InvalidArgumentError, UnauthenticatedError
 from .types import AgentDefinition, InflightDelivery, Session
 

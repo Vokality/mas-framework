@@ -4,10 +4,8 @@ import asyncio
 from pathlib import Path
 
 import pytest
-
-from mas_agent import Agent
-from mas_agent import TlsClientConfig
-from mas_gateway.config import GatewaySettings, RedisSettings
+from mas_agent import Agent, TlsClientConfig
+from mas_gateway import GatewaySettings, RedisSettings
 from mas_server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
 
 from conftest import _run_openssl, _write_text

@@ -18,17 +18,21 @@ members = ["packages/*", "apps/*"]
 [tool.ruff]
 line-length = 88
 exclude = ["packages/mas-proto/src/mas_proto/runtime/v1"]
+target-version = "py313"
 
-[tool.ty.src]
-exclude = [
-    "./examples/",
-    "./packages/mas-proto/src/mas_proto/runtime/v1/",
-    "./packages/*/tests/",
-    "./apps/*/tests/",
-    "./integration_tests/",
-]
+
+[tool.ruff.lint]
+select = ["PLC0415", "RUF", "UP", "I", "F", "B", "SIM", "E", "PLC", "PLE", "PLW"]
+ignore = ["B008"]
 
 [tool.ty.rules]
+redundant-cast = "error"
+unused-ignore-comment = "warn"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+
+[tool.ty.analysis]
+respect-type-ignore-comments = false
 
 [dependency-groups]
 dev = [

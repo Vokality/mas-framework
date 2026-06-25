@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 from pydantic import BaseModel
-
 from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
@@ -312,8 +310,8 @@ class RateLimitModule:
     async def set_limits(
         self,
         agent_id: str,
-        per_minute: Optional[int] = None,
-        per_hour: Optional[int] = None,
+        per_minute: int | None = None,
+        per_hour: int | None = None,
     ) -> None:
         """
         Set custom rate limits for an agent.

@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from threading import Lock
-from typing import Final, cast
+from typing import Final
 
 from opentelemetry import metrics, propagate, trace
 from opentelemetry.context import Context
@@ -23,10 +23,12 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 from opentelemetry.trace import (
     Span,
-    SpanKind as OTelSpanKind,
     Status,
     StatusCode,
     Tracer,
+)
+from opentelemetry.trace import (
+    SpanKind as OTelSpanKind,
 )
 
 from ..protocol import MessageMeta
@@ -90,6 +92,10 @@ class _NoopHistogram:
         """Accept metric updates without side effects."""
 
 
+type CounterInstrument = Counter | UpDownCounter | _NoopCounter
+type HistogramInstrument = Histogram | _NoopHistogram
+
+
 class TraceContextFilter(logging.Filter):
     """Attach trace/span identifiers to log records."""
 
@@ -145,49 +151,49 @@ class TelemetryRuntime:
 
         if enabled:
             meter = metrics.get_meter("mas.telemetry")
-            self._messages_ingress_total: Counter = meter.create_counter(
+            self._messages_ingress_total: CounterInstrument = meter.create_counter(
                 name="mas_messages_ingress_total",
                 unit="1",
                 description="Total ingress messages by decision",
             )
-            self._policy_latency_ms: Histogram = meter.create_histogram(
+            self._policy_latency_ms: HistogramInstrument = meter.create_histogram(
                 name="mas_policy_latency_ms",
                 unit="ms",
                 description="Policy pipeline latency",
             )
-            self._delivery_ack_total: Counter = meter.create_counter(
+            self._delivery_ack_total: CounterInstrument = meter.create_counter(
                 name="mas_delivery_ack_total",
                 unit="1",
                 description="Total delivery ACKs",
             )
-            self._delivery_nack_total: Counter = meter.create_counter(
+            self._delivery_nack_total: CounterInstrument = meter.create_counter(
                 name="mas_delivery_nack_total",
                 unit="1",
                 description="Total delivery NACKs",
             )
-            self._dlq_write_total: Counter = meter.create_counter(
+            self._dlq_write_total: CounterInstrument = meter.create_counter(
                 name="mas_dlq_write_total",
                 unit="1",
                 description="Total DLQ write attempts",
             )
-            self._redis_errors_total: Counter = meter.create_counter(
+            self._redis_errors_total: CounterInstrument = meter.create_counter(
                 name="mas_redis_operation_errors_total",
                 unit="1",
                 description="Total Redis operation errors",
             )
-            self._active_sessions: UpDownCounter = meter.create_up_down_counter(
+            self._active_sessions: CounterInstrument = meter.create_up_down_counter(
                 name="mas_active_sessions",
                 unit="1",
                 description="Connected MAS sessions",
             )
         else:
-            self._messages_ingress_total = cast(Counter, _NoopCounter())
-            self._policy_latency_ms = cast(Histogram, _NoopHistogram())
-            self._delivery_ack_total = cast(Counter, _NoopCounter())
-            self._delivery_nack_total = cast(Counter, _NoopCounter())
-            self._dlq_write_total = cast(Counter, _NoopCounter())
-            self._redis_errors_total = cast(Counter, _NoopCounter())
-            self._active_sessions = cast(UpDownCounter, _NoopCounter())
+            self._messages_ingress_total = _NoopCounter()
+            self._policy_latency_ms = _NoopHistogram()
+            self._delivery_ack_total = _NoopCounter()
+            self._delivery_nack_total = _NoopCounter()
+            self._dlq_write_total = _NoopCounter()
+            self._redis_errors_total = _NoopCounter()
+            self._active_sessions = _NoopCounter()
 
     @property
     def enabled(self) -> bool:
@@ -206,7 +212,7 @@ class TelemetryRuntime:
         *,
         kind: SpanKind = SpanKind.INTERNAL,
         attributes: Mapping[str, str | bool | int | float] | None = None,
-        context: object | None = None,
+        context: Context | None = None,
     ) -> Iterator[TelemetrySpan]:
         """Start a new span as current context."""
         if not self._enabled or self._tracer is None:
@@ -215,7 +221,7 @@ class TelemetryRuntime:
 
         with self._tracer.start_as_current_span(
             name,
-            context=cast(Context | None, context),
+            context=context,
             kind=_SPAN_KIND_MAP[kind],
             attributes=attributes,
         ) as span:

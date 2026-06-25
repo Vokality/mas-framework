@@ -5,10 +5,9 @@ import time
 
 import grpc
 import pytest
-
 from mas_agent import Agent
-from mas_gateway.audit import AuditModule
-from mas_gateway.config import (
+from mas_gateway import (
+    AuditModule,
     FeaturesSettings,
     GatewaySettings,
     RateLimitSettings,

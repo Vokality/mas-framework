@@ -6,9 +6,8 @@ import hashlib
 import logging
 import time
 
-from mas_core.protocol import EnvelopeMessage
+from mas_core import EnvelopeMessage, SpanKind, get_telemetry
 from redis.asyncio import Redis
-from mas_core.telemetry import SpanKind, get_telemetry
 
 logger = logging.getLogger(__name__)
 

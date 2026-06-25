@@ -28,6 +28,7 @@ Coding style: All code must be clean, documented and minimal. That means:
 
 - Organize code by functionality
 - Organize related code/modules into packages
+- Packages should be self-contained and have a clear purpose.
 - Keep It Simple Stupid (KISS) by reducing the "Concept Count". That means, strive for fewer functions or methods, fewer helpers. If a helper is only called by a single callsite, then prefer to inline it into the caller.
 - At the same time, Don't Repeat Yourself (DRY)
 - There is a tension between KISS and DRY. If you find yourself in a situation where you're forced to make a helper method just to avoid repeating yourself, the best solution is to look for a way to avoid even having to do the complicated work at all.

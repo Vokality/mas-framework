@@ -6,8 +6,9 @@ import logging
 import re
 import time
 from enum import Enum
-from typing import Any, Literal, cast
+from typing import Literal
 
+from mas_core import JsonObject, JsonValue
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ class ScanResult(BaseModel):
     clean: bool
     violations: list[Violation]
     action: ActionPolicy
-    redacted_payload: dict[str, Any] | None = None
+    redacted_payload: JsonObject | None = None
     payload_hash: str  # Hash of original payload
 
 
@@ -260,7 +261,7 @@ class DLPModule:
             normalized = self._normalize_violation_type(violation_type)
             self.policies[normalized] = policy
 
-    async def scan(self, payload: dict[str, Any]) -> ScanResult:
+    async def scan(self, payload: JsonObject) -> ScanResult:
         """
         Scan payload for sensitive data violations.
 
@@ -414,8 +415,8 @@ class DLPModule:
         return ActionPolicy.ALERT
 
     async def _apply_redaction(
-        self, payload: dict[str, Any], violations: list[Violation]
-    ) -> dict[str, Any]:
+        self, payload: JsonObject, violations: list[Violation]
+    ) -> JsonObject:
         """
         Apply redaction to payload based on violations.
 
@@ -428,9 +429,6 @@ class DLPModule:
         Returns:
             Redacted payload
         """
-        # Convert to JSON and back for deep copy
-        redacted = json.loads(json.dumps(payload, default=str))
-
         # Build replacement mapping
         replacements: dict[str, str] = {}
         for violation in violations:
@@ -439,8 +437,10 @@ class DLPModule:
                     violation.violation_type, violation.matched_text
                 )
 
-        # Apply replacements recursively
-        redacted_result: Any = self._redact_recursive(redacted, replacements)
+        redacted = {
+            key: self._redact_recursive(value, replacements)
+            for key, value in payload.items()
+        }
 
         logger.debug(
             "Applied redaction",
@@ -450,13 +450,11 @@ class DLPModule:
             },
         )
 
-        # Ensure we return a dict
-        if isinstance(redacted_result, dict):
-            return cast(dict[str, Any], redacted_result)
-        empty: dict[str, Any] = {}
-        return empty  # Fallback to empty dict if not a dict
+        return redacted
 
-    def _redact_recursive(self, obj: Any, replacements: dict[str, str]) -> Any:
+    def _redact_recursive(
+        self, obj: JsonValue, replacements: dict[str, str]
+    ) -> JsonValue:
         """
         Recursively redact sensitive data in object.
 
@@ -468,14 +466,12 @@ class DLPModule:
             Redacted object
         """
         if isinstance(obj, dict):
-            obj_dict = cast(dict[str, Any], obj)
             return {
                 key: self._redact_recursive(value, replacements)
-                for key, value in obj_dict.items()
+                for key, value in obj.items()
             }
         elif isinstance(obj, list):
-            obj_list = cast(list[Any], obj)
-            return [self._redact_recursive(item, replacements) for item in obj_list]
+            return [self._redact_recursive(item, replacements) for item in obj]
         elif isinstance(obj, str):
             # Apply all replacements to string
             for original, redacted in replacements.items():

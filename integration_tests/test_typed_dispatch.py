@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from pydantic import BaseModel
-
 from mas_agent import Agent
+from mas_core import JsonObject
 from mas_server import AgentDefinition
+from pydantic import BaseModel
 
 pytestmark = pytest.mark.asyncio
 
@@ -15,14 +15,14 @@ class Ping(BaseModel):
     value: int
 
 
-class TypedResponder(Agent[dict[str, object]]):
+class TypedResponder(Agent[JsonObject]):
     @Agent.on("ping", model=Ping)
     async def handle_ping(self, message, payload: Ping) -> None:
-        await message.reply("pong", {"value": payload.value + 1})
+        await self.send_reply_envelope(message, "pong", {"value": payload.value + 1})
 
     @Agent.on("no_model")
     async def handle_no_model(self, message, payload: None) -> None:
-        await message.reply("no_model.reply", {"ok": True})
+        await self.send_reply_envelope(message, "no_model.reply", {"ok": True})
 
 
 async def _wait_for(predicate, *, timeout: float = 2.0) -> None:

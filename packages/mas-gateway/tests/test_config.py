@@ -5,7 +5,6 @@ import tempfile
 
 import pytest
 import yaml
-
 from mas_gateway.config import (
     CircuitBreakerSettings,
     FeaturesSettings,

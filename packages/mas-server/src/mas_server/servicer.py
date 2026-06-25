@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, AsyncIterator, Sequence, cast
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import grpc
 import grpc.aio as grpc_aio
-
+from mas_core import SpanKind, get_telemetry
 from mas_proto.runtime.v1 import (
     runtime_pb2 as mas_pb2,
+)
+from mas_proto.runtime.v1 import (
     runtime_pb2_grpc as mas_pb2_grpc,
 )
-from mas_core.telemetry import SpanKind, get_telemetry
+from opentelemetry.context import Context
+
 from .authn import spiffe_agent_id
 from .errors import RpcError
 
@@ -36,14 +40,14 @@ class MasGrpcServicer(mas_pb2_grpc.RuntimeServiceServicer):
             await context.abort(exc.status, exc.message)
             return None
 
-    def _rpc_context(self, context: grpc_aio.ServicerContext) -> object | None:
+    def _rpc_context(self, context: grpc_aio.ServicerContext) -> Context | None:
         """Extract tracing context from inbound gRPC metadata."""
         raw_metadata = context.invocation_metadata()
         metadata: list[object] | None
         if raw_metadata is None:
             metadata = None
         else:
-            metadata = list(cast(Sequence[object], raw_metadata))
+            metadata = list(raw_metadata)
         return get_telemetry().extract_grpc_context(metadata)
 
     async def Transport(

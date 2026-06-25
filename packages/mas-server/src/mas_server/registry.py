@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
 
 from redis.asyncio import Redis
-from .types import AgentDefinition
+
+from .types import AgentDefinition, AgentDiscoveryRecord
 
 
 class RegistryService:
@@ -51,7 +51,7 @@ class RegistryService:
         *,
         agent_id: str,
         capabilities: list[str],
-    ) -> list[dict[str, Any]]:
+    ) -> list[AgentDiscoveryRecord]:
         """List discoverable agents for a sender and capability filter."""
         allowed = await self._redis.smembers(f"agent:{agent_id}:allowed_targets")
         blocked = await self._redis.smembers(f"agent:{agent_id}:blocked_targets")
@@ -63,7 +63,7 @@ class RegistryService:
 
         candidates = [target for target in candidates if target not in blocked]
 
-        results: list[dict[str, Any]] = []
+        results: list[AgentDiscoveryRecord] = []
         for target in candidates:
             if target not in self._agents:
                 continue
