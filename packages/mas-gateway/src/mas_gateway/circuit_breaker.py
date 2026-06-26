@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from enum import StrEnum
 from typing import TypedDict
 
@@ -39,7 +39,7 @@ class CircuitBreakerConfig(BaseModel):
     failure_threshold: int = 5  # Failures before opening circuit
     success_threshold: int = 2  # Successes to close from half-open
     timeout_seconds: float = 60.0  # Time before trying half-open
-    window_seconds: float = 60.0  # Rolling window for failure counting
+    window_seconds: float = 300.0  # Rolling window (matches CircuitBreakerSettings)
 
 
 class CircuitStatus(BaseModel):
@@ -84,6 +84,8 @@ class CircuitBreakerModule:
         self,
         redis: Redis[str],
         config: CircuitBreakerConfig,
+        *,
+        clock: Callable[[], float] = time.time,
     ):
         """
         Initialize circuit breaker module.
@@ -91,9 +93,15 @@ class CircuitBreakerModule:
         Args:
             redis: Redis connection
             config: Circuit breaker configuration
+            clock: Wall-clock/epoch time source in seconds (e.g. ``time.time``).
+                Timestamps are persisted to Redis and compared as absolute values
+                across processes, so a per-process monotonic clock must NOT be
+                used. Injectable so timeout/window transitions can be driven
+                deterministically in tests; defaults to ``time.time``.
         """
         self.redis: Redis[str] = redis
         self.config = config
+        self._clock = clock
 
     def _parse_circuit_data(
         self, circuit_data: Mapping[str, str]
@@ -175,7 +183,7 @@ class CircuitBreakerModule:
             self._parse_circuit_data(circuit_data)
         )
 
-        current_time = time.time()
+        current_time = self._clock()
 
         # State transitions
         state, success_count, transitioned = self._maybe_transition_half_open(
@@ -279,7 +287,7 @@ class CircuitBreakerModule:
             self._parse_circuit_data(circuit_data)
         )
 
-        current_time = time.time()
+        current_time = self._clock()
 
         # State transitions for check
         state, success_count, _transitioned = self._maybe_transition_half_open(
@@ -341,7 +349,7 @@ class CircuitBreakerModule:
         circuit_key = f"circuit:{target_id}"
         circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
 
-        current_time = time.time()
+        current_time = self._clock()
         opened_at: float | None = None
         has_data = bool(circuit_data)
 
@@ -443,7 +451,7 @@ class CircuitBreakerModule:
         circuit_key = f"circuit:{target_id}"
         circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
 
-        current_time = time.time()
+        current_time = self._clock()
         opened_at: float | None = None
         has_data = bool(circuit_data)
 
@@ -598,7 +606,7 @@ class CircuitBreakerModule:
                 "target_id": target_id,
                 "payload": str(payload),
                 "reason": reason,
-                "timestamp": str(time.time()),
+                "timestamp": str(self._clock()),
             },
         )
 

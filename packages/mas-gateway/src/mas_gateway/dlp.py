@@ -5,11 +5,10 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping
 from enum import StrEnum
 from typing import ClassVar, Literal
 
-from mas_core import JsonObject, JsonValue, validate_json_object
+from mas_core import JsonObject, JsonValue
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
@@ -262,23 +261,25 @@ class DLPModule:
             normalized = self._normalize_violation_type(violation_type)
             self.policies[normalized] = policy
 
-    async def scan(self, payload: Mapping[str, object]) -> ScanResult:
+    async def scan(self, payload: JsonObject) -> ScanResult:
         """
         Scan payload for sensitive data violations.
 
         Args:
-            payload: Message payload to scan
+            payload: Message payload to scan (a JSON object, as carried by
+                ``EnvelopeMessage.data``)
 
         Returns:
             ScanResult with violations and action policy
         """
-        payload_json = validate_json_object(dict(payload))
-
         # Track scan duration
         scan_start = time.time()
 
-        # Convert payload to text for scanning
-        payload_text = json.dumps(payload_json, default=str)
+        payload_dict = dict(payload)
+
+        # Serialise once to drive the regex scan. A JsonObject is always
+        # serialisable, so no coercion is needed.
+        payload_text = json.dumps(payload_dict)
         payload_hash = hashlib.sha256(payload_text.encode()).hexdigest()
 
         # Detect violations
@@ -297,10 +298,11 @@ class DLPModule:
         # Determine action policy (most restrictive wins)
         action = self._determine_action(violations)
 
-        # Apply redaction if needed
+        # Redact the original structure so non-violating values keep their type;
+        # only matched substrings inside string values are masked.
         redacted_payload = None
         if action == ActionPolicy.REDACT:
-            redacted_payload = await self._apply_redaction(payload_json, violations)
+            redacted_payload = await self._apply_redaction(payload_dict, violations)
 
         logger.info(
             "DLP scan completed",

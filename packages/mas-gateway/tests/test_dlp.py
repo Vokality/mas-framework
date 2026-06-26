@@ -3,6 +3,7 @@
 from typing import Literal
 
 import pytest
+from mas_core import JsonObject
 from mas_gateway.dlp import (
     ActionPolicy,
     DLPModule,
@@ -40,7 +41,7 @@ class TestDLPModule:
 
     async def test_clean_payload(self, dlp: DLPModule) -> None:
         """Test scanning clean payload with no violations."""
-        payload = {"message": "Hello, how are you?", "data": {"count": 42}}
+        payload: JsonObject = {"message": "Hello, how are you?", "data": {"count": 42}}
 
         result = await dlp.scan(payload)
 
@@ -52,7 +53,7 @@ class TestDLPModule:
 
     async def test_detect_ssn(self, dlp: DLPModule) -> None:
         """Test SSN detection."""
-        payload = {"message": "My SSN is 123-45-6789"}
+        payload: JsonObject = {"message": "My SSN is 123-45-6789"}
 
         result = await dlp.scan(payload)
 
@@ -71,7 +72,7 @@ class TestDLPModule:
         ]
 
         for ssn in test_cases:
-            payload = {"ssn": ssn}
+            payload: JsonObject = {"ssn": ssn}
             result = await dlp.scan(payload)
             assert result.clean is False
             assert any(
@@ -80,7 +81,7 @@ class TestDLPModule:
 
     async def test_detect_email(self, dlp: DLPModule) -> None:
         """Test email detection."""
-        payload = {"contact": "user@example.com"}
+        payload: JsonObject = {"contact": "user@example.com"}
 
         result = await dlp.scan(payload)
 
@@ -99,7 +100,7 @@ class TestDLPModule:
         ]
 
         for phone in test_cases:
-            payload = {"phone": phone}
+            payload: JsonObject = {"phone": phone}
             result = await dlp.scan(payload)
             assert result.clean is False
             assert any(
@@ -110,7 +111,7 @@ class TestDLPModule:
 
     async def test_detect_mrn(self, dlp: DLPModule) -> None:
         """Test Medical Record Number detection."""
-        payload = {"patient": "MRN: 1234567"}
+        payload: JsonObject = {"patient": "MRN: 1234567"}
 
         result = await dlp.scan(payload)
 
@@ -122,7 +123,7 @@ class TestDLPModule:
 
     async def test_detect_health_insurance(self, dlp: DLPModule) -> None:
         """Test health insurance number detection."""
-        payload = {"insurance": "Health Insurance: 123456789"}
+        payload: JsonObject = {"insurance": "Health Insurance: 123456789"}
 
         result = await dlp.scan(payload)
 
@@ -135,7 +136,7 @@ class TestDLPModule:
 
     async def test_detect_icd10(self, dlp: DLPModule) -> None:
         """Test ICD-10 diagnosis code detection."""
-        payload = {"diagnosis": "Patient has A00.1"}
+        payload: JsonObject = {"diagnosis": "Patient has A00.1"}
 
         result = await dlp.scan(payload)
 
@@ -147,7 +148,7 @@ class TestDLPModule:
     async def test_detect_credit_card_visa(self, dlp: DLPModule) -> None:
         """Test Visa card detection with Luhn validation."""
         # Valid Visa test card number
-        payload = {"card": "4532-0151-2345-6789"}
+        payload: JsonObject = {"card": "4532-0151-2345-6789"}
 
         result = await dlp.scan(payload)
 
@@ -160,7 +161,7 @@ class TestDLPModule:
     async def test_detect_credit_card_mastercard(self, dlp: DLPModule) -> None:
         """Test MasterCard detection."""
         # Valid MasterCard test number
-        payload = {"card": "5425-2334-3010-9903"}
+        payload: JsonObject = {"card": "5425-2334-3010-9903"}
 
         result = await dlp.scan(payload)
 
@@ -172,7 +173,7 @@ class TestDLPModule:
     async def test_luhn_validation(self, dlp: DLPModule) -> None:
         """Test Luhn algorithm validation rejects invalid cards."""
         # Invalid card number (fails Luhn check)
-        payload = {"card": "4532-0151-2345-6780"}  # Last digit wrong
+        payload: JsonObject = {"card": "4532-0151-2345-6780"}  # Last digit wrong
 
         result = await dlp.scan(payload)
 
@@ -183,7 +184,7 @@ class TestDLPModule:
 
     async def test_detect_cvv(self, dlp: DLPModule) -> None:
         """Test CVV code detection."""
-        payload = {"security": "CVV: 123"}
+        payload: JsonObject = {"security": "CVV: 123"}
 
         result = await dlp.scan(payload)
 
@@ -196,7 +197,7 @@ class TestDLPModule:
 
     async def test_detect_api_key(self, dlp: DLPModule) -> None:
         """Test API key detection."""
-        payload = {"config": "api_key: abcdef1234567890abcdef1234567890"}
+        payload: JsonObject = {"config": "api_key: abcdef1234567890abcdef1234567890"}
 
         result = await dlp.scan(payload)
 
@@ -207,7 +208,7 @@ class TestDLPModule:
 
     async def test_detect_aws_key(self, dlp: DLPModule) -> None:
         """Test AWS access key detection."""
-        payload = {"aws": "AKIAIOSFODNN7EXAMPLE"}
+        payload: JsonObject = {"aws": "AKIAIOSFODNN7EXAMPLE"}
 
         result = await dlp.scan(payload)
 
@@ -218,7 +219,7 @@ class TestDLPModule:
 
     async def test_detect_private_key(self, dlp: DLPModule) -> None:
         """Test private key detection."""
-        payload = {"key": "-----BEGIN RSA PRIVATE KEY-----\nMIIE..."}
+        payload: JsonObject = {"key": "-----BEGIN RSA PRIVATE KEY-----\nMIIE..."}
 
         result = await dlp.scan(payload)
 
@@ -229,7 +230,7 @@ class TestDLPModule:
 
     async def test_detect_jwt(self, dlp: DLPModule) -> None:
         """Test JWT token detection."""
-        payload = {
+        payload: JsonObject = {
             "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
             "eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
         }
@@ -243,7 +244,7 @@ class TestDLPModule:
 
     async def test_detect_password(self, dlp: DLPModule) -> None:
         """Test password detection."""
-        payload = {"credentials": "password: MySecretPass123"}
+        payload: JsonObject = {"credentials": "password: MySecretPass123"}
 
         result = await dlp.scan(payload)
 
@@ -256,7 +257,7 @@ class TestDLPModule:
 
     async def test_redact_ssn(self, dlp: DLPModule) -> None:
         """Test SSN redaction."""
-        payload = {"message": "My SSN is 123-45-6789"}
+        payload: JsonObject = {"message": "My SSN is 123-45-6789"}
 
         result = await dlp.scan(payload)
 
@@ -270,7 +271,7 @@ class TestDLPModule:
         dlp_custom = make_dlp(
             custom_policies={ViolationType.EMAIL: ActionPolicy.REDACT}
         )
-        payload = {"contact": "user@example.com"}
+        payload: JsonObject = {"contact": "user@example.com"}
 
         result = await dlp_custom.scan(payload)
 
@@ -283,7 +284,7 @@ class TestDLPModule:
         dlp_custom = make_dlp(
             custom_policies={ViolationType.PHONE: ActionPolicy.REDACT}
         )
-        payload = {"phone": "555-123-4567"}
+        payload: JsonObject = {"phone": "555-123-4567"}
 
         result = await dlp_custom.scan(payload)
 
@@ -296,7 +297,7 @@ class TestDLPModule:
         dlp_custom = make_dlp(
             custom_policies={ViolationType.CREDIT_CARD: ActionPolicy.REDACT}
         )
-        payload = {"card": "4532-0151-2345-6789"}
+        payload: JsonObject = {"card": "4532-0151-2345-6789"}
 
         result = await dlp_custom.scan(payload)
 
@@ -306,7 +307,7 @@ class TestDLPModule:
 
     async def test_redact_nested_structure(self, dlp: DLPModule) -> None:
         """Test redaction in nested data structures."""
-        payload = {
+        payload: JsonObject = {
             "user": {"name": "John", "ssn": "123-45-6789"},
             "contacts": [{"email": "john@example.com"}],
         }
@@ -324,7 +325,7 @@ class TestDLPModule:
         """Test custom policy overrides."""
         # Override SSN to BLOCK instead of REDACT
         dlp_custom = make_dlp(custom_policies={ViolationType.SSN: ActionPolicy.BLOCK})
-        payload = {"ssn": "123-45-6789"}
+        payload: JsonObject = {"ssn": "123-45-6789"}
 
         result = await dlp_custom.scan(payload)
 
@@ -345,7 +346,7 @@ class TestDLPModule:
             )
         ]
         dlp_custom = make_dlp(custom_rules=rules, merge_strategy="append")
-        payload = {"account": "ACCT-ABCDEF1234"}
+        payload: JsonObject = {"account": "ACCT-ABCDEF1234"}
 
         result = await dlp_custom.scan(payload)
 
@@ -355,7 +356,7 @@ class TestDLPModule:
 
     async def test_most_restrictive_policy_wins(self, dlp: DLPModule) -> None:
         """Test that most restrictive policy is applied when multiple violations."""
-        payload = {
+        payload: JsonObject = {
             "ssn": "123-45-6789",  # REDACT policy
             "card": "4532-0151-2345-6789",  # BLOCK policy
         }
@@ -367,7 +368,7 @@ class TestDLPModule:
 
     async def test_multiple_violations(self, dlp: DLPModule) -> None:
         """Test detection of multiple violations in same payload."""
-        payload = {
+        payload: JsonObject = {
             "message": "Contact me at user@example.com or 555-123-4567",
             "ssn": "123-45-6789",
         }
@@ -383,7 +384,7 @@ class TestDLPModule:
 
     async def test_payload_hash_generation(self, dlp: DLPModule) -> None:
         """Test that payload hash is generated correctly."""
-        payload = {"message": "test"}
+        payload: JsonObject = {"message": "test"}
 
         result = await dlp.scan(payload)
 
@@ -392,7 +393,7 @@ class TestDLPModule:
 
     async def test_complex_nested_payload(self, dlp: DLPModule) -> None:
         """Test scanning complex nested payloads."""
-        payload = {
+        payload: JsonObject = {
             "level1": {
                 "level2": {
                     "level3": {
@@ -410,7 +411,7 @@ class TestDLPModule:
 
     async def test_no_false_positives_on_similar_patterns(self, dlp: DLPModule) -> None:
         """Test that similar but invalid patterns don't trigger false positives."""
-        payload = {
+        payload: JsonObject = {
             "data": "Build number: 123-45-67890",  # Not a valid SSN (too many digits)
             "version": "1.2.3.4.5.6.7.8.9",  # Not a phone number
         }

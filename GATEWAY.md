@@ -35,12 +35,12 @@ Audit entries include a `decision` field that reflects the gateway outcome:
 ## Audit File Sink
 
 You can optionally write audit entries to a local JSONL file with rotation using
-`gateway.audit` in `mas.yaml`. When `file_path` is relative, it resolves from
-the directory containing `mas.yaml`.
+`GatewaySettings.audit` or the `audit` section of a standalone gateway YAML file.
 
 ## OpenTelemetry
 
-Configure telemetry under `gateway.telemetry` in `mas.yaml`.
+Configure telemetry with `GatewaySettings.telemetry` or the `telemetry` section of
+a standalone gateway YAML file.
 
 - `enabled`: turn OpenTelemetry on/off (default `false`)
 - `otlp_endpoint`: OTLP/HTTP collector endpoint (for example `http://localhost:4318`)

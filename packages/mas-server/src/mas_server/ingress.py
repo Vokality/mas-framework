@@ -18,7 +18,7 @@ from mas_core import (
 )
 from redis.asyncio import Redis
 
-from .errors import FailedPreconditionError, InvalidArgumentError
+from .errors import FailedPreconditionError, InvalidArgumentError, PermissionDeniedError
 from .policy import PolicyPipeline
 from .sessions import SessionManager
 
@@ -108,6 +108,7 @@ class IngressService:
                     {
                         "agent_id": sender_id,
                         "instance_id": sender_instance_id,
+                        "target_id": target_id,
                         "expires_at": expires_at,
                     }
                 ),
@@ -177,6 +178,7 @@ class IngressService:
 
             origin_agent_id = str(origin_obj.get("agent_id", ""))
             origin_instance_id = str(origin_obj.get("instance_id", ""))
+            expected_sender_id = str(origin_obj.get("target_id", ""))
             expires_at_raw = origin_obj.get("expires_at")
             if expires_at_raw is None:
                 raise InvalidArgumentError("unknown_correlation_id")
@@ -192,6 +194,11 @@ class IngressService:
 
             if not origin_agent_id or not origin_instance_id:
                 raise InvalidArgumentError("unknown_correlation_id")
+            # Fail closed when the sender binding is absent.
+            if not expected_sender_id:
+                raise InvalidArgumentError("unknown_correlation_id")
+            if sender_id != expected_sender_id:
+                raise PermissionDeniedError("reply_sender_mismatch")
 
             if time.time() > expires_at:
                 try:

@@ -1,20 +1,19 @@
 # Current Architecture
 
-This document reflects the current post-workspace MAS system in this repository.
+This document reflects the package-only MAS system in this repository.
 
 ## 1. Repository And Package Architecture
 
 ```mermaid
 flowchart TB
-    root["Workspace Root<br/>pyproject.toml<br/>tool.uv.package = false<br/>tool.uv.workspace members = packages/*, apps/*"]
+    root["Workspace Root<br/>pyproject.toml<br/>tool.uv.package = false<br/>tool.uv.workspace members = packages/*"]
 
     subgraph packages["Workspace Members"]
-        proto["mas-proto<br/>packages/mas-proto<br/>RuntimeService protobuf contract<br/>Generated bindings: mas_proto.runtime.v1"]
-        core["mas-core<br/>packages/mas-core<br/>Envelope, state typing, Redis client/types,<br/>telemetry runtime, shared helpers"]
-        gateway["mas-gateway<br/>packages/mas-gateway<br/>Authorization, DLP, rate limits,<br/>circuit breaker, audit, gateway config"]
-        agent["mas-agent<br/>packages/mas-agent<br/>Agent client runtime<br/>mTLS gRPC client + typed handlers"]
-        server["mas-server<br/>packages/mas-server<br/>gRPC server runtime<br/>routing, delivery, sessions, registry, state"]
-        runtime["mas-runtime<br/>apps/mas-runtime<br/>CLI + runner<br/>loads mas.yaml and starts server + agents"]
+        proto["mas-proto<br/>RuntimeService protobuf contract<br/>Generated bindings"]
+        core["mas-core<br/>Envelope, JSON validation,<br/>Redis client, telemetry"]
+        gateway["mas-gateway<br/>Authorization, DLP, rate limits,<br/>circuit breaker, audit, config"]
+        agent["mas-agent<br/>Agent client runtime<br/>mTLS gRPC client + typed handlers"]
+        server["mas-server<br/>gRPC server runtime<br/>routing, delivery, sessions, registry, state"]
     end
 
     root --> proto
@@ -22,7 +21,6 @@ flowchart TB
     root --> gateway
     root --> agent
     root --> server
-    root --> runtime
 
     core --> gateway
     core --> agent
@@ -30,23 +28,15 @@ flowchart TB
     core --> server
     gateway --> server
     proto --> server
-    agent --> runtime
-    core --> runtime
-    gateway --> runtime
-    server --> runtime
 ```
 
 ## 2. Runtime Topology
 
 ```mermaid
 flowchart LR
-    subgraph app["mas-runtime App"]
-        cli["CLI<br/>mas-runtime"]
-        runner["AgentRunner<br/>RunnerSettings"]
-    end
-
-    subgraph config["Configuration"]
-        yaml["mas.yaml<br/>server_listen_addr<br/>TLS paths<br/>gateway settings<br/>permissions<br/>agent specs"]
+    subgraph host["Host Application"]
+        app["Application entrypoint"]
+        config["MASServerSettings<br/>GatewaySettings<br/>Agent definitions"]
     end
 
     subgraph control["Control Plane"]
@@ -75,12 +65,8 @@ flowchart LR
         a2["Agent instance B<br/>mas_agent.Agent"]
     end
 
-    cli --> runner
-    yaml --> runner
-    runner --> grpc
-    runner --> a1
-    runner --> a2
-
+    app --> config
+    config --> grpc
     a1 <-->|"RuntimeService RPCs + Transport stream<br/>mTLS / SPIFFE SAN identity"| grpc
     a2 <-->|"RuntimeService RPCs + Transport stream<br/>mTLS / SPIFFE SAN identity"| grpc
 
@@ -191,4 +177,3 @@ flowchart TB
 - Shared work distribution uses `agent.stream:{agent_id}` with Redis consumer groups.
 - Replies are pinned to the requesting process using `agent.stream:{agent_id}:{instance_id}`.
 - The workspace root is not a distributable package; installable artifacts are the individual workspace members.
-- The only runnable app package in the current repo is `mas-runtime`.

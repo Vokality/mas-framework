@@ -3,6 +3,7 @@
 import time
 
 import pytest
+from mas_core import JsonObject
 from mas_gateway.dlp import DLPModule
 
 pytestmark = pytest.mark.asyncio
@@ -23,7 +24,7 @@ class TestDlpPerformance:
             "User profile: John Doe, email user@example.com. "
             "Notes: SSN 123-45-6789. " + ("x" * 2000)
         )
-        payload: dict[str, object] = {"message": payload_text}
+        payload: JsonObject = {"message": payload_text}
 
         warmup_runs = 5
         measured_runs = 50

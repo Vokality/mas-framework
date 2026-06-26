@@ -1,7 +1,5 @@
 """Tests for Circuit Breaker Module."""
 
-import asyncio
-
 import pytest
 from mas_gateway.circuit_breaker import (
     CircuitBreakerConfig,
@@ -13,8 +11,27 @@ from mas_gateway.circuit_breaker import (
 pytestmark = pytest.mark.asyncio
 
 
+class FakeClock:
+    """Manually-advanced time source for deterministic timeout/window tests."""
+
+    def __init__(self, start: float = 1_000.0) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
 @pytest.fixture
-def breaker(redis):
+def clock() -> FakeClock:
+    """A controllable clock injected into the breaker fixture."""
+    return FakeClock()
+
+
+@pytest.fixture
+def breaker(redis, clock):
     """Circuit breaker module fixture."""
     config = CircuitBreakerConfig(
         failure_threshold=3,
@@ -22,7 +39,7 @@ def breaker(redis):
         timeout_seconds=2.0,
         window_seconds=10.0,
     )
-    return CircuitBreakerModule(redis, config)
+    return CircuitBreakerModule(redis, config, clock=clock)
 
 
 class TestCircuitBreakerModule:
@@ -87,7 +104,7 @@ class TestCircuitBreakerModule:
         assert status.state == CircuitState.OPEN
         assert status.allowed is False
 
-    async def test_circuit_half_open_after_timeout(self, breaker):
+    async def test_circuit_half_open_after_timeout(self, breaker, clock):
         """Test circuit transitions to HALF_OPEN after timeout."""
         target_id = "test_target"
 
@@ -95,8 +112,8 @@ class TestCircuitBreakerModule:
         for i in range(3):
             await breaker.record_failure(target_id, f"failure_{i}")
 
-        # Wait for timeout
-        await asyncio.sleep(2.1)
+        # Advance past the configured timeout
+        clock.advance(2.1)
 
         # Check status should be HALF_OPEN
         status = await breaker.check_circuit(target_id)
@@ -104,7 +121,7 @@ class TestCircuitBreakerModule:
         assert status.state == CircuitState.HALF_OPEN
         assert status.allowed is True
 
-    async def test_half_open_closes_after_successes(self, breaker):
+    async def test_half_open_closes_after_successes(self, breaker, clock):
         """Test HALF_OPEN closes after success threshold."""
         target_id = "test_target"
 
@@ -112,8 +129,8 @@ class TestCircuitBreakerModule:
         for i in range(3):
             await breaker.record_failure(target_id, f"failure_{i}")
 
-        # Wait for timeout
-        await asyncio.sleep(2.1)
+        # Advance past the configured timeout
+        clock.advance(2.1)
 
         # Check to transition to HALF_OPEN
         await breaker.check_circuit(target_id)
@@ -126,7 +143,7 @@ class TestCircuitBreakerModule:
         assert status.state == CircuitState.CLOSED
         assert status.allowed is True
 
-    async def test_half_open_reopens_on_failure(self, breaker):
+    async def test_half_open_reopens_on_failure(self, breaker, clock):
         """Test HALF_OPEN reopens on failure."""
         target_id = "test_target"
 
@@ -134,8 +151,8 @@ class TestCircuitBreakerModule:
         for i in range(3):
             await breaker.record_failure(target_id, f"failure_{i}")
 
-        # Wait for timeout
-        await asyncio.sleep(2.1)
+        # Advance past the configured timeout
+        clock.advance(2.1)
 
         # Check to transition to HALF_OPEN
         await breaker.check_circuit(target_id)
@@ -146,21 +163,21 @@ class TestCircuitBreakerModule:
         assert status.state == CircuitState.OPEN
         assert status.allowed is False
 
-    async def test_failure_window_resets_count(self, breaker):
+    async def test_failure_window_resets_count(self, breaker, clock):
         """Test failure count resets outside window."""
         target_id = "test_target"
         config = CircuitBreakerConfig(
             failure_threshold=3,
             window_seconds=1.0,  # Short window
         )
-        breaker_short = CircuitBreakerModule(breaker.redis, config)
+        breaker_short = CircuitBreakerModule(breaker.redis, config, clock=clock)
 
         # Record 2 failures
         await breaker_short.record_failure(target_id, "failure_1")
         await breaker_short.record_failure(target_id, "failure_2")
 
-        # Wait for window to expire
-        await asyncio.sleep(1.1)
+        # Advance past the failure window
+        clock.advance(1.1)
 
         # Record another failure (should reset count)
         status = await breaker_short.record_failure(target_id, "failure_3")

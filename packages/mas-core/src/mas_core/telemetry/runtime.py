@@ -260,7 +260,9 @@ class TelemetryRuntime:
         propagate.inject(carrier)
         return [(key, value) for key, value in carrier.items() if value]
 
-    def extract_grpc_context(self, metadata: Sequence[object] | None) -> Context | None:
+    def extract_grpc_context(
+        self, metadata: Sequence[tuple[str, str | bytes]] | None
+    ) -> Context | None:
         """Extract context from inbound gRPC metadata."""
         if not self._enabled:
             return None
@@ -269,33 +271,17 @@ class TelemetryRuntime:
             return None
 
         carrier: dict[str, str] = {}
-        for item in metadata:
-            key: str | None = None
-            value: str | None = None
-
-            if isinstance(item, tuple) and len(item) == 2:
-                raw_key, raw_value = item
-                if isinstance(raw_key, str):
-                    key = raw_key
-                if isinstance(raw_value, str):
-                    value = raw_value
-                elif isinstance(raw_value, bytes):
-                    try:
-                        value = raw_value.decode("utf-8")
-                    except UnicodeDecodeError:
-                        value = None
-            else:
-                raw_key = getattr(item, "key", None)
-                raw_value = getattr(item, "value", None)
-                if isinstance(raw_key, str):
-                    key = raw_key
-                if isinstance(raw_value, str):
-                    value = raw_value
-
-            if key is None or value is None:
+        for key, raw_value in metadata:
+            if key.lower() not in _TRACE_HEADER_KEYS:
                 continue
-            if key.lower() in _TRACE_HEADER_KEYS:
-                carrier[key.lower()] = value
+            if isinstance(raw_value, bytes):
+                try:
+                    value = raw_value.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+            else:
+                value = raw_value
+            carrier[key.lower()] = value
 
         if not carrier:
             return None

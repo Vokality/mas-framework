@@ -1,5 +1,7 @@
 """MAS agent client package."""
 
-from .agent import Agent, AgentMessage, TlsClientConfig
+from ._core import AgentMessage
+from .agent import Agent, StateReloadError
+from .config import TlsClientConfig
 
-__all__ = ["Agent", "AgentMessage", "TlsClientConfig"]
+__all__ = ["Agent", "AgentMessage", "StateReloadError", "TlsClientConfig"]

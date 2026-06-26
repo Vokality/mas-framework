@@ -382,7 +382,7 @@ class MASServer:
         """Clear persisted agent state."""
         await self._require_state_store().reset_state(agent_id=agent_id)
 
-    def _build_policy_pipeline(self):
+    def _build_policy_pipeline(self) -> PolicyPipeline:
         """Build policy pipeline from initialized modules."""
         if (
             self._authz is None

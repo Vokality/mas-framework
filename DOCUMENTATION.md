@@ -1,41 +1,34 @@
 # MAS Framework Documentation
 
-## Running
+## Runtime Composition
 
-The canonical entrypoint is the runner:
+This repository provides library packages. A host application is responsible for:
 
-```bash
-uv sync --all-groups --all-packages
-uv run --package mas-runtime python -m mas_runtime
-```
+- Building `AgentDefinition` entries for allowlisted agents.
+- Constructing `MASServerSettings` and `GatewaySettings`.
+- Starting and stopping `MASServer`.
+- Starting agent processes with `server_addr` and `TlsClientConfig`.
+- Applying authorization rules through `AuthorizationModule`.
 
-The runner searches upward from the current working directory for `mas.yaml`.
+## Gateway Configuration
 
-If a config file is used (auto-discovered or passed via `MAS_RUNNER_CONFIG_FILE`), all relative paths inside it (TLS cert/key paths) are resolved relative to that config file.
+Gateway policy can be configured with `GatewaySettings`, environment variables, or a standalone YAML file loaded with `GatewaySettings.from_yaml(...)`.
 
-## Configuration (`mas.yaml`)
-
-See `mas.yaml.example`.
-
-Key points:
-- mTLS is required (server cert/key + CA, and a client cert/key per agent)
-- Client certificates must contain a SPIFFE URI SAN: `spiffe://mas/agent/{agent_id}`
-- Agents are allowlisted by `agents:` in the config
-- Authorization is deny-by-default; configure `permissions:` explicitly
-
-Common fields:
-- `server_listen_addr`: gRPC bind address for the MAS server.
-- `tls_ca_path`, `tls_server_cert_path`, `tls_server_key_path`: server mTLS credentials.
-- `permissions`: allow/deny rules for agent-to-agent traffic.
-- `agents`: list of agent entries; each includes `agent_id`, `class_path`, `instances`, `capabilities`, `metadata`, `tls_cert_path`, `tls_key_path`, and `init_kwargs`.
-- `gateway`: optional gateway policy settings (rate limits, DLP, RBAC, circuit breaker).
+Supported settings:
+- `redis`: connection parameters used by the server.
+- `rate_limit`: per-agent message limits per minute/hour.
+- `features`: toggles for DLP, RBAC, and circuit breaker.
+- `dlp`: custom DLP rules and policy overrides.
+- `audit`: optional JSONL audit file sink settings.
+- `telemetry`: OpenTelemetry exporter settings.
+- `circuit_breaker`: failure/success thresholds and timeout window.
 
 ## Agent API
 
 Core messaging:
 - `await agent.send(target_id, message_type, data)`: fire-and-forget delivery to another agent.
 - `reply = await agent.request(target_id, message_type, data, timeout=...)`: request/reply pattern; waits for a response or timeout.
-- `await message.reply(message_type, data)`: reply to an incoming message; preserves correlation for the original request.
+- `await agent.send_reply_envelope(message, message_type, data)`: reply to an incoming request while preserving correlation metadata.
 
 Discovery:
 - `agents = await agent.discover(capabilities=[...])`: find active agents by capability tags.
@@ -47,19 +40,29 @@ State:
 
 Handlers:
 - `@Agent.on("type", model=...)`: register a typed handler for an incoming `message_type`.
-- `async def on_message(self, message)`: fallback for untyped/unhandled messages.
+- `async def on_message(self, message)`: fallback for untyped or unhandled messages.
+
+Delivery is at-least-once. Handler code that performs side effects must be
+idempotent or deduplicate by `message.message_id`, because Redis stream reclaim
+can redeliver work when ACKs are delayed or a client disconnects.
 
 ## Writing Agent Classes
 
-Runner injects `server_addr` and `tls` into your constructor. Accept `**kwargs` and pass through:
+Accept `server_addr` and `tls` in the constructor and pass them through to `Agent`.
 
 ```python
-from mas_agent import Agent, AgentMessage
+from mas_agent import Agent, AgentMessage, TlsClientConfig
 
 
-class MyAgent(Agent[dict[str, object]]):
-    def __init__(self, agent_id: str, **kwargs: object) -> None:
-        super().__init__(agent_id, **kwargs)
+class MyAgent(Agent):
+    def __init__(
+        self,
+        agent_id: str,
+        *,
+        server_addr: str = "localhost:50051",
+        tls: TlsClientConfig | None = None,
+    ) -> None:
+        super().__init__(agent_id, server_addr=server_addr, tls=tls)
 
     async def on_start(self) -> None:
         ...
@@ -75,19 +78,3 @@ Lifecycle hooks:
 - `on_start`: runs after transport is ready and state is loaded.
 - `on_stop`: runs during shutdown before the transport task is torn down.
 - `on_message`: fallback for messages with no registered handler.
-
-## Gateway Policy (`mas.yaml`)
-
-Gateway settings live under the top-level `gateway:` key in `mas.yaml`.
-
-Supported settings:
-- `redis`: connection parameters used by the server.
-- `rate_limit`: per-agent message limits per minute/hour.
-- `features`: toggles for DLP, RBAC, circuit breaker.
-- `dlp`: custom DLP rules and policy overrides.
-- `audit`: optional JSONL audit file sink settings.
-- `circuit_breaker`: failure/success thresholds and timeout window.
-
-## End-to-end Example
-
-See `examples/e2e_ping_pong/`.

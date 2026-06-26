@@ -1,64 +1,61 @@
-"""Agent client implementation for MAS."""
+"""Agent client implementation for MAS.
+
+The agent client is composed from focused concern mixins:
+
+* :class:`~mas_agent.transport.TransportMixin` — the bidirectional gRPC stream,
+  delivery dispatch, and graceful-shutdown draining.
+* :class:`~mas_agent.messaging.MessagingMixin` — client-initiated RPCs (send,
+  request, reply, discover).
+* :class:`~mas_agent.handlers.HandlerRegistryMixin` — ``@on`` handler
+  registration and typed dispatch.
+
+This module owns construction, the typed ``state`` accessor, the start/stop
+lifecycle, and remote state management.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from dataclasses import dataclass
-from types import FunctionType
+from collections.abc import Mapping
 
 import grpc
 import grpc.aio as grpc_aio
-from mas_core import (
-    EnvelopeMessage,
-    JsonObject,
-    JsonValue,
-    SpanKind,
-    get_telemetry,
-    validate_json_object,
-)
+from mas_core import JsonValue, SpanKind, get_telemetry
 from mas_proto.runtime.v1 import (
     runtime_pb2 as mas_pb2,
 )
 from mas_proto.runtime.v1 import (
     runtime_pb2_grpc as mas_pb2_grpc,
 )
-from opentelemetry.context import Context
 from pydantic import BaseModel
+
+from ._core import AgentMessage, EarlyReplies, PendingRequest
+from .config import TlsClientConfig
+from .handlers import HandlerRegistryMixin
+from .messaging import MessagingMixin
+from .transport import TransportMixin
 
 logger = logging.getLogger(__name__)
 
-
-# Public alias so external imports continue to work
-AgentMessage = EnvelopeMessage
-HandlerMarker = tuple[str, type[BaseModel] | None]
-HandlerFunction = Callable[..., Awaitable[None]]
-
-_DECORATED_HANDLERS: dict[HandlerFunction, list[HandlerMarker]] = {}
+# Re-exported so ``from mas_agent.agent import ...`` keeps working.
+__all__ = ["Agent", "AgentMessage", "StateReloadError", "TlsClientConfig"]
 
 
-@dataclass(frozen=True, slots=True)
-class TlsClientConfig:
-    """Client mTLS credential paths."""
+class StateReloadError(RuntimeError):
+    """Raised when persisted state cannot be decoded into the state model.
 
-    root_ca_path: str
-    client_cert_path: str
-    client_key_path: str
+    Reloading is surfaced rather than silently swallowed: resetting to defaults
+    on a decode failure would destroy persisted state and hide the corruption.
+    """
 
 
-class Agent[AgentState: BaseModel = BaseModel]:
+class Agent[AgentState: BaseModel = BaseModel](
+    TransportMixin, MessagingMixin, HandlerRegistryMixin
+):
     """Agent client that connects to MAS server over gRPC (no Redis access)."""
-
-    @dataclass(frozen=True, slots=True)
-    class _HandlerSpec:
-        """Typed handler registration entry."""
-
-        fn: HandlerFunction
-        model: type[BaseModel] | None
 
     def __init__(
         self,
@@ -87,8 +84,8 @@ class Agent[AgentState: BaseModel = BaseModel]:
         self._outgoing: asyncio.Queue[mas_pb2.ClientEvent] = asyncio.Queue(maxsize=2000)
         self._transport_task: asyncio.Task[None] | None = None
 
-        self._pending_requests: dict[str, asyncio.Future[AgentMessage]] = {}
-        self._early_replies: dict[str, AgentMessage] = {}
+        self._pending_requests: dict[str, PendingRequest] = {}
+        self._early_replies: EarlyReplies = EarlyReplies()
         self._handler_tasks: set[asyncio.Task[None]] = set()
 
     @property
@@ -134,12 +131,18 @@ class Agent[AgentState: BaseModel = BaseModel]:
             self._channel = channel
             self._stub = mas_pb2_grpc.RuntimeServiceStub(channel)
 
-            self._running = True
-            self._transport_task = asyncio.create_task(self._transport_loop())
+            try:
+                self._running = True
+                self._transport_task = asyncio.create_task(self._transport_loop())
 
-            await self.wait_transport_ready(timeout=10)
-            await self._load_state()
-            await self.on_start()
+                await self.wait_transport_ready(timeout=10)
+                await self._load_state()
+                await self.on_start()
+            except Exception:
+                # Don't leak the transport task / open channel if startup fails
+                # partway (e.g. _load_state raising on corrupt persisted state).
+                await self.stop()
+                raise
 
             logger.info(
                 "Agent started",
@@ -157,15 +160,22 @@ class Agent[AgentState: BaseModel = BaseModel]:
             self._running = False
             await self.on_stop()
 
+            # Drain in-flight handlers and flush queued ACK/NACK events *before*
+            # tearing down the transport. Cancelling the transport first would
+            # drop acknowledgements for already-completed work and force the
+            # server to redeliver those messages.
+            await self._drain_handler_tasks()
+            await self._drain_outgoing()
+
             if self._transport_task is not None:
                 self._transport_task.cancel()
                 await asyncio.gather(self._transport_task, return_exceptions=True)
                 self._transport_task = None
-            if self._handler_tasks:
-                for task in self._handler_tasks:
-                    task.cancel()
-                await asyncio.gather(*self._handler_tasks, return_exceptions=True)
-                self._handler_tasks.clear()
+
+            # The transport loop is stopped now, so no new deliveries can spawn
+            # handlers. Cancel any that slipped in during the drain window above
+            # rather than leaking them past shutdown.
+            await self._cancel_handler_tasks()
 
             if self._channel is not None:
                 await self._channel.close()
@@ -176,146 +186,6 @@ class Agent[AgentState: BaseModel = BaseModel]:
                 "Agent stopped",
                 extra={"agent_id": self.id, "instance_id": self.instance_id},
             )
-
-    async def wait_transport_ready(self, timeout: float | None = None) -> None:
-        """Wait until the server transport is ready."""
-        if timeout is None:
-            await self._transport_ready.wait()
-        else:
-            await asyncio.wait_for(self._transport_ready.wait(), timeout)
-
-    async def send(
-        self, target_id: str, message_type: str, data: Mapping[str, JsonValue]
-    ) -> None:
-        """Send a one-way message to another agent."""
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.send",
-            kind=SpanKind.CLIENT,
-            attributes={
-                "mas.agent_id": self.id,
-                "mas.target_id": target_id,
-                "mas.message_type": message_type,
-            },
-        ):
-            stub = self._require_stub()
-            await stub.Send(
-                mas_pb2.SendRequest(
-                    target_id=target_id,
-                    message_type=message_type,
-                    data_json=json.dumps(dict(data)),
-                    instance_id=self.instance_id,
-                ),
-                metadata=telemetry.grpc_metadata(),
-            )
-
-    async def request(
-        self,
-        target_id: str,
-        message_type: str,
-        data: Mapping[str, JsonValue],
-        timeout: float | None = None,
-    ) -> AgentMessage:
-        """Send a request and await a reply."""
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.request",
-            kind=SpanKind.CLIENT,
-            attributes={
-                "mas.agent_id": self.id,
-                "mas.target_id": target_id,
-                "mas.message_type": message_type,
-            },
-        ):
-            stub = self._require_stub()
-
-            timeout_ms = int(timeout * 1000) if timeout is not None else 0
-            resp = await stub.Request(
-                mas_pb2.RequestRequest(
-                    target_id=target_id,
-                    message_type=message_type,
-                    data_json=json.dumps(dict(data)),
-                    timeout_ms=timeout_ms,
-                    instance_id=self.instance_id,
-                ),
-                metadata=telemetry.grpc_metadata(),
-            )
-
-            loop = asyncio.get_running_loop()
-            fut: asyncio.Future[AgentMessage] = loop.create_future()
-            self._pending_requests[resp.correlation_id] = fut
-
-            early = self._early_replies.pop(resp.correlation_id, None)
-            if early is not None and not fut.done():
-                fut.set_result(early)
-
-            try:
-                if timeout is None:
-                    return await fut
-                return await asyncio.wait_for(fut, timeout)
-            finally:
-                # Always clear this request's correlation slot. The future may be
-                # done (early reply) or pending (timeout/cancel), and keeping it
-                # around leaks memory over long runtimes.
-                if self._pending_requests.get(resp.correlation_id) is fut:
-                    self._pending_requests.pop(resp.correlation_id, None)
-
-    async def send_reply_envelope(
-        self, original: AgentMessage, message_type: str, payload: JsonObject
-    ) -> None:
-        """Send a reply for a previously received message."""
-        if not original.meta.correlation_id:
-            raise RuntimeError("Cannot reply: missing correlation_id")
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.reply",
-            kind=SpanKind.CLIENT,
-            attributes={
-                "mas.agent_id": self.id,
-                "mas.target_id": original.sender_id,
-                "mas.message_type": message_type,
-            },
-        ):
-            stub = self._require_stub()
-            await stub.Reply(
-                mas_pb2.ReplyRequest(
-                    correlation_id=original.meta.correlation_id,
-                    message_type=message_type,
-                    data_json=json.dumps(dict(payload)),
-                    instance_id=self.instance_id,
-                ),
-                metadata=telemetry.grpc_metadata(),
-            )
-
-    async def discover(self, capabilities: list[str] | None = None) -> list[JsonObject]:
-        """Return matching agents with optional capability filters."""
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.discover",
-            kind=SpanKind.CLIENT,
-            attributes={"mas.agent_id": self.id},
-        ):
-            stub = self._require_stub()
-            resp = await stub.Discover(
-                mas_pb2.DiscoverRequest(capabilities=list(capabilities or [])),
-                metadata=telemetry.grpc_metadata(),
-            )
-            records: list[JsonObject] = []
-            for rec in resp.agents:
-                metadata = (
-                    validate_json_object(json.loads(rec.metadata_json))
-                    if rec.metadata_json
-                    else {}
-                )
-                records.append(
-                    {
-                        "id": rec.agent_id,
-                        "capabilities": list(rec.capabilities),
-                        "metadata": metadata,
-                        "status": rec.status,
-                    }
-                )
-            return records
 
     async def update_state(self, updates: Mapping[str, JsonValue]) -> None:
         """Update the remote state with provided fields."""
@@ -332,22 +202,31 @@ class Agent[AgentState: BaseModel = BaseModel]:
                     "Agent state updates require a Pydantic state_model."
                 )
 
-            current = self.state
-            for k, v in updates.items():
-                setattr(current, k, v)
-            state_dict = current.model_dump()
+            # Reject unknown fields and re-validate the merged state through the
+            # model, so an out-of-type or misspelled update is refused rather
+            # than silently persisted (and later surfacing as a StateReloadError).
+            # Commit to self._state only after the RPC succeeds, so a failed
+            # UpdateState never leaves in-memory state ahead of persisted state.
+            unknown = set(updates) - set(self._state_model.model_fields)
+            if unknown:
+                raise ValueError(f"Unknown state field(s): {sorted(unknown)}")
 
-            redis_data: dict[str, str] = {}
-            for k, v in state_dict.items():
-                if isinstance(v, (dict, list)):
-                    redis_data[k] = json.dumps(v)
-                else:
-                    redis_data[k] = str(v)
+            merged = self.state.model_dump()
+            merged.update(updates)
+            updated = self._state_model.model_validate(merged)
+            state_dict = updated.model_dump(mode="json")
+
+            # JSON-encode every field so it reloads symmetrically in
+            # ``_load_state``. Encoding scalars with ``str()`` would lose
+            # fidelity: ``None`` -> ``"None"``, ``True`` -> ``"True"``, and
+            # nested values would not round-trip through the typed model.
+            redis_data = {k: json.dumps(v) for k, v in state_dict.items()}
 
             await stub.UpdateState(
                 mas_pb2.UpdateStateRequest(updates=redis_data),
                 metadata=telemetry.grpc_metadata(),
             )
+            self._state = updated
 
     async def reset_state(self) -> None:
         """Reset remote state to defaults."""
@@ -369,164 +248,20 @@ class Agent[AgentState: BaseModel = BaseModel]:
         """Reload state from the server."""
         await self._load_state()
 
-    async def on_start(self) -> None:
-        """User-overridable hook called after transport is ready."""
-
-    async def on_stop(self) -> None:
-        """User-overridable hook called before shutting down."""
-
-    async def on_message(self, message: AgentMessage) -> None:
-        """Fallback handler when no typed handler is registered."""
-
-    # --- Transport ---
-
-    async def _transport_loop(self) -> None:
-        """Stream client events and handle server deliveries."""
-        stub = self._require_stub()
-        telemetry = get_telemetry()
-
-        async def outgoing_iter() -> AsyncIterator[mas_pb2.ClientEvent]:
-            """Yield outbound events from the client queue."""
-            while True:
-                event = await self._outgoing.get()
-                yield event
-
-        await self._outgoing.put(
-            mas_pb2.ClientEvent(hello=mas_pb2.Hello(instance_id=self.instance_id))
-        )
-
-        call = stub.Transport(outgoing_iter(), metadata=telemetry.grpc_metadata())
-
-        with telemetry.start_span(
-            "mas.agent.transport_loop",
-            kind=SpanKind.CLIENT,
-            attributes={"mas.agent_id": self.id, "mas.instance_id": self.instance_id},
-        ) as span:
-            try:
-                async for event in call:
-                    if event.HasField("welcome"):
-                        self._transport_ready.set()
-                        continue
-
-                    if event.HasField("delivery"):
-                        await self._handle_delivery(event.delivery)
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                span.record_exception(exc)
-                logger.error(
-                    "Transport loop failed",
-                    exc_info=exc,
-                    extra={"agent_id": self.id, "instance_id": self.instance_id},
-                )
-
-    async def _handle_delivery(self, delivery: mas_pb2.Delivery) -> None:
-        """Validate and dispatch a delivery message."""
-        telemetry = get_telemetry()
-        try:
-            msg = AgentMessage.model_validate_json(delivery.envelope_json)
-        except Exception as exc:
-            await self._send_nack(
-                delivery.delivery_id,
-                reason=f"invalid_envelope:{type(exc).__name__}",
-                retryable=False,
-            )
-            return
-
-        # Replies resolve pending requests immediately.
-        if msg.meta.is_reply and msg.meta.correlation_id:
-            fut = self._pending_requests.pop(msg.meta.correlation_id, None)
-            if fut is not None and not fut.done():
-                fut.set_result(msg)
-            else:
-                self._early_replies[msg.meta.correlation_id] = msg
-            await self._send_ack(delivery.delivery_id)
-            return
-
-        parent_context = telemetry.extract_message_meta_context(msg.meta)
-        task = asyncio.create_task(
-            self._handle_message_and_ack(
-                delivery.delivery_id,
-                msg,
-                parent_context=parent_context,
-            )
-        )
-        self._handler_tasks.add(task)
-        task.add_done_callback(self._handler_tasks.discard)
-
-    async def _handle_message_and_ack(
-        self,
-        delivery_id: str,
-        msg: AgentMessage,
-        *,
-        parent_context: Context | None,
-    ) -> None:
-        """Run handlers and ACK/NACK as needed."""
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.handle_message",
-            kind=SpanKind.CONSUMER,
-            context=parent_context,
-            attributes={
-                "mas.agent_id": self.id,
-                "mas.message_id": msg.message_id,
-                "mas.sender_id": msg.sender_id,
-                "mas.message_type": msg.message_type,
-            },
-        ) as span:
-            try:
-                dispatched = await self._dispatch_typed(msg)
-                if not dispatched:
-                    await self.on_message(msg)
-                await self._send_ack(delivery_id)
-            except Exception as exc:
-                span.record_exception(exc)
-                logger.error(
-                    "Failed to handle message",
-                    exc_info=exc,
-                    extra={
-                        "agent_id": self.id,
-                        "instance_id": self.instance_id,
-                        "message_id": msg.message_id,
-                        "sender_id": msg.sender_id,
-                    },
-                )
-                await self._send_nack(
-                    delivery_id,
-                    reason=f"handler_error:{type(exc).__name__}",
-                    retryable=False,
-                )
-
-    async def _send_ack(self, delivery_id: str) -> None:
-        """Send an ACK for a delivery."""
-        with contextlib.suppress(Exception):
-            await self._outgoing.put(
-                mas_pb2.ClientEvent(ack=mas_pb2.Ack(delivery_id=delivery_id))
-            )
-
-    async def _send_nack(
-        self, delivery_id: str, *, reason: str, retryable: bool
-    ) -> None:
-        """Send a NACK for a delivery."""
-        with contextlib.suppress(Exception):
-            await self._outgoing.put(
-                mas_pb2.ClientEvent(
-                    nack=mas_pb2.Nack(
-                        delivery_id=delivery_id,
-                        reason=reason,
-                        retryable=retryable,
-                    )
-                )
-            )
-
     async def _load_state(self) -> None:
-        """Load initial agent state from the server."""
+        """Load agent state from the server, decoding it symmetrically.
+
+        Each field was JSON-encoded by :meth:`update_state`; decode it back
+        before constructing the model so nested/list/dict/None values round-trip
+        with full fidelity. A field that fails to decode or validate raises
+        StateReloadError rather than silently resetting persisted state.
+        """
         telemetry = get_telemetry()
         with telemetry.start_span(
             "mas.agent.load_state",
             kind=SpanKind.CLIENT,
             attributes={"mas.agent_id": self.id},
-        ):
+        ) as span:
             stub = self._require_stub()
             resp = await stub.GetState(
                 mas_pb2.GetStateRequest(),
@@ -534,84 +269,25 @@ class Agent[AgentState: BaseModel = BaseModel]:
             )
             data = dict(resp.state)
 
-            if data:
-                if self._state_model is not None:
-                    try:
-                        self._state = self._state_model(**data)
-                    except Exception:
-                        self._state = self._state_model()
-            else:
-                if self._state_model is not None:
-                    self._state = self._state_model()
+            if self._state_model is None:
+                return
 
-    def _require_stub(self) -> mas_pb2_grpc.RuntimeServiceStub:
-        """Return the gRPC stub if connected."""
-        if not self._stub:
-            raise RuntimeError("Agent not started")
-        return self._stub
+            if not data:
+                self._state = self._state_model()
+                return
 
-    # --- Typed handlers ---
-
-    @classmethod
-    def on(
-        cls, message_type: str, *, model: type[BaseModel] | None = None
-    ) -> Callable[[HandlerFunction], HandlerFunction]:
-        """Decorator to register a handler for a message_type."""
-
-        def decorator(
-            fn: HandlerFunction,
-        ) -> HandlerFunction:
-            """Register a function as a handler for this agent class."""
-            if not callable(fn):
-                raise TypeError("handler must be callable")
-
-            if not isinstance(fn, FunctionType):
-                registry = dict(getattr(cls, "_handlers", {}))
-                registry[message_type] = Agent._HandlerSpec(fn=fn, model=model)
-                cls._handlers = registry
-                return fn
-
-            qualname_parts = fn.__qualname__.split(".")
-            if len(qualname_parts) >= 2:
-                _DECORATED_HANDLERS.setdefault(fn, []).append((message_type, model))
-            else:
-                registry = dict(getattr(cls, "_handlers", {}))
-                registry[message_type] = Agent._HandlerSpec(fn=fn, model=model)
-                cls._handlers = registry
-            return fn
-
-        return decorator
-
-    def __init_subclass__(cls, **kwargs: object) -> None:
-        """Collect handler registrations from subclass methods."""
-        super().__init_subclass__(**kwargs)
-        cls._handlers = {}
-
-        for name in dir(cls):
             try:
-                attr = getattr(cls, name)
-                if not callable(attr):
-                    continue
-                for message_type, model in _DECORATED_HANDLERS.get(attr, []):
-                    cls._handlers[message_type] = Agent._HandlerSpec(
-                        fn=attr, model=model
-                    )
-            except AttributeError:
-                pass
-
-    async def _dispatch_typed(self, msg: AgentMessage) -> bool:
-        """Dispatch to a typed handler if registered."""
-        registry: dict[str, Agent._HandlerSpec] = getattr(
-            self.__class__, "_handlers", {}
-        )
-        spec = registry.get(msg.message_type)
-        if not spec:
-            return False
-
-        if spec.model is None:
-            await spec.fn(self, msg, None)
-            return True
-
-        payload_model = spec.model.model_validate(msg.data)
-        await spec.fn(self, msg, payload_model)
-        return True
+                decoded = {key: json.loads(raw) for key, raw in data.items()}
+                self._state = self._state_model(**decoded)
+            except Exception as exc:
+                # Do not silently reset: that would discard persisted state and
+                # mask the corruption. Surface it so the caller can react.
+                span.record_exception(exc)
+                logger.error(
+                    "Failed to reload agent state",
+                    exc_info=exc,
+                    extra={"agent_id": self.id, "instance_id": self.instance_id},
+                )
+                raise StateReloadError(
+                    f"Could not decode persisted state for agent {self.id!r}"
+                ) from exc

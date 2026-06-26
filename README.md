@@ -1,122 +1,57 @@
 # MAS Framework
 
-Secure multi-agent runtime:
-- Agents connect over gRPC + mTLS
-- Server owns all Redis access (routing, state, audit, policy)
-- Agents never touch Redis
+Secure Python multi-agent runtime packages:
+- Agents connect over gRPC + mTLS.
+- The server owns Redis access for routing, state, audit, and policy.
+- Agents never receive Redis credentials.
 
-## Use Cases
+## Packages
 
-- Ship multi-agent systems without widening data access: enforce deny-by-default ACLs and mTLS identity per agent.
-- Meet security and compliance requirements with tamper-evident audit logs and explicit policy decisions.
-- Protect sensitive data in transit using DLP scanning with block/redact rules.
-- Reduce incident blast radius with centralized policy, rate limiting, and circuit breakers.
-- Support multi-team agent development without shared Redis credentials or direct data access.
-- Export distributed traces and metrics with OpenTelemetry for operational visibility.
+- `mas-proto`: protobuf contract and generated gRPC bindings.
+- `mas-core`: shared envelope, JSON, Redis, logging, and telemetry primitives.
+- `mas-gateway`: authorization, DLP, rate limiting, circuit breaker, audit, and gateway configuration.
+- `mas-server`: gRPC MAS server runtime.
+- `mas-agent`: client runtime for agent processes.
 
-## Architecture
+The repository does not currently include bundled application entrypoints or an ops UI/API. Consumers compose `MASServer`, `GatewaySettings`, and `Agent` from their own application code.
 
-```
-Agent (mTLS)  ─┐
-Agent (mTLS)  ─┼─→  MAS Server (gRPC + mTLS)
-Agent (mTLS)  ─┘        ├─ AuthN: SPIFFE URI SAN (spiffe://mas/agent/{agent_id})
-                         ├─ AuthZ: deny-by-default ACL (+ optional RBAC)
-                         ├─ DLP scanning (block/redact)
-                         ├─ Rate limiting
-                         ├─ Circuit breaker + DLQ
-                         ├─ Audit log (Redis Streams, tamper-evident)
-                         ├─ OpenTelemetry traces + metrics (optional)
-                         └─ Redis Streams for durable delivery + Redis hashes for state
-```
-
-## Quick Start
-
-1) Start Redis
-
-```bash
-redis-server
-```
-
-2) Create `mas.yaml`
-
-Use `mas.yaml.example` as a template. You must provide:
-- Server cert/key + CA (`tls_ca_path`, `tls_server_cert_path`, `tls_server_key_path`)
-- A client cert/key per agent (`tls_cert_path`, `tls_key_path`)
-
-3) Implement agents
-
-Runner injects `server_addr` and `tls` into your agent constructor; accept `**kwargs` and pass through.
+## Minimal Shape
 
 ```python
-from __future__ import annotations
+from mas_gateway import GatewaySettings
+from mas_server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
 
-from pydantic import BaseModel
+agents = {
+    "sender": AgentDefinition(agent_id="sender", capabilities=[], metadata={}),
+    "worker": AgentDefinition(agent_id="worker", capabilities=[], metadata={}),
+}
 
-from mas_agent import Agent, AgentMessage
+server = MASServer(
+    settings=MASServerSettings(
+        listen_addr="127.0.0.1:50051",
+        tls=TlsConfig(
+            server_cert_path="certs/server.pem",
+            server_key_path="certs/server.key",
+            client_ca_path="certs/ca.pem",
+        ),
+        agents=agents,
+    ),
+    gateway=GatewaySettings(),
+)
 
-
-class Ping(BaseModel):
-    value: int
-
-
-class EchoAgent(Agent[dict[str, object]]):
-    def __init__(self, agent_id: str, **kwargs: object) -> None:
-        super().__init__(agent_id, **kwargs)
-
-    @Agent.on("ping", model=Ping)
-    async def handle_ping(self, message: AgentMessage, payload: Ping) -> None:
-        await message.reply("pong", {"value": payload.value + 1})
+await server.start()
+await server.authz.set_permissions("sender", allowed_targets=["worker"])
 ```
 
-4) Run
+Agent processes use `mas_agent.Agent` with `TlsClientConfig` and connect to the server over mTLS.
+
+## Local Dependencies
+
+Start Redis for local development:
 
 ```bash
-uv sync --all-groups --all-packages
-uv run --package mas-runtime python -m mas_runtime
+docker compose up -d redis
 ```
-
-5) Tail audit logs (optional)
-
-```bash
-uv run mas-runtime audit tail --last 10
-# or: uv run --package mas-runtime python -m mas_runtime audit tail --last 10
-```
-
-## Example
-
-End-to-end mTLS + request/reply:
-
-```bash
-redis-server
-cd examples/e2e_ping_pong
-bash make_certs.sh
-uv run --package mas-runtime python -m mas_runtime
-```
-
-## Docker Compose
-
-Run the local stack with UI, API, Postgres, Redis, and a containerized
-`mas-runtime` control plane:
-
-```bash
-docker compose up --build
-```
-
-Endpoints:
-- UI: [http://localhost:4173](http://localhost:4173)
-- API: [http://localhost:8080/healthz](http://localhost:8080/healthz)
-- MAS Runtime: `localhost:50051`
-- Postgres: `localhost:5432`
-- Redis: `localhost:6379`
-
-Default admin credentials:
-- email: `admin@example.com`
-- password: `admin123`
-
-The compose stack runs idempotent database migration and admin-bootstrap jobs
-before the API starts. It also enables Docker-backed Phase 5 monitoring so the
-containerized `mas-runtime` shows up as a real `linux_host` asset in the UI
-instead of loading pre-seeded demo incidents.
 
 ## Development
 
