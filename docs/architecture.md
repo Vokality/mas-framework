@@ -122,7 +122,7 @@ sequenceDiagram
     alt one-way send
         Policy->>Redis: XADD agent.stream:{target_id}
     else request/reply
-        Server->>Redis: SETEX mas.pending_request:{correlation_id}
+        Server->>Redis: SET mas.pending_request:{correlation_id} EX ttl
         Policy->>Redis: XADD agent.stream:{target_id}
         Note over Redis,Target: Reply path uses agent.stream:{origin_agent}:{origin_instance}
     end
@@ -134,9 +134,9 @@ sequenceDiagram
     alt ACK
         Server->>Redis: XACK stream entry
     else retryable NACK
-        Server->>Redis: XACK then XADD back to original stream
+        Server->>Redis: XADD back to original stream, then XACK on success
     else non-retryable NACK
-        Server->>Redis: XADD dlq:messages and XACK
+        Server->>Redis: XADD dlq:messages, then XACK only if DLQ write succeeds
     end
 
     Target->>Server: GetState / UpdateState / ResetState
@@ -152,7 +152,7 @@ flowchart TB
     streams["Delivery Streams<br/>agent.stream:{agent_id}<br/>agent.stream:{agent_id}:{instance_id}"]
     pending["Pending Request Map<br/>mas.pending_request:{correlation_id}"]
     state["Agent State Hash<br/>agent.state:{agent_id}"]
-    audit["Audit Stream<br/>audit:messages"]
+    audit["Audit Streams<br/>audit:messages<br/>audit:by_sender:{sender_id}<br/>audit:by_target:{target_id}<br/>audit:last_hash"]
     dlq["Dead Letter Queue<br/>dlq:messages"]
     registry["Agent Registry Hashes<br/>agent:{agent_id}"]
     acl["ACL Sets<br/>agent:{agent_id}:allowed_targets<br/>agent:{agent_id}:blocked_targets"]

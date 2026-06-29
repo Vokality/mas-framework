@@ -7,8 +7,7 @@ import pytest
 from mas_agent import Agent, TlsClientConfig
 from mas_gateway import GatewaySettings, RedisSettings
 from mas_server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
-
-from conftest import _run_openssl, _write_text
+from mas_server.dev import run_openssl, write_text_file
 
 pytestmark = pytest.mark.asyncio
 
@@ -31,7 +30,7 @@ def _create_client_cert_without_spiffe(
     cert_path = base_dir / f"{name}.pem"
     conf_path = base_dir / f"{name}.cnf"
 
-    _write_text(
+    write_text_file(
         conf_path,
         """
         [req]
@@ -52,8 +51,8 @@ def _create_client_cert_without_spiffe(
         """.lstrip(),
     )
 
-    _run_openssl(["genrsa", "-out", str(key_path), "2048"], cwd=base_dir)
-    _run_openssl(
+    run_openssl(["genrsa", "-out", str(key_path), "2048"], cwd=base_dir)
+    run_openssl(
         [
             "req",
             "-new",
@@ -66,7 +65,7 @@ def _create_client_cert_without_spiffe(
         ],
         cwd=base_dir,
     )
-    _run_openssl(
+    run_openssl(
         [
             "x509",
             "-req",

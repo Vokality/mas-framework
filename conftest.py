@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import textwrap
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,120 +9,53 @@ from pathlib import Path
 import pytest
 from mas_agent import TlsClientConfig
 from mas_gateway.config import GatewaySettings, RedisSettings
-from mas_server import AgentDefinition, MASServer, MASServerSettings, TlsConfig
+from mas_server import AgentDefinition, MASServer
+from mas_server.dev import (
+    DEFAULT_DEV_AGENT_IDS,
+    DevTlsBundle,
+    dev_server_settings,
+    generate_dev_tls,
+)
 from redis.asyncio import Redis
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
 
-
-def _run_openssl(args: list[str], *, cwd: Path) -> None:
-    proc = subprocess.run(
-        ["openssl", *args],
-        cwd=str(cwd),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            "openssl failed: "
-            + " ".join(args)
-            + "\nstdout:\n"
-            + proc.stdout
-            + "\nstderr:\n"
-            + proc.stderr
-        )
-
-
-def _write_text(path: Path, content: str) -> None:
-    path.write_text(content, encoding="utf-8")
+_DEV_TEST_AGENT_IDS = DEFAULT_DEV_AGENT_IDS | frozenset({"attacker"})
 
 
 @dataclass(slots=True)
 class TestTlsPaths:
-    base_dir: Path
-    ca_pem: str
-    ca_key: str
-    server_cert: str
-    server_key: str
+    """Test fixture wrapper preserving the historical ``test_tls`` surface."""
+
+    bundle: DevTlsBundle
+
+    @property
+    def base_dir(self) -> Path:
+        return self.bundle.base_dir
+
+    @property
+    def ca_pem(self) -> str:
+        return self.bundle.ca_pem
+
+    @property
+    def ca_key(self) -> str:
+        return self.bundle.ca_key
+
+    @property
+    def server_cert(self) -> str:
+        return self.bundle.server_cert
+
+    @property
+    def server_key(self) -> str:
+        return self.bundle.server_key
 
     def client(self, agent_id: str) -> TlsClientConfig:
-        self._ensure_agent_cert(agent_id)
+        creds = self.bundle.client(agent_id)
         return TlsClientConfig(
-            root_ca_path=self.ca_pem,
-            client_cert_path=str(self.base_dir / f"{agent_id}.pem"),
-            client_key_path=str(self.base_dir / f"{agent_id}.key"),
-        )
-
-    def _ensure_agent_cert(self, agent_id: str) -> None:
-        cert_path = self.base_dir / f"{agent_id}.pem"
-        key_path = self.base_dir / f"{agent_id}.key"
-        if cert_path.exists() and key_path.exists():
-            return
-
-        csr_path = self.base_dir / f"{agent_id}.csr"
-        conf_path = self.base_dir / f"{agent_id}.cnf"
-
-        _write_text(
-            conf_path,
-            textwrap.dedent(
-                f"""
-                [req]
-                distinguished_name = dn
-                req_extensions = req_ext
-                prompt = no
-
-                [dn]
-                CN = {agent_id}
-
-                [req_ext]
-                keyUsage = critical, digitalSignature, keyEncipherment
-                extendedKeyUsage = clientAuth
-                subjectAltName = @alt_names
-
-                [alt_names]
-                URI.1 = spiffe://mas/agent/{agent_id}
-                """
-            ).lstrip(),
-        )
-
-        _run_openssl(["genrsa", "-out", str(key_path), "2048"], cwd=self.base_dir)
-        _run_openssl(
-            [
-                "req",
-                "-new",
-                "-key",
-                str(key_path),
-                "-out",
-                str(csr_path),
-                "-config",
-                str(conf_path),
-            ],
-            cwd=self.base_dir,
-        )
-        _run_openssl(
-            [
-                "x509",
-                "-req",
-                "-in",
-                str(csr_path),
-                "-CA",
-                self.ca_pem,
-                "-CAkey",
-                self.ca_key,
-                "-CAcreateserial",
-                "-out",
-                str(cert_path),
-                "-days",
-                "3650",
-                "-sha256",
-                "-extensions",
-                "req_ext",
-                "-extfile",
-                str(conf_path),
-            ],
-            cwd=self.base_dir,
+            root_ca_path=creds.root_ca_path,
+            client_cert_path=creds.client_cert_path,
+            client_key_path=creds.client_key_path,
         )
 
 
@@ -212,116 +143,8 @@ async def cleanup_agent_keys():
 @pytest.fixture
 def test_tls(tmp_path_factory) -> TestTlsPaths:
     base_dir = tmp_path_factory.mktemp("certs")
-
-    ca_key = base_dir / "ca.key"
-    ca_pem = base_dir / "ca.pem"
-
-    server_key = base_dir / "server.key"
-    server_csr = base_dir / "server.csr"
-    server_cert = base_dir / "server.pem"
-    server_conf = base_dir / "server.cnf"
-
-    _run_openssl(["genrsa", "-out", str(ca_key), "2048"], cwd=base_dir)
-    _run_openssl(
-        [
-            "req",
-            "-x509",
-            "-new",
-            "-nodes",
-            "-key",
-            str(ca_key),
-            "-sha256",
-            "-days",
-            "3650",
-            "-subj",
-            "/CN=MAS Test CA",
-            "-out",
-            str(ca_pem),
-        ],
-        cwd=base_dir,
-    )
-
-    _write_text(
-        server_conf,
-        textwrap.dedent(
-            """
-            [req]
-            distinguished_name = dn
-            req_extensions = req_ext
-            prompt = no
-
-            [dn]
-            CN = localhost
-
-            [req_ext]
-            keyUsage = critical, digitalSignature, keyEncipherment
-            extendedKeyUsage = serverAuth
-            subjectAltName = @alt_names
-
-            [alt_names]
-            DNS.1 = localhost
-            IP.1 = 127.0.0.1
-            """
-        ).lstrip(),
-    )
-
-    _run_openssl(["genrsa", "-out", str(server_key), "2048"], cwd=base_dir)
-    _run_openssl(
-        [
-            "req",
-            "-new",
-            "-key",
-            str(server_key),
-            "-out",
-            str(server_csr),
-            "-config",
-            str(server_conf),
-        ],
-        cwd=base_dir,
-    )
-    _run_openssl(
-        [
-            "x509",
-            "-req",
-            "-in",
-            str(server_csr),
-            "-CA",
-            str(ca_pem),
-            "-CAkey",
-            str(ca_key),
-            "-CAcreateserial",
-            "-out",
-            str(server_cert),
-            "-days",
-            "3650",
-            "-sha256",
-            "-extensions",
-            "req_ext",
-            "-extfile",
-            str(server_conf),
-        ],
-        cwd=base_dir,
-    )
-
-    tls = TestTlsPaths(
-        base_dir=base_dir,
-        ca_pem=str(ca_pem),
-        ca_key=str(ca_key),
-        server_cert=str(server_cert),
-        server_key=str(server_key),
-    )
-
-    # Pre-generate the certs used across the test suite.
-    for agent_id in [
-        "sender",
-        "worker",
-        "requester",
-        "responder",
-        "discoverer",
-    ]:
-        tls._ensure_agent_cert(agent_id)
-
-    return tls
+    bundle = generate_dev_tls(base_dir, agent_ids=_DEV_TEST_AGENT_IDS)
+    return TestTlsPaths(bundle=bundle)
 
 
 @pytest.fixture
@@ -334,14 +157,10 @@ async def mas_server_factory(
 
     async def _start(agents: dict[str, AgentDefinition] | None = None) -> MASServer:
         agent_defs = agents or {}
-        settings = MASServerSettings(
-            listen_addr="127.0.0.1:0",
-            tls=TlsConfig(
-                server_cert_path=test_tls.server_cert,
-                server_key_path=test_tls.server_key,
-                client_ca_path=test_tls.ca_pem,
-            ),
+        settings = dev_server_settings(
             agents=agent_defs,
+            tls=test_tls.bundle,
+            listen_addr="127.0.0.1:0",
         )
         gateway = GatewaySettings(redis=RedisSettings(url="redis://localhost:6379"))
         server = MASServer(settings=settings, gateway=gateway)

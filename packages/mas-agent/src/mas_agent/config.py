@@ -21,6 +21,10 @@ class TlsClientConfig:
 HANDLER_DRAIN_TIMEOUT = 5.0
 OUTGOING_DRAIN_TIMEOUT = 2.0
 
+# Default request/reply wait budget. The server uses the same value for the
+# pending-correlation TTL when the client does not pass an explicit timeout.
+DEFAULT_REQUEST_TIMEOUT = 60.0
+
 # Bounds for the early-reply buffer. Replies that arrive after their request has
 # already timed out or been cancelled would otherwise accumulate forever, so the
 # buffer caps its size (oldest evicted first) and expires entries after a TTL.

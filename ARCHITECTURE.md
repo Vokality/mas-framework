@@ -18,7 +18,7 @@ The MAS server is the policy and routing boundary:
 ## Components
 
 - `packages/mas-proto/`: protobuf contract and generated bindings.
-- `packages/mas-core/`: shared message, JSON, Redis, logging, and telemetry primitives.
+- `packages/mas-core/`: shared message, JSON, Redis, and telemetry primitives.
 - `packages/mas-gateway/`: policy modules used by the server.
 - `packages/mas-server/`: gRPC+mTLS MAS server package.
 - `packages/mas-agent/`: agent client runtime.
@@ -29,16 +29,17 @@ Send:
 1. Agent calls `send(target_id, message_type, data)`.
 2. Server validates, audits, and routes by writing an envelope JSON into a Redis Stream.
 3. Server session tasks for the target agent consume from Redis Streams (`agent.stream:{agent_id}`) and deliver over the gRPC `Transport` stream.
-4. Agent ACKs or NACKs deliveries; server XACKs, retries, or DLQs.
+4. Agent ACKs or NACKs deliveries; the server XACKs on success, requeues then XACKs on retryable NACK, or writes to the DLQ then XACKs on non-retryable NACK (only when the DLQ write succeeds).
 
 Delivery is at-least-once. A handler can see the same `message_id` again after
 disconnects, slow ACKs, or stream reclaim, so handlers that cause side effects
 must be idempotent or deduplicate by `message_id`.
 
 Request/reply:
-1. Request creates a correlation id; server stores request origin in Redis with TTL.
-2. Responder replies with the `correlation_id`; server routes the reply to the origin instance stream.
-3. The requesting client binds each pending request to its target agent and accepts a reply only from that agent, so a reply cannot be resolved by an unrelated agent that knows the correlation id.
+1. Request creates a correlation id; server stores request origin in `mas.pending_request:{correlation_id}` with a TTL matching the request timeout (60 seconds by default when the client omits an explicit timeout).
+2. If routing fails after the pending key is written, the server deletes the key before returning the error.
+3. Responder replies with the `correlation_id`; the server atomically reserves the pending key, verifies the reply sender matches the original request target, and routes the reply to the origin instance stream.
+4. The requesting client binds each pending request to its target agent and accepts a reply only from that agent, so a reply cannot be resolved by an unrelated agent that knows the correlation id.
 
 Multi-instance:
 - Shared delivery stream per agent id distributes work across instances through Redis consumer groups.
@@ -54,4 +55,4 @@ Multi-instance:
 - mTLS is mandatory.
 - Agent identity comes from the certificate SAN; callers cannot spoof `sender_id`.
 - Authorization is deny-by-default.
-- Audit logs are written server-side for policy decisions.
+- Audit logs are written server-side for policy decisions and are hash-chained for tamper detection.

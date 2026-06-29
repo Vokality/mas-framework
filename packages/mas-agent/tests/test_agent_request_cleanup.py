@@ -21,13 +21,15 @@ class _RequestStub(mas_pb2_grpc.RuntimeServiceStub):
 
     def __init__(self, correlation_id: str) -> None:
         self._correlation_id = correlation_id
+        self.timeout_ms: int | None = None
 
     async def Request(
         self,
-        _request: mas_pb2.RequestRequest,
+        request: mas_pb2.RequestRequest,
         metadata: list[tuple[str, str]] | None = None,
     ) -> mas_pb2.RequestResponse:
         del metadata
+        self.timeout_ms = request.timeout_ms
         return mas_pb2.RequestResponse(
             message_id="msg-1",
             correlation_id=self._correlation_id,
@@ -65,6 +67,28 @@ async def test_request_early_reply_cleans_pending_correlation() -> None:
     response = await agent.request("target", "test", {}, timeout=1.0)
 
     assert response.message_id == "reply-1"
+    assert correlation_id not in agent._pending_requests
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_request_default_timeout_is_sent_to_server() -> None:
+    agent = Agent("sender")
+    correlation_id = "corr-default-timeout"
+    stub = _RequestStub(correlation_id)
+    agent._stub = stub
+    agent._early_replies[correlation_id] = EnvelopeMessage(
+        message_id="reply-1",
+        sender_id="target",
+        target_id="sender",
+        message_type="reply",
+        data={},
+        meta=MessageMeta(is_reply=True, correlation_id=correlation_id),
+    )
+
+    await agent.request("target", "test", {})
+
+    assert stub.timeout_ms == 60_000
     assert correlation_id not in agent._pending_requests
 
 

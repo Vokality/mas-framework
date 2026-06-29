@@ -80,6 +80,9 @@ reply = await router.request("helpdesk", "ask", {"question": "..."}, timeout=10)
 print(reply.data["text"])
 ```
 
+When `timeout` is omitted, request/reply uses a 60-second client and server
+budget. The server stores pending correlation state in Redis for the same TTL.
+
 A handler that raises is NACKed and redelivered, so handlers should be idempotent
 (dedupe on `message.message_id`). State is a typed model — an out-of-type update
 is rejected, not silently persisted.

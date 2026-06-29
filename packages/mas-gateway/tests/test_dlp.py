@@ -10,6 +10,7 @@ from mas_gateway.dlp import (
     DlpRule,
     ViolationType,
 )
+from pydantic import ValidationError
 
 # Use anyio for async test support
 pytestmark = pytest.mark.asyncio
@@ -330,6 +331,18 @@ class TestDLPModule:
         result = await dlp_custom.scan(payload)
 
         assert result.action == ActionPolicy.BLOCK
+
+    async def test_encrypt_policy_is_not_supported(self) -> None:
+        """Unsupported encryption policy must fail validation rather than leak."""
+        with pytest.raises(ValidationError):
+            DlpRule.model_validate(
+                {
+                    "id": "email_encrypt",
+                    "type": "email",
+                    "pattern": r".+@example\.com",
+                    "action": "encrypt",
+                }
+            )
 
     async def test_custom_rule_append(self, dlp: DLPModule) -> None:
         """Test custom rule appended to defaults."""

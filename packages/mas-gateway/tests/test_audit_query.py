@@ -487,6 +487,26 @@ class TestAuditIntegrity:
         assert sum(1 for entry in results if entry.get("previous_hash") is None) == 1
         assert await audit_module.verify_integrity("msg-0") is True
 
+    async def test_concurrent_modules_keep_hash_chain_valid(self, redis):
+        modules = [AuditModule(redis, file_sink=None) for _ in range(25)]
+
+        await asyncio.gather(
+            *(
+                modules[index].log_message(
+                    f"module-msg-{index}",
+                    f"agent-{index}",
+                    "target",
+                    "ALLOWED",
+                    10.0,
+                    {"index": index},
+                )
+                for index in range(25)
+            )
+        )
+
+        assert await modules[0].verify_integrity("module-msg-0") is True
+        assert await modules[0].verify_integrity("module-msg-24") is True
+
 
 class TestAuditFilteredQueries:
     """Test correctness of filtered queries on long streams."""

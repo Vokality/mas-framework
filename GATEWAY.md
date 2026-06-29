@@ -11,9 +11,10 @@ The MAS server runs a centralized policy pipeline on every message:
 3. Rate limiting
 4. Circuit breaker
 5. DLP scanning
-   - Block or redact based on policy
+   - Block, redact, or alert based on policy
 6. Audit log
    - Server writes decision + metadata to Redis Streams
+   - Entries are hash-chained for tamper detection
 7. Telemetry (optional)
    - OpenTelemetry traces and metrics for server, gateway, and agent runtime paths
 
@@ -26,11 +27,18 @@ Audit entries include a `decision` field that reflects the gateway outcome:
 - `ALLOWED`: Message delivered with no blocking policy violations.
 - `ALERT`: DLP found violations but allowed delivery.
 - `DLP_REDACTED`: DLP redacted sensitive fields before delivery.
-- `DLP_ENCRYPTED`: DLP encrypted sensitive fields before delivery.
 - `DLP_BLOCKED`: DLP blocked delivery.
 - `RATE_LIMITED`: Rate limit blocked delivery.
 - `CIRCUIT_OPEN`: Circuit breaker blocked delivery.
 - `AUTHZ_DENIED`: Authorization blocked delivery.
+
+## Audit Hash Chain
+
+Each audit entry includes a `payload_hash` and a `previous_hash` linking it to
+the prior entry. The tail hash is stored in Redis at `audit:last_hash`. Writes
+use a Redis transaction with optimistic locking so concurrent server processes
+keep a single consistent chain. Use `AuditModule.verify_integrity(message_id)` to
+validate the chain through that entry.
 
 ## Audit File Sink
 
@@ -55,10 +63,18 @@ a standalone gateway YAML file.
 - Delivery streams
   - `agent.stream:{agent_id}` (shared across instances)
   - `agent.stream:{agent_id}:{instance_id}` (replies pinned to a specific requester instance)
+- Request/reply
+  - `mas.pending_request:{correlation_id}` (request origin + TTL; removed on reply or failed routing)
 - Audit
-  - `audit:messages` (server decisions and metadata)
+  - `audit:messages` (all policy decisions and metadata)
+  - `audit:by_sender:{sender_id}` (indexed by sender)
+  - `audit:by_target:{target_id}` (indexed by target)
+  - `audit:security_events` (security-specific events)
+  - `audit:last_hash` (hash-chain tail)
 - Dead letter queue
   - `dlq:messages` (delivery failures / rejects)
+- Registry
+  - `agent:{agent_id}` (hash: capabilities, metadata, status)
 - Authorization
   - `agent:{agent_id}:allowed_targets` (set)
   - `agent:{agent_id}:blocked_targets` (set)

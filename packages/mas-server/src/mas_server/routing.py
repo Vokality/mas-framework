@@ -49,8 +49,13 @@ class MessageRouter:
 
             await self._redis.xadd(stream_name, fields)
 
-    async def write_dlq(self, *, envelope_json: str, reason: str) -> None:
-        """Write a message to the DLQ stream for auditing."""
+    async def write_dlq(self, *, envelope_json: str, reason: str) -> bool:
+        """Write a message to the DLQ stream.
+
+        Returns ``True`` when the stream entry is safe to ack: either the write
+        succeeded, or DLQ is disabled and the delivery is intentionally dropped.
+        Returns ``False`` only when a DLQ write was attempted and failed.
+        """
         telemetry = get_telemetry()
         with telemetry.start_span(
             "mas.server.routing.write_dlq",
@@ -59,35 +64,45 @@ class MessageRouter:
         ):
             if not self._dlq_enabled:
                 telemetry.record_dlq_write(result="disabled")
-                return
+                return True
 
+            envelope_hash = hashlib.sha256(envelope_json.encode()).hexdigest()
             try:
                 msg = EnvelopeMessage.model_validate_json(envelope_json)
             except Exception:
-                telemetry.record_dlq_write(result="invalid_envelope")
                 logger.debug(
-                    "Failed to parse envelope for DLQ write",
+                    "Failed to parse envelope for DLQ write; writing fallback record",
                     exc_info=True,
                     extra={"reason": reason},
                 )
-                return
-
-            envelope_hash = hashlib.sha256(envelope_json.encode()).hexdigest()
-            fields: dict[str, str] = {
-                "message_id": msg.message_id,
-                "sender_id": msg.sender_id,
-                "sender_instance_id": msg.meta.sender_instance_id or "",
-                "target_id": msg.target_id,
-                "message_type": msg.message_type,
-                "decision": "DLQ",
-                "reason": reason,
-                "envelope_hash": envelope_hash,
-                "timestamp": str(time.time()),
-            }
+                fields: dict[str, str] = {
+                    "message_id": "",
+                    "sender_id": "",
+                    "sender_instance_id": "",
+                    "target_id": "",
+                    "message_type": "",
+                    "decision": "DLQ",
+                    "reason": reason,
+                    "envelope_hash": envelope_hash,
+                    "timestamp": str(time.time()),
+                }
+            else:
+                fields = {
+                    "message_id": msg.message_id,
+                    "sender_id": msg.sender_id,
+                    "sender_instance_id": msg.meta.sender_instance_id or "",
+                    "target_id": msg.target_id,
+                    "message_type": msg.message_type,
+                    "decision": "DLQ",
+                    "reason": reason,
+                    "envelope_hash": envelope_hash,
+                    "timestamp": str(time.time()),
+                }
 
             try:
                 await self._redis.xadd("dlq:messages", fields)
                 telemetry.record_dlq_write(result="success")
+                return True
             except Exception:
                 telemetry.record_dlq_write(result="failed")
                 telemetry.record_redis_error(component="routing", operation="xadd_dlq")
@@ -99,3 +114,4 @@ class MessageRouter:
                         "reason": reason,
                     },
                 )
+                return False

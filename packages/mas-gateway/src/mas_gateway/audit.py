@@ -15,6 +15,7 @@ from pathlib import Path
 from mas_core import JsonObject, SpanKind, get_telemetry, validate_json_value
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +137,8 @@ class AuditModule:
         """
         Log message to audit stream.
 
-        Uses pipeline to batch all Redis operations into a single round-trip,
-        reducing calls from 5 to 1.
+        Uses a Redis transaction to keep the hash-chain tail consistent across
+        multiple AuditModule instances sharing the same Redis backend.
 
         Args:
             message_id: Unique message identifier
@@ -161,35 +162,42 @@ class AuditModule:
                 # Compute payload hash
                 payload_str = json.dumps(payload, sort_keys=True)
                 payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
-
-                # Read the current chain tail and append atomically for this process.
-                previous_hash = await self.redis.get("audit:last_hash")
-                entry = AuditEntry(
-                    message_id=message_id,
-                    timestamp=time.time(),
-                    sender_id=sender_id,
-                    sender_instance_id=sender_instance_id,
-                    target_id=target_id,
-                    message_type=message_type,
-                    correlation_id=correlation_id,
-                    decision=decision,
-                    latency_ms=latency_ms,
-                    payload_hash=payload_hash,
-                    violations=violations or [],
-                    previous_hash=previous_hash,
-                )
-                entry_hash = self._hash_entry(entry)
-                fields = self._entry_to_stream_fields(entry)
-
                 sender_stream = f"audit:by_sender:{sender_id}"
                 target_stream = f"audit:by_target:{target_id}"
 
-                pipe = self.redis.pipeline()
-                pipe.xadd("audit:messages", fields)
-                pipe.xadd(sender_stream, fields)
-                pipe.xadd(target_stream, fields)
-                pipe.set("audit:last_hash", entry_hash)
-                results = await pipe.execute()
+                while True:
+                    pipe = self.redis.pipeline()
+                    try:
+                        await pipe.watch("audit:last_hash")
+                        previous_hash = await pipe.get("audit:last_hash")
+                        entry = AuditEntry(
+                            message_id=message_id,
+                            timestamp=time.time(),
+                            sender_id=sender_id,
+                            sender_instance_id=sender_instance_id,
+                            target_id=target_id,
+                            message_type=message_type,
+                            correlation_id=correlation_id,
+                            decision=decision,
+                            latency_ms=latency_ms,
+                            payload_hash=payload_hash,
+                            violations=violations or [],
+                            previous_hash=previous_hash,
+                        )
+                        entry_hash = self._hash_entry(entry)
+                        fields = self._entry_to_stream_fields(entry)
+
+                        pipe.multi()
+                        pipe.xadd("audit:messages", fields)
+                        pipe.xadd(sender_stream, fields)
+                        pipe.xadd(target_stream, fields)
+                        pipe.set("audit:last_hash", entry_hash)
+                        results = await pipe.execute()
+                        break
+                    except WatchError:
+                        continue
+                    finally:
+                        await pipe.reset()
 
             # First pipeline result is the main stream ID.
             main_stream_id = str(results[0])

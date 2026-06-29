@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections.abc import Mapping
 
 from mas_core import (
@@ -18,6 +19,7 @@ from mas_proto.runtime.v1 import (
 )
 
 from ._core import AgentCore, AgentMessage, PendingRequest
+from .config import DEFAULT_REQUEST_TIMEOUT
 
 
 class MessagingMixin(AgentCore):
@@ -68,7 +70,10 @@ class MessagingMixin(AgentCore):
         ):
             stub = self._require_stub()
 
-            timeout_ms = int(timeout * 1000) if timeout is not None else 0
+            effective_timeout = DEFAULT_REQUEST_TIMEOUT if timeout is None else timeout
+            if effective_timeout <= 0:
+                raise ValueError("request timeout must be greater than 0")
+            timeout_ms = math.ceil(effective_timeout * 1000)
             resp = await stub.Request(
                 mas_pb2.RequestRequest(
                     target_id=target_id,
@@ -101,9 +106,7 @@ class MessagingMixin(AgentCore):
                 fut.set_result(early)
 
             try:
-                if timeout is None:
-                    return await fut
-                return await asyncio.wait_for(fut, timeout)
+                return await asyncio.wait_for(fut, effective_timeout)
             finally:
                 # Always clear this request's correlation slot. The future may be
                 # done (early reply) or pending (timeout/cancel), and keeping it

@@ -46,7 +46,6 @@ class ActionPolicy(StrEnum):
     BLOCK = "block"  # Reject message, alert security
     REDACT = "redact"  # Remove/mask sensitive data, deliver modified
     ALERT = "alert"  # Deliver message, flag for review
-    ENCRYPT = "encrypt"  # Encrypt sensitive fields, deliver encrypted
 
 
 class Violation(BaseModel):
@@ -99,7 +98,6 @@ class DLPModule:
     - BLOCK: Reject message
     - REDACT: Remove sensitive data
     - ALERT: Allow but flag
-    - ENCRYPT: Encrypt sensitive fields
 
     Usage:
         dlp = DLPModule(
@@ -392,7 +390,7 @@ class DLPModule:
         Determine action policy based on violations.
 
         Uses most restrictive policy:
-        BLOCK > REDACT > ENCRYPT > ALERT
+        BLOCK > REDACT > ALERT
 
         Args:
             violations: List of violations
@@ -407,7 +405,6 @@ class DLPModule:
         priority = [
             ActionPolicy.BLOCK,
             ActionPolicy.REDACT,
-            ActionPolicy.ENCRYPT,
             ActionPolicy.ALERT,
         ]
 

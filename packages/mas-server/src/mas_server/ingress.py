@@ -24,6 +24,13 @@ from .sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
+_DELETE_IF_VALUE_MATCHES_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
 
 class IngressService:
     """Handle message ingress and request/reply correlation."""
@@ -101,9 +108,9 @@ class IngressService:
 
             ttl_seconds = max(1, ceil(timeout_ms / 1000.0)) if timeout_ms > 0 else 60
             expires_at = time.time() + float(ttl_seconds)
-            await self._redis.setex(
-                f"mas.pending_request:{correlation_id}",
-                ttl_seconds,
+            pending_key = f"mas.pending_request:{correlation_id}"
+            await self._redis.set(
+                pending_key,
                 json.dumps(
                     {
                         "agent_id": sender_id,
@@ -112,6 +119,7 @@ class IngressService:
                         "expires_at": expires_at,
                     }
                 ),
+                ex=ttl_seconds,
             )
 
             meta = MessageMeta(
@@ -127,7 +135,13 @@ class IngressService:
                 data=payload,
                 meta=meta,
             )
-            await self._policy.ingest_and_route(message)
+            try:
+                await self._policy.ingest_and_route(message)
+            except Exception:
+                await self._delete_pending_request(
+                    pending_key, operation="delete_pending_failed_route"
+                )
+                raise
             return message.message_id, correlation_id
 
     async def reply_message(
@@ -201,21 +215,16 @@ class IngressService:
                 raise PermissionDeniedError("reply_sender_mismatch")
 
             if time.time() > expires_at:
-                try:
-                    await self._redis.delete(pending_key)
-                except Exception:
-                    telemetry.record_redis_error(
-                        component="ingress", operation="delete_pending_expired"
-                    )
-                    logger.debug(
-                        "Failed to delete expired pending request",
-                        exc_info=True,
-                        extra={
-                            "correlation_id": correlation_id,
-                            "pending_key": pending_key,
-                        },
-                    )
+                await self._delete_pending_request(
+                    pending_key, operation="delete_pending_expired"
+                )
                 raise FailedPreconditionError("correlation_id_expired")
+
+            reserved = await self._delete_pending_if_unchanged(
+                pending_key, expected_value=origin_text
+            )
+            if not reserved:
+                raise InvalidArgumentError("unknown_correlation_id")
 
             meta = MessageMeta(
                 sender_instance_id=sender_instance_id,
@@ -233,21 +242,6 @@ class IngressService:
                 meta=meta,
             )
             await self._policy.ingest_and_route(message)
-
-            try:
-                await self._redis.delete(pending_key)
-            except Exception:
-                telemetry.record_redis_error(
-                    component="ingress", operation="delete_pending_fulfilled"
-                )
-                logger.debug(
-                    "Failed to delete fulfilled pending request",
-                    exc_info=True,
-                    extra={
-                        "correlation_id": correlation_id,
-                        "pending_key": pending_key,
-                    },
-                )
 
             return message.message_id
 
@@ -280,3 +274,40 @@ class IngressService:
             return validate_json_object(obj)
         except ValueError as exc:
             raise InvalidArgumentError("payload_must_be_object") from exc
+
+    async def _delete_pending_request(
+        self, pending_key: str, *, operation: str
+    ) -> None:
+        """Best-effort delete for a pending request key."""
+        try:
+            await self._redis.delete(pending_key)
+        except Exception:
+            get_telemetry().record_redis_error(component="ingress", operation=operation)
+            logger.debug(
+                "Failed to delete pending request",
+                exc_info=True,
+                extra={"pending_key": pending_key, "operation": operation},
+            )
+
+    async def _delete_pending_if_unchanged(
+        self, pending_key: str, *, expected_value: str
+    ) -> bool:
+        """Atomically reserve a pending request by deleting its unchanged value."""
+        try:
+            deleted = await self._redis.eval(
+                _DELETE_IF_VALUE_MATCHES_SCRIPT,
+                1,
+                pending_key,
+                expected_value,
+            )
+        except Exception:
+            get_telemetry().record_redis_error(
+                component="ingress", operation="delete_pending_if_unchanged"
+            )
+            logger.debug(
+                "Failed to reserve pending request",
+                exc_info=True,
+                extra={"pending_key": pending_key},
+            )
+            return False
+        return int(deleted) == 1

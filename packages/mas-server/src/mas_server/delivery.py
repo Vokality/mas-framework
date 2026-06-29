@@ -120,10 +120,10 @@ class DeliveryService:
 
             if retryable:
                 try:
-                    await self._ack_inflight(inflight)
                     await self._redis.xadd(
                         inflight.stream_name, {"envelope": inflight.envelope_json}
                     )
+                    await self._ack_inflight(inflight)
                 except Exception:
                     telemetry.record_redis_error(
                         component="delivery", operation="xadd_retryable_nack"
@@ -139,10 +139,11 @@ class DeliveryService:
                         },
                     )
             else:
-                await self._router.write_dlq(
+                dlq_written = await self._router.write_dlq(
                     envelope_json=inflight.envelope_json, reason=reason
                 )
-                await self._ack_inflight(inflight)
+                if dlq_written:
+                    await self._ack_inflight(inflight)
 
             telemetry.record_delivery_nack(retryable=retryable)
             if self._circuit_breaker:
@@ -189,7 +190,8 @@ class DeliveryService:
 
         try:
             while self._running:
-                if len(inflight) >= self._settings.max_in_flight:
+                capacity = self._settings.max_in_flight - len(inflight)
+                if capacity <= 0:
                     await asyncio.sleep(0.05)
                     continue
 
@@ -212,7 +214,7 @@ class DeliveryService:
                     group,
                     consumer,
                     streams={shared_stream: ">", instance_stream: ">"},
-                    count=50,
+                    count=min(50, capacity),
                     block=1000,
                 )
                 if not items:
@@ -220,6 +222,18 @@ class DeliveryService:
 
                 for stream_name, messages in items:
                     for entry_id, fields in messages:
+                        if len(inflight) >= self._settings.max_in_flight:
+                            logger.warning(
+                                "In-flight delivery cap reached while processing "
+                                "stream batch",
+                                extra={
+                                    "agent_id": agent_id,
+                                    "instance_id": instance_id,
+                                    "max_in_flight": self._settings.max_in_flight,
+                                    "stream_name": stream_name,
+                                },
+                            )
+                            break
                         envelope_json = fields.get("envelope", "")
                         if not envelope_json:
                             try:

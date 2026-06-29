@@ -133,8 +133,6 @@ class PolicyPipeline:
                         decision = "ALERT"
                     elif scan.action == ActionPolicy.REDACT:
                         decision = "DLP_REDACTED"
-                    elif scan.action == ActionPolicy.ENCRYPT:
-                        decision = "DLP_ENCRYPTED"
 
                     if scan.action == ActionPolicy.REDACT and scan.redacted_payload:
                         message.data = scan.redacted_payload
