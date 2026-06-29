@@ -935,7 +935,7 @@ wheels = [
 
 [[package]]
 name = "mas-agent"
-version = "0.4.5"
+version = "0.5.0"
 source = { editable = "packages/mas-agent" }
 dependencies = [
     { name = "grpcio" },
@@ -954,7 +954,7 @@ requires-dist = [
 
 [[package]]
 name = "mas-core"
-version = "0.4.5"
+version = "0.5.0"
 source = { editable = "packages/mas-core" }
 dependencies = [
     { name = "opentelemetry-api" },
@@ -975,7 +975,7 @@ requires-dist = [
 
 [[package]]
 name = "mas-gateway"
-version = "0.4.5"
+version = "0.5.0"
 source = { editable = "packages/mas-gateway" }
 dependencies = [
     { name = "mas-core" },
@@ -994,7 +994,7 @@ requires-dist = [
 
 [[package]]
 name = "mas-proto"
-version = "0.4.5"
+version = "0.5.0"
 source = { editable = "packages/mas-proto" }
 dependencies = [
     { name = "grpcio" },
@@ -1009,7 +1009,7 @@ requires-dist = [
 
 [[package]]
 name = "mas-server"
-version = "0.4.5"
+version = "0.5.0"
 source = { editable = "packages/mas-server" }
 dependencies = [
     { name = "grpcio" },
@@ -1028,7 +1028,7 @@ requires-dist = [
 
 [[package]]
 name = "mas-workspace"
-version = "0.4.5"
+version = "0.5.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
