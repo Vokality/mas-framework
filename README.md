@@ -37,6 +37,24 @@ A reply is bound to the agent the request targeted, so an unrelated agent can't
 resolve your pending call by guessing a correlation id. Many instances can share
 one `agent_id`; replies route back to the instance that asked.
 
+## Installation
+
+```bash
+pip install mas-framework
+```
+
+This is a meta-package that pulls in everything.
+
+For lighter installs you can pick individual components:
+
+```bash
+pip install mas-agent     # just the client
+pip install mas-server    # just the broker
+```
+
+> **Note**: 0.5+ uses split packages (`from mas_agent import ...`, `from mas_server import ...`).
+> The old monolithic `mas` namespace is no longer provided.
+
 ## The programming model
 
 An agent is a class. You declare typed handlers and, optionally, typed state;
@@ -137,6 +155,10 @@ logic — lives in your handlers. (`openai` and `pydantic-ai` are dev dependenci
 because LLM-backed agents are the expected end use.)
 
 ## Packages
+
+`pip install mas-framework` is the recommended way to get the full set (it's a meta-package).
+
+Individual packages (for lighter or selective installs):
 
 - `mas-proto` — protobuf contract and generated gRPC bindings.
 - `mas-core` — shared envelope, JSON types, Redis client, and OpenTelemetry primitives.

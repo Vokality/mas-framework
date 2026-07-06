@@ -1,9 +1,8 @@
 # Release workflow for the mas-framework uv workspace.
 #
-# Publishes the individual packages to PyPI using uv + Trusted Publishing (OIDC).
-# No long-lived PyPI API tokens are used.
-#
-# Packages are published in dependency order so that dependents can resolve.
+# - Builds and publishes the split packages in dependency order.
+# - Finally publishes "mas-framework" as a meta-package (convenience install).
+# - Uses uv + Trusted Publishing (OIDC). No long-lived PyPI tokens.
 #
 # Trigger: pushing a tag like v0.5.0
 #
@@ -13,13 +12,13 @@
 #    Settings → Environments → New environment called "pypi"
 #    (Recommended: add "Required reviewers" for manual approval gate)
 #
-# 2. On PyPI (https://pypi.org) for EVERY package:
+# 2. On PyPI (https://pypi.org) for EVERY package (including the meta):
 #    - mas-proto
 #    - mas-core
 #    - mas-gateway
 #    - mas-server
 #    - mas-agent
-#    (add "mas-framework" later if you create the meta-package)
+#    - mas-framework
 #
 #    For each:
 #      Project → Settings → Publishing (or /manage/project/<name>/settings/publishing/)
@@ -32,7 +31,7 @@
 #    Repeat on https://test.pypi.org if you want TestPyPI support.
 #
 # To cut a release:
-#   # Ensure all package versions in packages/*/pyproject.toml are bumped consistently
+#   # Bump version in ALL packages/*/pyproject.toml (including mas-framework)
 #   git tag -a v0.5.0 -m "Release v0.5.0"
 #   git push origin v0.5.0
 #
@@ -82,10 +81,14 @@ jobs:
             mas-gateway
             mas-server
             mas-agent
+            mas-framework
           )
           for pkg in "${PACKAGES[@]}"; do
             echo ">>> Building $pkg"
-            uv build --package "$pkg"
+            # Use --no-sources (recommended in uv docs for publishing) so the
+            # build does not depend on `tool.uv.sources`, matching what happens
+            # when users or other tools build the published sdist.
+            uv build --package "$pkg" --no-sources
           done
 
       - name: List built distributions
@@ -108,5 +111,6 @@ jobs:
           publish_pkg mas-gateway
           publish_pkg mas-server
           publish_pkg mas-agent
+          publish_pkg mas-framework
 
           echo "All packages published."

@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "mas-agent",
     "mas-core",
+    "mas-framework",
     "mas-gateway",
     "mas-proto",
     "mas-server",
@@ -971,6 +972,27 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.42.1" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "redis", extras = ["hiredis"], specifier = ">=8.0.1" },
+]
+
+[[package]]
+name = "mas-framework"
+version = "0.5.0"
+source = { editable = "packages/mas-framework" }
+dependencies = [
+    { name = "mas-agent" },
+    { name = "mas-core" },
+    { name = "mas-gateway" },
+    { name = "mas-proto" },
+    { name = "mas-server" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mas-agent", editable = "packages/mas-agent" },
+    { name = "mas-core", editable = "packages/mas-core" },
+    { name = "mas-gateway", editable = "packages/mas-gateway" },
+    { name = "mas-proto", editable = "packages/mas-proto" },
+    { name = "mas-server", editable = "packages/mas-server" },
 ]
 
 [[package]]
