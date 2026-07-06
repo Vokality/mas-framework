@@ -1,0 +1,112 @@
+# Release workflow for the mas-framework uv workspace.
+#
+# Publishes the individual packages to PyPI using uv + Trusted Publishing (OIDC).
+# No long-lived PyPI API tokens are used.
+#
+# Packages are published in dependency order so that dependents can resolve.
+#
+# Trigger: pushing a tag like v0.5.0
+#
+# REQUIRED ONE-TIME SETUP:
+#
+# 1. GitHub repo settings:
+#    Settings → Environments → New environment called "pypi"
+#    (Recommended: add "Required reviewers" for manual approval gate)
+#
+# 2. On PyPI (https://pypi.org) for EVERY package:
+#    - mas-proto
+#    - mas-core
+#    - mas-gateway
+#    - mas-server
+#    - mas-agent
+#    (add "mas-framework" later if you create the meta-package)
+#
+#    For each:
+#      Project → Settings → Publishing (or /manage/project/<name>/settings/publishing/)
+#      Add a "GitHub" trusted publisher with:
+#        GitHub repository owner: Vokality
+#        GitHub repository name:   mas-framework
+#        Workflow name:            release.yml
+#        Environment name:         pypi
+#
+#    Repeat on https://test.pypi.org if you want TestPyPI support.
+#
+# To cut a release:
+#   # Ensure all package versions in packages/*/pyproject.toml are bumped consistently
+#   git tag -a v0.5.0 -m "Release v0.5.0"
+#   git push origin v0.5.0
+#
+# The job will only proceed after any required environment approvals.
+
+name: Release
+
+on:
+  push:
+    tags:
+      # Publish on any tag starting with v, e.g. v0.5.0
+      - "v*"
+
+jobs:
+  pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+
+    # GitHub Environment + id-token permission are required for Trusted Publishing
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Build packages (in dependency order)
+        run: |
+          set -euo pipefail
+          PACKAGES=(
+            mas-proto
+            mas-core
+            mas-gateway
+            mas-server
+            mas-agent
+          )
+          for pkg in "${PACKAGES[@]}"; do
+            echo ">>> Building $pkg"
+            uv build --package "$pkg"
+          done
+
+      - name: List built distributions
+        run: ls -l dist/
+
+      - name: Publish packages (in dependency order)
+        run: |
+          set -euo pipefail
+          publish_pkg() {
+            local pkg="$1"
+            # Normalize name for dist filenames (PEP 427/503): mas-core -> mas_core
+            local norm="${pkg//-/_}"
+            echo ">>> Publishing $pkg (matching dist/${norm}-*)"
+            # --trusted-publishing automatic forces OIDC / Trusted Publisher flow
+            uv publish --trusted-publishing automatic "dist/${norm}-"*
+          }
+
+          publish_pkg mas-proto
+          publish_pkg mas-core
+          publish_pkg mas-gateway
+          publish_pkg mas-server
+          publish_pkg mas-agent
+
+          echo "All packages published."
