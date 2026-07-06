@@ -131,7 +131,7 @@ jobs:
             echo ">>> Publishing $pkg"
             # Bare `uv publish` is sufficient with GitHub + Trusted Publishing
             # (uv auto-detects the environment and id-token).
-            uv publish dist/${norm}-*.tar.gz dist/${norm}-*.whl
+            uv publish -v dist/${norm}-*.tar.gz dist/${norm}-*.whl
           }
 
           publish_pkg mas-proto
