@@ -1,8 +1,12 @@
 # Release workflow for the mas-framework uv workspace.
 #
-# - Builds and publishes the split packages in dependency order.
-# - Finally publishes "mas-framework" as a meta-package (convenience install).
-# - Uses uv + Trusted Publishing (OIDC). No long-lived PyPI tokens.
+# Best practices followed (per uv + PyPI docs):
+# - Separate build and publish jobs (build has no publish permissions).
+# - Use `uv build --no-sources` for reproducible published artifacts.
+# - Bare `uv publish` (uv auto-detects GitHub Actions + id-token for Trusted Publishing).
+# - Publish in dependency order (sub-packages before meta-package).
+# - GitHub Environment + id-token: write for Trusted Publishing (no tokens/secrets).
+# - Artifacts to pass dists between jobs.
 #
 # Trigger: pushing a tag like v0.5.0
 #
@@ -35,7 +39,7 @@
 #   git tag -a v0.5.0 -m "Release v0.5.0"
 #   git push origin v0.5.0
 #
-# The job will only proceed after any required environment approvals.
+# The publish job will only proceed after any required environment approvals.
 
 name: Release
 
@@ -46,17 +50,9 @@ on:
       - "v*"
 
 jobs:
-  pypi:
-    name: Publish to PyPI
+  build:
+    name: Build packages
     runs-on: ubuntu-latest
-
-    # GitHub Environment + id-token permission are required for Trusted Publishing
-    environment:
-      name: pypi
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -85,14 +81,42 @@ jobs:
           )
           for pkg in "${PACKAGES[@]}"; do
             echo ">>> Building $pkg"
-            # Use --no-sources (recommended in uv docs for publishing) so the
-            # build does not depend on `tool.uv.sources`, matching what happens
-            # when users or other tools build the published sdist.
+            # --no-sources is recommended by uv for publishing so artifacts
+            # don't depend on local workspace sources.
             uv build --package "$pkg" --no-sources
           done
 
       - name: List built distributions
         run: ls -l dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dists
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build
+
+    # Environment + id-token permission required for PyPI Trusted Publishing.
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dists
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Publish packages (in dependency order)
         run: |
@@ -102,8 +126,9 @@ jobs:
             # Normalize name for dist filenames (PEP 427/503): mas-core -> mas_core
             local norm="${pkg//-/_}"
             echo ">>> Publishing $pkg (matching dist/${norm}-*)"
-            # --trusted-publishing automatic forces OIDC / Trusted Publisher flow
-            uv publish --trusted-publishing automatic "dist/${norm}-"*
+            # Bare `uv publish` is sufficient with GitHub + Trusted Publishing
+            # (uv auto-detects the environment and id-token).
+            uv publish "dist/${norm}-"*
           }
 
           publish_pkg mas-proto
