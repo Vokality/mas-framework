@@ -118,6 +118,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: List artifacts
+        run: ls -l dist/
+
       - name: Publish packages (in dependency order)
         run: |
           set -euo pipefail
@@ -125,10 +128,10 @@ jobs:
             local pkg="$1"
             # Normalize name for dist filenames (PEP 427/503): mas-core -> mas_core
             local norm="${pkg//-/_}"
-            echo ">>> Publishing $pkg (matching dist/${norm}-*)"
+            echo ">>> Publishing $pkg"
             # Bare `uv publish` is sufficient with GitHub + Trusted Publishing
             # (uv auto-detects the environment and id-token).
-            uv publish "dist/${norm}-"*
+            uv publish dist/${norm}-*.tar.gz dist/${norm}-*.whl
           }
 
           publish_pkg mas-proto
