@@ -15,6 +15,14 @@ Every accepted message had its exact ingress span, handler trace and all four
 delivery stages exported. No RPC errors, loss or duplicate deliveries occurred;
 both broker processes shut down with zero exit status.
 
+The [four-CPU CI measurement](../artifacts/github-four-cpu-load.json) passes all
+16 gates at its explicit 250/sec target: 254.84 accepted/sec, 156.87 ms scheduled
+admission to handler p95, and all 15,300 messages delivered and fully traced.
+This was the [GitHub acceptance run](https://github.com/Vokality/mas-framework/actions/runs/37218600198)
+at commit `ee4d79c1f0326044543453637ff4516e83bf510a` on an AMD EPYC 7763 runner.
+It establishes this smaller workload on that runner; the separate local report
+establishes 1,000/sec on its measured host.
+
 The [environment record](../artifacts/validation-environment.json) pins the
 immutable image, 149-file runtime/test source manifest, authored frontend source,
 wheel checksums and report checksum. This was an arm64 Linux container on a single

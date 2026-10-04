@@ -168,6 +168,10 @@ async def test_arrival_after_snapshot_rechecks_changed_security_policy(
     revoked.write_text("[]")
     leaf_bytes = Path(bundle.client("worker").client_cert_path).read_bytes()
     leaf = x509.load_pem_x509_certificate(leaf_bytes)
+    replacement_ca: bytes | None = None
+    if change == "trust":
+        other = await asyncio.to_thread(generate_dev_tls, tmp_path / "other")
+        replacement_ca = Path(other.ca_pem).read_bytes()
     policy = PeerCertificatePolicy(
         TlsConfig(bundle.server_cert, bundle.server_key, bundle.ca_pem, str(revoked))
     )
@@ -201,9 +205,9 @@ async def test_arrival_after_snapshot_rechecks_changed_security_policy(
             )
             replacement.replace(revoked)
         elif change == "trust":
-            other = await asyncio.to_thread(generate_dev_tls, tmp_path / "other")
+            assert replacement_ca is not None
             replacement = Path(bundle.ca_pem).with_suffix(".new")
-            replacement.write_bytes(Path(other.ca_pem).read_bytes())
+            replacement.write_bytes(replacement_ca)
             replacement.replace(bundle.ca_pem)
         else:
             expired = leaf.not_valid_after_utc + timedelta(seconds=1)
