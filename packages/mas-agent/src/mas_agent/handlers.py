@@ -6,8 +6,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from types import FunctionType
 from typing import ClassVar
+from weakref import WeakKeyDictionary
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._core import AgentCore, AgentMessage
 
@@ -22,7 +23,9 @@ HandlerFunction = Callable[..., Awaitable[None]]
 # Decorated handler functions -> their (message_type, model) markers. Populated
 # by ``@Agent.on`` at class-definition time and collected per subclass in
 # ``__init_subclass__``.
-_DECORATED_HANDLERS: dict[HandlerFunction, list[HandlerMarker]] = {}
+_DECORATED_HANDLERS: WeakKeyDictionary[HandlerFunction, list[HandlerMarker]] = (
+    WeakKeyDictionary()
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,10 @@ class HandlerSpec:
 
     fn: HandlerFunction
     model: type[BaseModel] | None
+
+
+class InvalidPayloadError(ValueError):
+    """A delivery payload failed its registered handler's boundary schema."""
 
 
 class HandlerRegistryMixin(AgentCore):
@@ -53,12 +60,17 @@ class HandlerRegistryMixin(AgentCore):
     _handlers: ClassVar[dict[str, HandlerSpec]] = {}
 
     @classmethod
-    def on(
+    def on[**Parameters](
         cls, message_type: str, *, model: type[BaseModel] | None = None
-    ) -> Callable[[HandlerFunction], HandlerFunction]:
+    ) -> Callable[
+        [Callable[Parameters, Awaitable[None]]],
+        Callable[Parameters, Awaitable[None]],
+    ]:
         """Decorator to register a handler for a message_type."""
 
-        def decorator(fn: HandlerFunction) -> HandlerFunction:
+        def decorator(
+            fn: Callable[Parameters, Awaitable[None]],
+        ) -> Callable[Parameters, Awaitable[None]]:
             """Register a function as a handler for this agent class."""
             if not callable(fn):
                 raise TypeError("handler must be callable")
@@ -83,21 +95,21 @@ class HandlerRegistryMixin(AgentCore):
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Collect handler registrations from subclass methods."""
         super().__init_subclass__(**kwargs)
-        cls._handlers = {}
+        cls._handlers = {
+            message_type: spec
+            for message_type, spec in cls._handlers.items()
+            if spec.fn not in _DECORATED_HANDLERS
+        }
 
-        # Reflection over class members is intentional here: handlers are
-        # registered by the @on decorator, which marks functions in
-        # _DECORATED_HANDLERS; this collects the marked ones (including inherited
-        # methods, hence dir() rather than __dict__) into the per-class registry.
-        for name in dir(cls):
-            try:
+        # Walk the MRO in precedence order so a subclass's registration wins
+        # even when its method name sorts before the inherited handler's name.
+        for owner in reversed(cls.__mro__):
+            for name in vars(owner):
                 attr = getattr(cls, name)
                 if not isinstance(attr, FunctionType):
                     continue
                 for message_type, model in _DECORATED_HANDLERS.get(attr, []):
                     cls._handlers[message_type] = HandlerSpec(fn=attr, model=model)
-            except AttributeError:
-                pass
 
     async def _dispatch_typed(self, msg: AgentMessage) -> bool:
         """Dispatch to a typed handler if registered."""
@@ -110,6 +122,9 @@ class HandlerRegistryMixin(AgentCore):
             await spec.fn(self, msg, None)
             return True
 
-        payload_model = spec.model.model_validate(msg.data)
+        try:
+            payload_model = spec.model.model_validate(msg.data)
+        except ValidationError as exc:
+            raise InvalidPayloadError("Invalid message payload") from exc
         await spec.fn(self, msg, payload_model)
         return True

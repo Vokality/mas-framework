@@ -84,6 +84,10 @@ class DlpRule(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class RedactionConflictError(ValueError):
+    """Redacting object keys would discard distinct payload fields."""
+
+
 class DLPModule:
     """
     Data Loss Prevention module for scanning messages.
@@ -280,8 +284,7 @@ class DLPModule:
         payload_text = json.dumps(payload_dict)
         payload_hash = hashlib.sha256(payload_text.encode()).hexdigest()
 
-        # Detect violations
-        violations = await self._detect_violations(payload_text)
+        violations = await self._detect_payload_violations(payload_dict)
 
         scan_duration = time.time() - scan_start
 
@@ -296,11 +299,12 @@ class DLPModule:
         # Determine action policy (most restrictive wins)
         action = self._determine_action(violations)
 
-        # Redact the original structure so non-violating values keep their type;
-        # only matched substrings inside string values are masked.
         redacted_payload = None
         if action == ActionPolicy.REDACT:
-            redacted_payload = await self._apply_redaction(payload_dict, violations)
+            try:
+                redacted_payload = await self._apply_redaction(payload_dict, violations)
+            except RedactionConflictError:
+                action = ActionPolicy.BLOCK
 
         logger.info(
             "DLP scan completed",
@@ -319,6 +323,40 @@ class DLPModule:
             redacted_payload=redacted_payload,
             payload_hash=payload_hash,
         )
+
+    async def _detect_payload_violations(
+        self, value: JsonValue, label: str | None = None
+    ) -> list[Violation]:
+        """Scan decoded content, retaining property labels for contextual rules."""
+        violations: list[Violation] = []
+        if isinstance(value, dict):
+            for key, item in value.items():
+                violations.extend(await self._detect_violations(key))
+                violations.extend(await self._detect_payload_violations(item, key))
+        elif isinstance(value, list):
+            for item in value:
+                violations.extend(await self._detect_payload_violations(item, label))
+        else:
+            text = value if isinstance(value, str) else json.dumps(value)
+            violations = await self._detect_violations(text)
+            if label is not None:
+                prefix = f"{label}: "
+                contextual = await self._detect_violations(prefix + text)
+                for violation in contextual:
+                    if violation.end_pos <= len(prefix):
+                        continue
+                    start = max(violation.start_pos - len(prefix), 0)
+                    end = violation.end_pos - len(prefix)
+                    actual = violation.model_copy(
+                        update={
+                            "matched_text": text[start:end],
+                            "start_pos": start,
+                            "end_pos": end,
+                        }
+                    )
+                    if actual not in violations:
+                        violations.append(actual)
+        return violations
 
     async def _detect_violations(self, text: str) -> list[Violation]:
         """
@@ -439,10 +477,7 @@ class DLPModule:
                     violation.violation_type, violation.matched_text
                 )
 
-        redacted = {
-            key: self._redact_recursive(value, replacements)
-            for key, value in payload.items()
-        }
+        redacted = self._redact_object(payload, replacements)
 
         logger.debug(
             "Applied redaction",
@@ -452,6 +487,18 @@ class DLPModule:
             },
         )
 
+        return redacted
+
+    def _redact_object(
+        self, obj: JsonObject, replacements: dict[str, str]
+    ) -> JsonObject:
+        """Redact keys and values while retaining every distinct field."""
+        redacted: JsonObject = {}
+        for key, value in obj.items():
+            redacted_key = self._redact_text(key, replacements)
+            if redacted_key in redacted:
+                raise RedactionConflictError("Redacted payload keys collide")
+            redacted[redacted_key] = self._redact_recursive(value, replacements)
         return redacted
 
     def _redact_recursive(
@@ -468,19 +515,22 @@ class DLPModule:
             Redacted object
         """
         if isinstance(obj, dict):
-            return {
-                key: self._redact_recursive(value, replacements)
-                for key, value in obj.items()
-            }
+            return self._redact_object(obj, replacements)
         elif isinstance(obj, list):
             return [self._redact_recursive(item, replacements) for item in obj]
         elif isinstance(obj, str):
-            # Apply all replacements to string
-            for original, redacted in replacements.items():
-                obj = obj.replace(original, redacted)
-            return obj
+            return self._redact_text(obj, replacements)
         else:
-            return obj
+            text = json.dumps(obj)
+            redacted_text = self._redact_text(text, replacements)
+            return obj if text == redacted_text else redacted_text
+
+    @staticmethod
+    def _redact_text(text: str, replacements: dict[str, str]) -> str:
+        """Replace longer matches first so shorter overlaps cannot interrupt them."""
+        for original in sorted(replacements, key=len, reverse=True):
+            text = text.replace(original, replacements[original])
+        return text
 
     def _get_redaction_mask(self, violation_type: str, text: str) -> str:
         """

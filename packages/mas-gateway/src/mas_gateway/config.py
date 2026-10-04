@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from mas_core.durability import RedisDurabilitySettings
+from mas_core.redis_client import RedisPoolSettings, SentinelSettings
 from pydantic import Field, TypeAdapter, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .audit_archive import AuditRetentionSettings
 from .dlp import ActionPolicy, DlpRule
 
 _CONFIG_MAPPING_ADAPTER = TypeAdapter(dict[str, object])
@@ -24,10 +27,10 @@ class CircuitBreakerSettings(BaseSettings):
         default=2, ge=1, description="Successes before closing circuit"
     )
     timeout_seconds: float = Field(
-        default=60.0, gt=0, description="Timeout before half-open"
+        default=60.0, gt=0, allow_inf_nan=False, description="Timeout before half-open"
     )
     window_seconds: float = Field(
-        default=300.0, gt=0, description="Failure counting window"
+        default=300.0, gt=0, allow_inf_nan=False, description="Failure counting window"
     )
 
     model_config = SettingsConfigDict(
@@ -47,15 +50,38 @@ class RateLimitSettings(BaseSettings):
 class RedisSettings(BaseSettings):
     """Redis configuration settings."""
 
-    url: str = Field(
+    url: str | None = Field(
         default="redis://localhost:6379",
         description="Redis connection URL",
     )
     socket_timeout: float | None = Field(
-        default=None, description="Socket timeout in seconds"
+        default=None, gt=0, allow_inf_nan=False, description="Socket timeout in seconds"
     )
+    sentinel: SentinelSettings | None = None
+    pool: RedisPoolSettings = Field(default_factory=RedisPoolSettings)
+    durability: RedisDurabilitySettings = Field(default_factory=RedisDurabilitySettings)
 
     model_config = SettingsConfigDict(env_prefix="GATEWAY_REDIS_", extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _select_backend(cls, raw_data: object) -> object:
+        """Do not silently ignore a URL when Sentinel discovery is configured."""
+        if isinstance(raw_data, Mapping):
+            data = _CONFIG_MAPPING_ADAPTER.validate_python(raw_data)
+            if data.get("sentinel") is not None:
+                if data.get("url") is not None:
+                    raise ValueError("Choose a Redis URL or Sentinel, not both")
+                data["url"] = None
+            return data
+        return raw_data
+
+    @model_validator(mode="after")
+    def _require_backend(self) -> "RedisSettings":
+        """Require a reachable backend definition."""
+        if self.url is None and self.sentinel is None:
+            raise ValueError("A Redis URL or Sentinel configuration is required")
+        return self
 
 
 class FeaturesSettings(BaseSettings):
@@ -117,6 +143,7 @@ class AuditSettings(BaseSettings):
         ge=0,
         description="Number of rotated audit files to keep",
     )
+    retention: AuditRetentionSettings = Field(default_factory=AuditRetentionSettings)
 
     model_config = SettingsConfigDict(env_prefix="GATEWAY_AUDIT_", extra="forbid")
 
@@ -245,7 +272,16 @@ class GatewaySettings(BaseSettings):
     ) -> dict[str, object]:
         """Load YAML config and merge with explicit parameters."""
         yaml_data = cls._load_yaml(config_file)
-        merged_data = {**yaml_data, **data}
+        merged_data = dict(yaml_data)
+        for key, value in data.items():
+            previous = merged_data.get(key)
+            if isinstance(value, Mapping) and isinstance(previous, Mapping):
+                merged_data[key] = {
+                    **_CONFIG_MAPPING_ADAPTER.validate_python(previous),
+                    **_CONFIG_MAPPING_ADAPTER.validate_python(value),
+                }
+            else:
+                merged_data[key] = value
         merged_data.setdefault("config_file", config_file)
         return merged_data
 
@@ -302,11 +338,11 @@ class GatewaySettings(BaseSettings):
             file_path: Path to output YAML file
         """
         # Convert to dict, excluding None values
-        data = self.model_dump(exclude_none=True, exclude={"config_file"})
+        data = self.model_dump(mode="json", exclude_none=True, exclude={"config_file"})
 
         path = Path(file_path)
         with path.open("w") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
 
     def summary(self) -> str:
         """

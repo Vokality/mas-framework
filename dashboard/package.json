@@ -1,0 +1,36 @@
+{
+  "name": "mas-management-dashboard",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "contracts": "uv run python ../tools/dashboard_contracts.py && node scripts/generate-contracts.mjs",
+    "contracts:check": "uv run python ../tools/dashboard_contracts.py --check && node scripts/generate-contracts.mjs --check",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "format:check": "prettier --check src vite.config.ts svelte.config.js",
+    "build": "vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "svelte": "5.57.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/node": "26.6.4",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "esbuild": "0.28.2",
+    "json-schema-to-typescript": "16.0.0",
+    "prettier": "3.9.9",
+    "prettier-plugin-svelte": "4.1.1",
+    "svelte-check": "4.7.6",
+    "typescript": "6.0.3",
+    "vite": "8.3.2"
+  }
+}

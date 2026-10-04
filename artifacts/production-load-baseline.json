@@ -1,0 +1,240 @@
+{
+  "acceptance_finished_at_utc": "2026-10-04T05:41:01.955112+00:00",
+  "acceptance_interval_seconds": 60.03011788602453,
+  "accepted_messages": 61200,
+  "accepted_rate": 1019.4884863329899,
+  "acl_shortcut_present": false,
+  "audit_capacity": 200000,
+  "broker_count": 2,
+  "broker_exit_codes": [
+    0,
+    0
+  ],
+  "broker_mode": "process",
+  "broker_process_ids": [
+    61,
+    85
+  ],
+  "concurrent_sends": 96,
+  "consumer_count": 2,
+  "cpu": "aarch64",
+  "cpu_cores": 16,
+  "cpu_measurement_scope": "load_driver",
+  "diagnostics_enabled": false,
+  "duplicate_deliveries": 0,
+  "duration_seconds": 60.0,
+  "elapsed_seconds": 60.030104135978036,
+  "end_to_end_p95_ms": 281.5835747169331,
+  "envelope_bytes_sample": 419,
+  "errors": {},
+  "event_loop_lag_count": 5573,
+  "event_loop_lag_interval_ms": 10,
+  "event_loop_lag_max_ms": 39.23308500088751,
+  "event_loop_lag_p95_ms": 2.602532971650362,
+  "event_loop_lag_samples_retained": 5573,
+  "event_loop_thread_cpu_percent": 30.788173061880308,
+  "event_loop_thread_cpu_seconds": 18.482176583999998,
+  "exported_broker_messages": 61200,
+  "exported_handler_messages": 61200,
+  "exported_service_spans": {
+    "mas-load-broker-0": {
+      "mas.gateway.audit.append_batch": 11211,
+      "mas.gateway.audit.commit_batch": 6567,
+      "mas.gateway.audit.confirm_batch": 6567,
+      "mas.gateway.audit.log_message": 30601,
+      "mas.rpc.get_state": 3,
+      "mas.rpc.send": 30601,
+      "mas.rpc.transport": 3,
+      "mas.server.delivery.deliver_entry": 29522,
+      "mas.server.delivery.handle_ack": 29522,
+      "mas.server.ingress.send": 30601,
+      "mas.server.policy.check_admission": 30600,
+      "mas.server.policy.ingest": 30601,
+      "mas.server.start": 1,
+      "mas.server.stop": 1
+    },
+    "mas-load-broker-1": {
+      "mas.gateway.audit.append_batch": 11213,
+      "mas.gateway.audit.commit_batch": 6567,
+      "mas.gateway.audit.confirm_batch": 6567,
+      "mas.gateway.audit.log_message": 30600,
+      "mas.rpc.get_state": 2,
+      "mas.rpc.send": 30600,
+      "mas.rpc.transport": 2,
+      "mas.server.delivery.deliver_entry": 31678,
+      "mas.server.delivery.handle_ack": 31678,
+      "mas.server.ingress.send": 30600,
+      "mas.server.policy.check_admission": 30600,
+      "mas.server.policy.ingest": 30600,
+      "mas.server.start": 1,
+      "mas.server.stop": 1
+    },
+    "mas-load-driver": {
+      "mas.agent.handle_message": 61200,
+      "mas.agent.load_state": 5,
+      "mas.agent.send": 61201,
+      "mas.agent.start": 5,
+      "mas.agent.stop": 5,
+      "mas.agent.transport_loop": 5
+    }
+  },
+  "exported_spans": {
+    "mas.agent.handle_message": 61200,
+    "mas.agent.load_state": 5,
+    "mas.agent.send": 61201,
+    "mas.agent.start": 5,
+    "mas.agent.stop": 5,
+    "mas.agent.transport_loop": 5,
+    "mas.gateway.audit.append_batch": 22424,
+    "mas.gateway.audit.commit_batch": 13134,
+    "mas.gateway.audit.confirm_batch": 13134,
+    "mas.gateway.audit.log_message": 61201,
+    "mas.rpc.get_state": 5,
+    "mas.rpc.send": 61201,
+    "mas.rpc.transport": 5,
+    "mas.server.delivery.deliver_entry": 61200,
+    "mas.server.delivery.handle_ack": 61200,
+    "mas.server.ingress.send": 61201,
+    "mas.server.policy.check_admission": 61200,
+    "mas.server.policy.ingest": 61201,
+    "mas.server.start": 2,
+    "mas.server.stop": 2
+  },
+  "gates": {
+    "all_planned_accepted": true,
+    "broker_isolation": true,
+    "broker_shutdown": true,
+    "broker_tracing_exported": true,
+    "latency": false,
+    "no_accepted_loss": true,
+    "no_rpc_errors": true,
+    "rbac_enforced": true,
+    "throughput": true,
+    "tracing_exported": true,
+    "tracing_propagated": true
+  },
+  "host_platform": "Linux-7.0.14-orbstack-00380-ga7e0a2dc9535-aarch64-with-glibc2.41",
+  "lost_accepted_messages": 0,
+  "metric_points": 671,
+  "offered_rate": 1020,
+  "passed": false,
+  "payload_bytes_max": 19,
+  "planned_messages": 61200,
+  "process_cpu_percent": 42.215196490393325,
+  "process_cpu_seconds": 25.341832219,
+  "producer_count": 2,
+  "python_version": "3.14.8",
+  "rbac_denied_probe": true,
+  "received_messages": 61200,
+  "redis_replicas": 1,
+  "redis_version": "8.10.2",
+  "sample_ratio": 1.0,
+  "send_rpc_p95_ms": 78.1962820328772,
+  "span_latency": {
+    "mas.agent.handle_message": {
+      "count": 61200,
+      "mean_ms": 0.02630557566993464,
+      "p95_ms": 0.0375
+    },
+    "mas.agent.load_state": {
+      "count": 5,
+      "mean_ms": 2.5420480000000003,
+      "p95_ms": 4.286011
+    },
+    "mas.agent.send": {
+      "count": 61201,
+      "mean_ms": 37.906199571967775,
+      "p95_ms": 78.163032
+    },
+    "mas.agent.start": {
+      "count": 5,
+      "mean_ms": 31.030937,
+      "p95_ms": 34.459421
+    },
+    "mas.agent.stop": {
+      "count": 5,
+      "mean_ms": 0.5702346,
+      "p95_ms": 1.567671
+    },
+    "mas.agent.transport_loop": {
+      "count": 5,
+      "mean_ms": 60138.6895788,
+      "p95_ms": 60202.928117
+    },
+    "mas.gateway.audit.append_batch": {
+      "count": 22424,
+      "mean_ms": 3.244018291696397,
+      "p95_ms": 6.036683
+    },
+    "mas.gateway.audit.commit_batch": {
+      "count": 13134,
+      "mean_ms": 15.91000799566012,
+      "p95_ms": 27.328403
+    },
+    "mas.gateway.audit.confirm_batch": {
+      "count": 13134,
+      "mean_ms": 7.18690174562205,
+      "p95_ms": 11.613905
+    },
+    "mas.gateway.audit.log_message": {
+      "count": 61201,
+      "mean_ms": 26.899383114949103,
+      "p95_ms": 52.646554
+    },
+    "mas.rpc.get_state": {
+      "count": 5,
+      "mean_ms": 1.8136546,
+      "p95_ms": 3.577717
+    },
+    "mas.rpc.send": {
+      "count": 61201,
+      "mean_ms": 35.20998005782585,
+      "p95_ms": 70.002387
+    },
+    "mas.rpc.transport": {
+      "count": 5,
+      "mean_ms": 60117.6730084,
+      "p95_ms": 60182.807607
+    },
+    "mas.server.delivery.deliver_entry": {
+      "count": 61200,
+      "mean_ms": 0.009070282009803922,
+      "p95_ms": 0.018625
+    },
+    "mas.server.delivery.handle_ack": {
+      "count": 61200,
+      "mean_ms": 7.933778498415032,
+      "p95_ms": 14.532745
+    },
+    "mas.server.ingress.send": {
+      "count": 61201,
+      "mean_ms": 35.122841241956834,
+      "p95_ms": 69.91422
+    },
+    "mas.server.policy.check_admission": {
+      "count": 61200,
+      "mean_ms": 4.298208909722223,
+      "p95_ms": 9.05194
+    },
+    "mas.server.policy.ingest": {
+      "count": 61201,
+      "mean_ms": 35.065031190715835,
+      "p95_ms": 69.850725
+    },
+    "mas.server.start": {
+      "count": 2,
+      "mean_ms": 33.5716895,
+      "p95_ms": 34.096962
+    },
+    "mas.server.stop": {
+      "count": 2,
+      "mean_ms": 5.0269715,
+      "p95_ms": 7.690645
+    }
+  },
+  "started_at_utc": "2026-10-04T05:40:01.924976+00:00",
+  "target_rate": 1000,
+  "trace_requests": 1173,
+  "traced_messages": 61200,
+  "wait_for_aof": true
+}

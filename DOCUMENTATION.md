@@ -2,7 +2,13 @@
 
 ## Runtime Composition
 
-This repository provides library packages. A host application is responsible for:
+After editing the wire contract, regenerate it with
+`uv run python -m tools.generate_proto`. This uses locked code generators and
+adds the explicit experimental gRPC submodule import required by generated calls.
+
+This repository provides library packages and a supervisor-friendly broker
+entrypoint: `uv run python -m mas_server --settings broker.json --gateway gateway.yaml`.
+An embedding host application is responsible for:
 
 - Building `AgentDefinition` entries for allowlisted agents.
 - Constructing `MASServerSettings` and `GatewaySettings`.
@@ -15,11 +21,11 @@ This repository provides library packages. A host application is responsible for
 Gateway policy can be configured with `GatewaySettings`, environment variables, or a standalone YAML file loaded with `GatewaySettings.from_yaml(...)`.
 
 Supported settings:
-- `redis`: connection parameters used by the server.
+- `redis`: standalone URL or Sentinel discovery, TLS credentials and explicit replica/AOF confirmation policy.
 - `rate_limit`: per-agent message limits per minute/hour.
 - `features`: toggles for DLP, RBAC, and circuit breaker.
 - `dlp`: custom DLP rules and policy overrides.
-- `audit`: optional JSONL audit file sink settings.
+- `audit`: optional JSONL sink, bounded retained records and durable archive settings.
 - `telemetry`: OpenTelemetry exporter settings.
 - `circuit_breaker`: failure/success thresholds and timeout window.
 
@@ -28,7 +34,11 @@ Supported settings:
 `MASServerSettings` fields beyond the required `listen_addr`, `tls`, and `agents`
 allowlist:
 
-- `max_in_flight` (default `200`): per-session cap on undelivered stream entries.
+- `max_in_flight` (default `200`): per-session cap on deliveries awaiting ACK/NACK.
+- `max_delivery_attempts` (default `5`): maximum handler attempts before DLQ.
+- `management` (default `None`): optional `mas_server.management.ManagementSettings`
+  for the bundled dashboard, `/api/snapshot`, and `/healthz`.
+- `session_lease`: shared ownership TTL and heartbeat interval (6s and 2s defaults).
 - `reclaim_idle_ms` (default `30000`): idle time before a pending stream entry
   can be reclaimed by another consumer.
 - `reclaim_batch_size` (default `50`): maximum entries reclaimed per pass.
@@ -96,6 +106,12 @@ State:
 - `await agent.refresh_state()`: reload state from the server.
 - `await agent.reset_state()`: clear state back to model defaults.
 
+State updates use the revision returned by the latest read or successful write.
+Concurrent writers receive gRPC `ABORTED` with `state_revision_conflict`; refresh
+and recompute the transition before retrying. This changes the wire contract:
+upgrade broker and agent packages together. An omitted expected revision is
+rejected rather than interpreted as an unconditional write.
+
 Handlers:
 - `@Agent.on("type", model=...)`: register a typed handler for an incoming `message_type`.
 - `async def on_message(self, message)`: fallback for untyped or unhandled messages.
@@ -104,17 +120,17 @@ Delivery is at-least-once. Handler code that performs side effects must be
 idempotent or deduplicate by `message.message_id`, because Redis stream reclaim
 can redeliver work when ACKs are delayed or a client disconnects.
 
-On NACK, the server requeues retryable deliveries before XACKing the stream
+On NACK, the server atomically requeues retryable deliveries before XACKing the stream
 entry, and only XACKs non-retryable deliveries after a successful DLQ write. If
 requeue or DLQ write fails, the entry stays pending in Redis for redelivery.
 
 ## Request/Reply Correlation
 
 1. The server stores request origin metadata in `mas.pending_request:{correlation_id}` with a TTL derived from the request timeout.
-2. If policy routing fails after the pending key is written, the server deletes the key before returning the error.
+2. A confirmed policy rejection removes the pending key. An uncertain commit preserves its bounded TTL because the request may already be queued.
 3. A reply must come from the agent that received the original request; the server rejects mismatched senders.
-4. The server atomically reserves a pending key (delete-if-unchanged) before routing the reply, so concurrent duplicate replies cannot both succeed.
-5. The requesting client binds each pending call to its target agent and ignores replies from any other sender.
+4. One atomic commit enqueues the reply, stores its receipt, and consumes the unchanged pending key. An identical retry returns the original message ID until the original deadline; changed reply content is rejected.
+5. The requesting client binds each pending call to its target agent and ignores replies from any other sender. Normal accepted sends atomically append their audit record and queue entry, then wait for configured persistence confirmation.
 
 ## Writing Agent Classes
 
@@ -134,17 +150,19 @@ class MyAgent(Agent):
     ) -> None:
         super().__init__(agent_id, server_addr=server_addr, tls=tls)
 
-    async def on_start(self) -> None:
-        ...
+    async def on_start(self) -> None: ...
 
-    async def on_stop(self) -> None:
-        ...
+    async def on_stop(self) -> None: ...
 
-    async def on_message(self, message: AgentMessage) -> None:
-        ...
+    async def on_message(self, message: AgentMessage) -> None: ...
 ```
 
 Lifecycle hooks:
 - `on_start`: runs after transport is ready and state is loaded.
 - `on_stop`: runs during shutdown before the transport task is torn down.
 - `on_message`: fallback for messages with no registered handler.
+
+Acknowledged stream entries are deleted atomically with XACK after verifying the
+consumer still owns the pending entry. Repeated handler errors are preserved in
+the DLQ after `max_delivery_attempts`. Audit streams retain the policy history.
+See README.md for dashboard configuration and the runnable control-room example.

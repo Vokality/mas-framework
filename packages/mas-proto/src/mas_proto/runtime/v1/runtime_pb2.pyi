@@ -165,7 +165,7 @@ class GetStateRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetStateResponse(_message.Message):
-    __slots__ = ("state",)
+    __slots__ = ("state", "revision")
     class StateEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -174,11 +174,13 @@ class GetStateResponse(_message.Message):
         value: str
         def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     STATE_FIELD_NUMBER: _ClassVar[int]
+    REVISION_FIELD_NUMBER: _ClassVar[int]
     state: _containers.ScalarMap[str, str]
-    def __init__(self, state: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    revision: int
+    def __init__(self, state: _Optional[_Mapping[str, str]] = ..., revision: _Optional[int] = ...) -> None: ...
 
 class UpdateStateRequest(_message.Message):
-    __slots__ = ("updates",)
+    __slots__ = ("updates", "expected_revision")
     class UpdatesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -187,17 +189,25 @@ class UpdateStateRequest(_message.Message):
         value: str
         def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     UPDATES_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
     updates: _containers.ScalarMap[str, str]
-    def __init__(self, updates: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    expected_revision: int
+    def __init__(self, updates: _Optional[_Mapping[str, str]] = ..., expected_revision: _Optional[int] = ...) -> None: ...
 
 class UpdateStateResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("revision",)
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    revision: int
+    def __init__(self, revision: _Optional[int] = ...) -> None: ...
 
 class ResetStateRequest(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("expected_revision",)
+    EXPECTED_REVISION_FIELD_NUMBER: _ClassVar[int]
+    expected_revision: int
+    def __init__(self, expected_revision: _Optional[int] = ...) -> None: ...
 
 class ResetStateResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("revision",)
+    REVISION_FIELD_NUMBER: _ClassVar[int]
+    revision: int
+    def __init__(self, revision: _Optional[int] = ...) -> None: ...

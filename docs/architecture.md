@@ -58,6 +58,7 @@ flowchart LR
 
         redis["Redis"]
         otel["OpenTelemetry Exporters<br/>(optional)"]
+        management["Management dashboard + health API<br/>(optional HTTP listener)"]
     end
 
     subgraph agentside["Agent Processes"]
@@ -97,6 +98,10 @@ flowchart LR
     cb --> redis
     ingress --> redis
 
+    management --> sessions
+    management --> redis
+    management --> otel
+
     grpc --> otel
     ingress --> otel
     policy --> otel
@@ -117,14 +122,15 @@ sequenceDiagram
 
     Sender->>Server: Send / Request / Reply / Discover / State RPC
     Server->>Policy: Build EnvelopeMessage and evaluate ingress
-    Policy->>Redis: Check ACL, rate limit, circuit state, audit, routing
+    Policy->>Redis: Check authorization, rate limit and circuit state
 
     alt one-way send
-        Policy->>Redis: XADD agent.stream:{target_id}
+        Policy->>Redis: Atomic audit + XADD agent.stream:{target_id}
     else request/reply
         Server->>Redis: SET mas.pending_request:{correlation_id} EX ttl
-        Policy->>Redis: XADD agent.stream:{target_id}
+        Policy->>Redis: Atomic audit + request enqueue, then persistence confirmation
         Note over Redis,Target: Reply path uses agent.stream:{origin_agent}:{origin_instance}
+        Note over Policy,Redis: Reply enqueue + receipt + pending consumption commit atomically
     end
 
     Redis-->>Server: XREADGROUP shared + instance streams
@@ -132,15 +138,15 @@ sequenceDiagram
     Target-->>Server: ACK or NACK
 
     alt ACK
-        Server->>Redis: XACK stream entry
+        Server->>Redis: Atomically XACK and XDEL owned entry
     else retryable NACK
-        Server->>Redis: XADD back to original stream, then XACK on success
-    else non-retryable NACK
+        Server->>Redis: Atomically XADD attempt+1, XACK and XDEL owned entry
+    else non-retryable NACK or retry budget exhausted
         Server->>Redis: XADD dlq:messages, then XACK only if DLQ write succeeds
     end
 
     Target->>Server: GetState / UpdateState / ResetState
-    Server->>Redis: HGETALL / HSET / DEL agent.state:{agent_id}
+    Server->>Redis: Atomic state snapshot / revision compare-and-set / reset
 ```
 
 ## 4. Redis Data Model
@@ -177,3 +183,14 @@ flowchart TB
 - Shared work distribution uses `agent.stream:{agent_id}` with Redis consumer groups.
 - Replies are pinned to the requesting process using `agent.stream:{agent_id}:{instance_id}`.
 - The workspace root is not a distributable package; installable artifacts are the individual workspace members.
+
+## 6. Management and telemetry
+
+`mas_server.management.ManagementSettings` enables the bundled dashboard on a
+separate loopback HTTP listener. Remote listeners require scoped OIDC access and HTTPS. The
+read-only snapshot includes typed health, local session/worker state, shared
+Redis queue lag/pending counts, DLQ count, latest policy decisions, circuit status,
+and bounded process telemetry counters. Operational metadata excludes payloads,
+agent state, and credentials. Redis reads use a timeout, a 500-stream coverage
+limit, pipelining, and a two-second snapshot cache. Partial or unavailable data is
+marked degraded; unknown queue/DLQ counts are never substituted with zero.

@@ -1,0 +1,1315 @@
+{
+  "$defs": {
+    "ActivitySummary": {
+      "additionalProperties": false,
+      "description": "Policy decision metadata; message payloads and hashes are excluded.",
+      "properties": {
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision": {
+          "type": "string"
+        },
+        "latency_ms": {
+          "type": "number"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "message_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sender_id": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "violations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "message_id",
+        "timestamp",
+        "sender_id",
+        "target_id",
+        "message_type",
+        "decision",
+        "latency_ms",
+        "correlation_id",
+        "violations"
+      ],
+      "title": "ActivitySummary",
+      "type": "object"
+    },
+    "AgentSummary": {
+      "additionalProperties": false,
+      "description": "Shared agent availability and this broker's local connected instances.",
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/SessionSummary"
+          },
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "inactive",
+            "degraded",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "capabilities",
+        "status",
+        "sessions"
+      ],
+      "title": "AgentSummary",
+      "type": "object"
+    },
+    "BrokerCounters": {
+      "additionalProperties": false,
+      "description": "Counters attributable to one broker incarnation.",
+      "properties": {
+        "accepted_messages": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delivery_acks": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delivery_nacks": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped_scope_updates": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped_spans": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redis_errors": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected_messages": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope_complete": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "accepted_messages",
+        "rejected_messages",
+        "delivery_acks",
+        "delivery_nacks",
+        "redis_errors",
+        "dropped_spans",
+        "scope_complete",
+        "dropped_scope_updates"
+      ],
+      "title": "BrokerCounters",
+      "type": "object"
+    },
+    "BrokerObservation": {
+      "additionalProperties": false,
+      "description": "A sequenced heartbeat from a specific broker incarnation.",
+      "properties": {
+        "broker_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+          "type": "string"
+        },
+        "counters": {
+          "$ref": "#/$defs/BrokerCounters"
+        },
+        "exporters": {
+          "items": {
+            "$ref": "#/$defs/ExportHealth"
+          },
+          "type": "array"
+        },
+        "grpc_address": {
+          "type": "string"
+        },
+        "instance_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "management_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "observed_at": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "redis_available": {
+          "type": "boolean"
+        },
+        "redis_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/BrokerSession"
+          },
+          "type": "array"
+        },
+        "started_at": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "status": {
+          "$ref": "#/$defs/BrokerStatus"
+        }
+      },
+      "required": [
+        "broker_id",
+        "instance_id",
+        "sequence",
+        "observed_at",
+        "started_at",
+        "status",
+        "grpc_address",
+        "management_url",
+        "redis_available",
+        "redis_latency_ms",
+        "issues",
+        "sessions",
+        "counters",
+        "exporters"
+      ],
+      "title": "BrokerObservation",
+      "type": "object"
+    },
+    "BrokerSession": {
+      "additionalProperties": false,
+      "description": "Agent transport and worker state on a fleet member.",
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "inflight": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "instance_id": {
+          "type": "string"
+        },
+        "outbound": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "worker_running": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agent_id",
+        "instance_id",
+        "inflight",
+        "outbound",
+        "worker_running"
+      ],
+      "title": "BrokerSession",
+      "type": "object"
+    },
+    "BrokerStatus": {
+      "enum": [
+        "healthy",
+        "degraded",
+        "stopped",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "CircuitState": {
+      "description": "Circuit breaker states.",
+      "enum": [
+        "closed",
+        "open",
+        "half_open"
+      ],
+      "title": "CircuitState",
+      "type": "string"
+    },
+    "CircuitStatus": {
+      "additionalProperties": false,
+      "description": "Validated circuit state and its admission decision.",
+      "properties": {
+        "allowed": {
+          "default": true,
+          "type": "boolean"
+        },
+        "failure_count": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_failure_time": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "opened_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "$ref": "#/$defs/CircuitState",
+          "default": "closed"
+        },
+        "success_count": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state",
+        "failure_count",
+        "success_count",
+        "last_failure_time",
+        "opened_at",
+        "allowed"
+      ],
+      "title": "CircuitStatus",
+      "type": "object"
+    },
+    "ExportHealth": {
+      "additionalProperties": false,
+      "description": "Actual exporter outcomes for one telemetry signal.",
+      "properties": {
+        "age_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "attempts": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "exported_items": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failures": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_attempt_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "last_success_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "signal": {
+          "enum": [
+            "traces",
+            "metrics"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "disabled",
+            "pending",
+            "healthy",
+            "degraded",
+            "stale"
+          ],
+          "type": "string"
+        },
+        "successes": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "signal",
+        "configured",
+        "attempts",
+        "successes",
+        "failures",
+        "exported_items",
+        "last_attempt_at",
+        "last_success_at",
+        "last_error",
+        "age_seconds",
+        "status"
+      ],
+      "title": "ExportHealth",
+      "type": "object"
+    },
+    "FleetMember": {
+      "additionalProperties": false,
+      "description": "A broker heartbeat with server-evaluated freshness.",
+      "properties": {
+        "age_seconds": {
+          "type": "number"
+        },
+        "fresh": {
+          "type": "boolean"
+        },
+        "observation": {
+          "$ref": "#/$defs/BrokerObservation"
+        },
+        "status": {
+          "enum": [
+            "healthy",
+            "degraded",
+            "stopped",
+            "unknown",
+            "stale"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation",
+        "fresh",
+        "age_seconds",
+        "status"
+      ],
+      "title": "FleetMember",
+      "type": "object"
+    },
+    "FleetSnapshot": {
+      "additionalProperties": false,
+      "description": "A render-ready fleet view including retained conditions and SLO scope.",
+      "properties": {
+        "alerts": {
+          "items": {
+            "$ref": "#/$defs/OperationalAlert"
+          },
+          "type": "array"
+        },
+        "brokers": {
+          "items": {
+            "$ref": "#/$defs/FleetMember"
+          },
+          "type": "array"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "generated_at": {
+          "type": "number"
+        },
+        "latency_window_seconds": {
+          "type": "integer"
+        },
+        "performance": {
+          "$ref": "#/$defs/PerformancePoint"
+        },
+        "retention_seconds": {
+          "type": "integer"
+        },
+        "scope": {
+          "default": "Broker heartbeats, accepted-message counters and retained observations are shared through Redis. Missing or stale members reduce coverage. Trace details retain a deterministic sample plus errors, bounded by count and time. Latency includes all successfully correlated retained deliveries; coverage can lag while exported parent spans arrive.",
+          "type": "string"
+        },
+        "stale_after_seconds": {
+          "type": "number"
+        },
+        "status": {
+          "$ref": "#/$defs/BrokerStatus"
+        },
+        "targets": {
+          "$ref": "#/$defs/SloTargets"
+        },
+        "trace_limit": {
+          "type": "integer"
+        },
+        "trace_sample_every": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "generated_at",
+        "status",
+        "complete",
+        "brokers",
+        "performance",
+        "targets",
+        "alerts",
+        "retention_seconds",
+        "trace_limit",
+        "stale_after_seconds",
+        "trace_sample_every",
+        "latency_window_seconds",
+        "scope"
+      ],
+      "title": "FleetSnapshot",
+      "type": "object"
+    },
+    "HealthReport": {
+      "additionalProperties": false,
+      "description": "Readiness and dependency health, without backend exception details.",
+      "properties": {
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "redis_available": {
+          "type": "boolean"
+        },
+        "redis_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "healthy",
+            "degraded",
+            "stopped"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "redis_available",
+        "redis_latency_ms",
+        "issues"
+      ],
+      "title": "HealthReport",
+      "type": "object"
+    },
+    "ManagementSnapshot": {
+      "additionalProperties": false,
+      "description": "Typed management response, ready for presentation.",
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/AgentSummary"
+          },
+          "type": "array"
+        },
+        "backlog": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "broker_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "circuits": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/CircuitStatus"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dead_letters": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exporters": {
+          "items": {
+            "$ref": "#/$defs/ExportHealth"
+          },
+          "type": "array"
+        },
+        "features": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "type": "object"
+        },
+        "fleet": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FleetSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "generated_at": {
+          "type": "number"
+        },
+        "health": {
+          "$ref": "#/$defs/HealthReport"
+        },
+        "queues": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/QueueSummary"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queues_complete": {
+          "type": "boolean"
+        },
+        "recent_activity": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ActivitySummary"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "default": "Agent availability uses shared leases. Sessions and health are local to this broker; queues, audit and fleet observations use shared Redis. Telemetry counters are broker-scoped when a broker identity is configured, otherwise process-wide.",
+          "type": "string"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/TelemetrySnapshot"
+        },
+        "uptime_seconds": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "generated_at",
+        "uptime_seconds",
+        "health",
+        "agents",
+        "queues",
+        "queues_complete",
+        "backlog",
+        "dead_letters",
+        "recent_activity",
+        "telemetry",
+        "features",
+        "circuits",
+        "broker_id",
+        "fleet",
+        "exporters",
+        "scope"
+      ],
+      "title": "ManagementSnapshot",
+      "type": "object"
+    },
+    "ObservationAttribute": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "ObservedSpan": {
+      "additionalProperties": false,
+      "description": "Safe span metadata, without business payloads, headers or exceptions.",
+      "properties": {
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ObservationAttribute"
+          },
+          "type": "object"
+        },
+        "failed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "finished_unix_ns": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "parent_span_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "service_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "type": "string"
+        },
+        "started_unix_ns": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "parent_span_id",
+        "name",
+        "service_name",
+        "started_unix_ns",
+        "finished_unix_ns",
+        "failed",
+        "attributes"
+      ],
+      "title": "ObservedSpan",
+      "type": "object"
+    },
+    "OperationalAlert": {
+      "additionalProperties": false,
+      "description": "An active or resolved operational condition, without notifications.",
+      "properties": {
+        "alert_id": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "broker_health",
+            "broker_stale",
+            "export_failure",
+            "latency_slo",
+            "throughput_slo",
+            "coverage_gap"
+          ],
+          "type": "string"
+        },
+        "opened_at": {
+          "type": "number"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "warning",
+            "info"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "resolved"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "alert_id",
+        "kind",
+        "severity",
+        "status",
+        "title",
+        "detail",
+        "opened_at",
+        "updated_at",
+        "resolved_at"
+      ],
+      "title": "OperationalAlert",
+      "type": "object"
+    },
+    "PerformancePoint": {
+      "additionalProperties": false,
+      "description": "Measured fleet traffic and paired delivery timings for an interval.",
+      "properties": {
+        "accepted_messages": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "accepted_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clock_scope": {
+          "default": "Rolling delivery window: client send/request/reply span start to handler entry or validated reply receipt. P95 uses 1ms upper-bound bins. Cross-process wall clocks require synchronization. Application scheduling before the send API is outside this interval.",
+          "type": "string"
+        },
+        "complete": {
+          "default": false,
+          "type": "boolean"
+        },
+        "counter_complete": {
+          "default": false,
+          "type": "boolean"
+        },
+        "delivery_acks": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delivery_nacks": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_to_end_p95_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "finished_at": {
+          "type": "number"
+        },
+        "latency_coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "latency_samples": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redis_errors": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected_messages": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "started_at",
+        "finished_at",
+        "accepted_messages",
+        "rejected_messages",
+        "accepted_rate",
+        "end_to_end_p95_ms",
+        "latency_samples",
+        "latency_coverage",
+        "delivery_acks",
+        "delivery_nacks",
+        "redis_errors",
+        "complete",
+        "counter_complete",
+        "clock_scope"
+      ],
+      "title": "PerformancePoint",
+      "type": "object"
+    },
+    "QueueSummary": {
+      "additionalProperties": false,
+      "description": "Durable work waiting for delivery or acknowledgement.",
+      "properties": {
+        "pending": {
+          "type": "integer"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "waiting": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "stream",
+        "pending",
+        "waiting"
+      ],
+      "title": "QueueSummary",
+      "type": "object"
+    },
+    "SessionSummary": {
+      "additionalProperties": false,
+      "description": "Live instance and delivery-worker state.",
+      "properties": {
+        "inflight": {
+          "type": "integer"
+        },
+        "instance_id": {
+          "type": "string"
+        },
+        "outbound": {
+          "type": "integer"
+        },
+        "worker_running": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "instance_id",
+        "inflight",
+        "outbound",
+        "worker_running"
+      ],
+      "title": "SessionSummary",
+      "type": "object"
+    },
+    "SloTargets": {
+      "additionalProperties": false,
+      "description": "The user's capacity and delivery latency targets.",
+      "properties": {
+        "accepted_rate": {
+          "default": 1000,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "end_to_end_p95_ms": {
+          "default": 300,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "accepted_rate",
+        "end_to_end_p95_ms"
+      ],
+      "title": "SloTargets",
+      "type": "object"
+    },
+    "TelemetrySnapshot": {
+      "additionalProperties": false,
+      "description": "Bounded process counters available even when OTLP export is disabled.",
+      "properties": {
+        "active_sessions": {
+          "type": "integer"
+        },
+        "dead_letter_errors": {
+          "type": "integer"
+        },
+        "dead_letter_writes": {
+          "type": "integer"
+        },
+        "delivery_acks": {
+          "type": "integer"
+        },
+        "delivery_nacks": {
+          "type": "integer"
+        },
+        "dropped_scope_updates": {
+          "default": 0,
+          "type": "integer"
+        },
+        "export_enabled": {
+          "type": "boolean"
+        },
+        "ingress": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "policy_latency_max_ms": {
+          "type": "number"
+        },
+        "policy_latency_mean_ms": {
+          "type": "number"
+        },
+        "policy_samples": {
+          "type": "integer"
+        },
+        "redis_errors": {
+          "type": "integer"
+        },
+        "retryable_nacks": {
+          "type": "integer"
+        },
+        "scope_complete": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ingress",
+        "delivery_acks",
+        "delivery_nacks",
+        "retryable_nacks",
+        "dead_letter_writes",
+        "dead_letter_errors",
+        "redis_errors",
+        "active_sessions",
+        "policy_samples",
+        "policy_latency_mean_ms",
+        "policy_latency_max_ms",
+        "export_enabled",
+        "scope_complete",
+        "dropped_scope_updates"
+      ],
+      "title": "TelemetrySnapshot",
+      "type": "object"
+    },
+    "TraceDetail": {
+      "additionalProperties": false,
+      "description": "A bounded trace waterfall prepared for direct presentation.",
+      "properties": {
+        "clock_scope": {
+          "default": "Cross-process wall-clock timestamps require synchronization.",
+          "type": "string"
+        },
+        "spans": {
+          "items": {
+            "$ref": "#/$defs/TraceSpan"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "$ref": "#/$defs/TraceSummary"
+        }
+      },
+      "required": [
+        "summary",
+        "spans",
+        "clock_scope"
+      ],
+      "title": "TraceDetail",
+      "type": "object"
+    },
+    "TraceSpan": {
+      "additionalProperties": false,
+      "description": "One span with backend-computed order, nesting and waterfall geometry.",
+      "properties": {
+        "depth": {
+          "type": "integer"
+        },
+        "duration_ms": {
+          "type": "number"
+        },
+        "offset_ms": {
+          "type": "number"
+        },
+        "span": {
+          "$ref": "#/$defs/ObservedSpan"
+        }
+      },
+      "required": [
+        "span",
+        "depth",
+        "offset_ms",
+        "duration_ms"
+      ],
+      "title": "TraceSpan",
+      "type": "object"
+    },
+    "TraceSummary": {
+      "additionalProperties": false,
+      "description": "Payload-free trace identity and measured span coverage.",
+      "properties": {
+        "clock_skew_detected": {
+          "type": "boolean"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "end_to_end_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_count": {
+          "type": "integer"
+        },
+        "finished_at": {
+          "type": "number"
+        },
+        "message_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "services": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "span_count": {
+          "type": "integer"
+        },
+        "started_at": {
+          "type": "number"
+        },
+        "trace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "started_at",
+        "finished_at",
+        "span_count",
+        "error_count",
+        "message_ids",
+        "services",
+        "end_to_end_ms",
+        "complete",
+        "clock_skew_detected"
+      ],
+      "title": "TraceSummary",
+      "type": "object"
+    }
+  },
+  "$id": "https://mas.local/dashboard/contracts",
+  "additionalProperties": false,
+  "description": "The management reader responses, serialized without omitted defaults.",
+  "properties": {
+    "history": {
+      "items": {
+        "$ref": "#/$defs/PerformancePoint"
+      },
+      "type": "array"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/ManagementSnapshot"
+    },
+    "trace": {
+      "$ref": "#/$defs/TraceDetail"
+    },
+    "traces": {
+      "items": {
+        "$ref": "#/$defs/TraceSummary"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "snapshot",
+    "history",
+    "traces",
+    "trace"
+  ],
+  "title": "DashboardContracts",
+  "type": "object"
+}

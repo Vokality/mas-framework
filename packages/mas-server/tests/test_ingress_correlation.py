@@ -3,16 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import cast
 
 import pytest
 from mas_core import EnvelopeMessage
-from mas_proto.runtime.v1 import runtime_pb2 as mas_pb2
-from mas_server.errors import InvalidArgumentError, PermissionDeniedError
+from mas_gateway.audit import AuditModule
+from mas_gateway.authorization import AuthorizationModule
+from mas_gateway.rate_limit import RateLimitModule
+from mas_server.errors import PermissionDeniedError
 from mas_server.ingress import IngressService
 from mas_server.policy import PolicyPipeline
+from mas_server.routing import CorrelationCommit, MessageRouter
 from mas_server.sessions import SessionManager
-from mas_server.types import AgentDefinition, InflightDelivery
+from mas_server.types import AgentDefinition, InflightDelivery, OutboundDelivery
+from redis.asyncio import Redis
 
 pytestmark = pytest.mark.asyncio
 
@@ -24,18 +27,19 @@ async def _idle_task() -> None:
 def _task_factory(
     _agent_id: str,
     _instance_id: str,
-    _outbound: asyncio.Queue[mas_pb2.ServerEvent],
+    _outbound: asyncio.Queue[OutboundDelivery],
     _inflight: dict[str, InflightDelivery],
 ) -> asyncio.Task[None]:
     return asyncio.create_task(_idle_task())
 
 
-async def _connect_sessions(*agent_ids: str) -> SessionManager:
+async def _connect_sessions(redis: Redis, *agent_ids: str) -> SessionManager:
     sessions = SessionManager(
+        redis=redis,
         agents={
             agent_id: AgentDefinition(agent_id=agent_id, capabilities=[], metadata={})
             for agent_id in agent_ids
-        }
+        },
     )
     for agent_id in agent_ids:
         await sessions.connect(
@@ -53,26 +57,43 @@ async def _close_sessions(sessions: SessionManager) -> None:
     await asyncio.gather(*(session.task for session in active), return_exceptions=True)
 
 
-class _DenyPolicy:
-    async def ingest_and_route(self, _message: EnvelopeMessage) -> None:
+class _DenyPolicy(PolicyPipeline):
+    async def ingest_and_route(
+        self,
+        message: EnvelopeMessage,
+        *,
+        correlation: CorrelationCommit | None = None,
+    ) -> str:
         raise PermissionDeniedError("not_authorized")
 
 
-class _SlowPolicy:
-    def __init__(self) -> None:
-        self.calls = 0
+def _policy(redis: Redis) -> PolicyPipeline:
+    return PolicyPipeline(
+        authz=AuthorizationModule(redis, enable_rbac=False),
+        rate_limit=RateLimitModule(
+            redis, default_per_minute=100, default_per_hour=1000
+        ),
+        audit=AuditModule(redis, file_sink=None),
+        router=MessageRouter(redis=redis, dlq_enabled=True),
+        dlp=None,
+        circuit_breaker=None,
+    )
 
-    async def ingest_and_route(self, _message: EnvelopeMessage) -> None:
-        self.calls += 1
-        if self.calls == 1:
-            await asyncio.sleep(0.05)
 
-
-async def test_failed_request_routing_deletes_pending_correlation(redis) -> None:
-    sessions = await _connect_sessions("sender")
+async def test_failed_request_routing_deletes_pending_correlation(redis: Redis) -> None:
+    sessions = await _connect_sessions(redis, "sender")
     service = IngressService(
         sessions=sessions,
-        policy=cast(PolicyPipeline, _DenyPolicy()),
+        policy=_DenyPolicy(
+            authz=AuthorizationModule(redis, enable_rbac=False),
+            rate_limit=RateLimitModule(
+                redis, default_per_minute=100, default_per_hour=1000
+            ),
+            audit=AuditModule(redis, file_sink=None),
+            router=MessageRouter(redis=redis, dlq_enabled=True),
+            dlp=None,
+            circuit_breaker=None,
+        ),
         redis=redis,
     )
 
@@ -93,12 +114,15 @@ async def test_failed_request_routing_deletes_pending_correlation(redis) -> None
         await _close_sessions(sessions)
 
 
-async def test_concurrent_replies_reserve_correlation_once(redis) -> None:
-    sessions = await _connect_sessions("responder")
-    policy = _SlowPolicy()
+async def test_concurrent_identical_replies_commit_once(redis: Redis) -> None:
+    sessions = await _connect_sessions(redis, "responder", "requester")
+    policy = _policy(redis)
+    await AuthorizationModule(redis, enable_rbac=False).set_permissions(
+        "responder", allowed_targets=["requester"]
+    )
     service = IngressService(
         sessions=sessions,
-        policy=cast(PolicyPipeline, policy),
+        policy=policy,
         redis=redis,
     )
     pending_key = "mas.pending_request:concurrent-reply"
@@ -128,12 +152,9 @@ async def test_concurrent_replies_reserve_correlation_once(redis) -> None:
         results = await asyncio.gather(reply(), reply(), return_exceptions=True)
 
         successes = [result for result in results if isinstance(result, str)]
-        failures = [
-            result for result in results if isinstance(result, InvalidArgumentError)
-        ]
-        assert len(successes) == 1
-        assert len(failures) == 1
-        assert policy.calls == 1
+        assert len(successes) == 2
+        assert successes[0] == successes[1]
+        assert await redis.xlen("agent.stream:requester:requester-inst") == 1
         assert await redis.exists(pending_key) == 0
     finally:
         await redis.delete(pending_key)

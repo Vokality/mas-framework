@@ -4,10 +4,75 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import OrderedDict
+from typing import NamedTuple
 
+from pydantic import TypeAdapter
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
+_STRINGS_ADAPTER = TypeAdapter(set[str])
+_HASH_ADAPTER = TypeAdapter(dict[str, str])
+_SCAN_ADAPTER = TypeAdapter(tuple[int, list[str]])
+
+
+class _RoleSnapshot(NamedTuple):
+    roles: tuple[str, ...]
+    permissions: frozenset[str]
+    unchanged: bool
+
+
+class _AccessSnapshot(NamedTuple):
+    accessible: bool
+    acl_allowed: bool
+    roles: tuple[str, ...]
+    permissions: frozenset[str]
+    unchanged: bool
+
+
+_ROLE_SNAPSHOT_ADAPTER = TypeAdapter(_RoleSnapshot)
+_ACCESS_SNAPSHOT_ADAPTER = TypeAdapter(_AccessSnapshot)
+_READ_ROLES = """
+local function role_permissions(role_index, argument_start)
+    local roles = redis.call('SMEMBERS', KEYS[role_index])
+    if #roles == 0 then return {roles, {}, 1} end
+    if #roles ~= #KEYS - role_index then return {roles, {}, 0} end
+    local expected = {}
+    for index = argument_start, #ARGV do expected[ARGV[index]] = true end
+    for _, role in ipairs(roles) do
+        if not expected[role] then return {roles, {}, 0} end
+    end
+    local permissions = {}
+    for index = role_index + 1, #KEYS do
+        for _, permission in ipairs(redis.call('SMEMBERS', KEYS[index])) do
+            permissions[#permissions + 1] = permission
+        end
+    end
+    return {roles, permissions, 1}
+end
+"""
+_ACCESS_SCRIPT = (
+    _READ_ROLES
+    + """
+local now = redis.call('TIME')
+local current = now[1] * 1000 + math.floor(now[2] / 1000)
+if redis.call('ZCOUNT', KEYS[1], '(' .. current, '+inf') == 0 then
+    return {0, 0, {}, {}, 1}
+end
+if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then
+    return {0, 0, {}, {}, 1}
+end
+if redis.call('SISMEMBER', KEYS[3], '*') == 1
+    or redis.call('SISMEMBER', KEYS[3], ARGV[1]) == 1 then
+    return {1, 1, {}, {}, 1}
+end
+if ARGV[2] == '0' then return {1, 0, {}, {}, 1} end
+local roles = role_permissions(4, 3)
+return {1, 0, roles[1], roles[2], roles[3]}
+"""
+)
+_ROLE_SCRIPT = _READ_ROLES + "return role_permissions(1, 1)"
 
 
 class AuthorizationModule:
@@ -39,7 +104,7 @@ class AuthorizationModule:
         agent:{agent_id}:roles → Set of role names
     """
 
-    def __init__(self, redis: Redis[str], enable_rbac: bool):
+    def __init__(self, redis: Redis, enable_rbac: bool) -> None:
         """
         Initialize authorization module.
 
@@ -47,8 +112,9 @@ class AuthorizationModule:
             redis: Redis connection
             enable_rbac: Enable RBAC authorization
         """
-        self.redis: Redis[str] = redis
+        self.redis: Redis = redis
         self.enable_rbac = enable_rbac
+        self._role_hints: OrderedDict[str, tuple[str, ...]] = OrderedDict()
 
     async def authorize(
         self, sender_id: str, target_id: str, action: str = "send"
@@ -64,19 +130,13 @@ class AuthorizationModule:
         Returns:
             True if authorized, False otherwise
         """
-        # Check ACL first (backward compatibility)
-        acl_allowed = await self.check_acl(sender_id, target_id)
-
-        # If RBAC is enabled, also check RBAC
-        if self.enable_rbac:
-            # Construct permission string based on action and target
-            permission = f"{action}:{target_id}"
-            rbac_allowed = await self.check_rbac(sender_id, permission)
-
-            # Allow if either ACL or RBAC grants permission
-            allowed = acl_allowed or rbac_allowed
-        else:
-            allowed = acl_allowed
+        snapshot = await self._access_snapshot(sender_id, target_id, self.enable_rbac)
+        if not snapshot.accessible:
+            return False
+        allowed = snapshot.acl_allowed or any(
+            self._matches_permission(f"{action}:{target_id}", permission)
+            for permission in snapshot.permissions
+        )
 
         if allowed:
             logger.debug(
@@ -102,40 +162,47 @@ class AuthorizationModule:
         Returns:
             True if sender is allowed to message target
         """
-        # Check if target exists and is active
-        target_key = f"agent:{target_id}"
-        exists = await self.redis.exists(target_key)
-        if not exists:
-            logger.warning("Target agent not found", extra={"target": target_id})
-            return False
+        snapshot = await self._access_snapshot(sender_id, target_id, False)
+        return snapshot.accessible and snapshot.acl_allowed
 
-        status = await self.redis.hget(target_key, "status")
-        if status != "ACTIVE":
-            logger.warning(
-                "Target agent not active", extra={"target": target_id, "status": status}
+    async def _access_snapshot(
+        self, sender_id: str, target_id: str, include_rbac: bool
+    ) -> _AccessSnapshot:
+        """Read grants atomically, supplying every accessed role key explicitly."""
+        roles = self._role_hints.get(sender_id, ())
+        for _ in range(4):
+            keys = (
+                f"mas.sessions:{target_id}",
+                f"agent:{sender_id}:blocked_targets",
+                f"agent:{sender_id}:allowed_targets",
+                f"agent:{sender_id}:roles",
+                *(f"role:{role}:permissions" for role in roles),
             )
-            return False
-
-        # Check blocked list first (takes precedence)
-        blocked_key = f"agent:{sender_id}:blocked_targets"
-        is_blocked = await self.redis.sismember(blocked_key, target_id)
-        if is_blocked:
-            logger.debug(
-                "Target is blocked", extra={"sender": sender_id, "target": target_id}
+            snapshot = _ACCESS_SNAPSHOT_ADAPTER.validate_python(
+                await self.redis.eval_ro(
+                    _ACCESS_SCRIPT,
+                    len(keys),
+                    *keys,
+                    target_id,
+                    int(include_rbac),
+                    *roles,
+                )
             )
-            return False
+            self._remember_role_hint(sender_id, snapshot.roles)
+            if snapshot.unchanged:
+                return snapshot
+            roles = snapshot.roles
+        raise RedisError("authorization_changed_during_read")
 
-        # Check allowed list
-        allowed_key = f"agent:{sender_id}:allowed_targets"
-
-        # Check for wildcard permission
-        has_wildcard = await self.redis.sismember(allowed_key, "*")
-        if has_wildcard:
-            return True
-
-        # Check specific target permission
-        is_allowed = await self.redis.sismember(allowed_key, target_id)
-        return bool(is_allowed)
+    def _remember_role_hint(self, agent_id: str, roles: tuple[str, ...]) -> None:
+        """Bound non-authoritative discovery hints; never cache grants or decisions."""
+        if len(roles) > 64 or len(agent_id) + sum(map(len, roles)) > 4096:
+            self._role_hints.pop(agent_id, None)
+            return
+        self._role_hints[agent_id] = roles
+        self._role_hints.move_to_end(agent_id)
+        if len(self._role_hints) > 2048:
+            self._role_hints.popitem(last=False)
 
     async def set_permissions(
         self,
@@ -151,29 +218,18 @@ class AuthorizationModule:
             allowed_targets: List of allowed target IDs (None = no change)
             blocked_targets: List of blocked target IDs (None = no change)
         """
-        if allowed_targets is not None:
-            allowed_key = f"agent:{agent_id}:allowed_targets"
-            # Clear existing permissions
-            await self.redis.delete(allowed_key)
-            # Add new permissions
-            if allowed_targets:
-                await self.redis.sadd(allowed_key, *allowed_targets)
-            logger.info(
-                "Updated allowed targets",
-                extra={"agent_id": agent_id, "count": len(allowed_targets)},
-            )
-
-        if blocked_targets is not None:
-            blocked_key = f"agent:{agent_id}:blocked_targets"
-            # Clear existing blocks
-            await self.redis.delete(blocked_key)
-            # Add new blocks
-            if blocked_targets:
-                await self.redis.sadd(blocked_key, *blocked_targets)
-            logger.info(
-                "Updated blocked targets",
-                extra={"agent_id": agent_id, "count": len(blocked_targets)},
-            )
+        async with self.redis.pipeline() as pipe:
+            for kind, targets in (
+                ("allowed", allowed_targets),
+                ("blocked", blocked_targets),
+            ):
+                if targets is None:
+                    continue
+                key = f"agent:{agent_id}:{kind}_targets"
+                pipe.delete(key)
+                if targets:
+                    pipe.sadd(key, *targets)
+            await pipe.execute()
 
     async def add_permission(self, agent_id: str, target_id: str) -> None:
         """
@@ -254,8 +310,12 @@ class AuthorizationModule:
         allowed_key = f"agent:{agent_id}:allowed_targets"
         blocked_key = f"agent:{agent_id}:blocked_targets"
 
-        allowed = await self.redis.smembers(allowed_key)
-        blocked = await self.redis.smembers(blocked_key)
+        allowed = _STRINGS_ADAPTER.validate_python(
+            await self.redis.smembers(allowed_key)
+        )
+        blocked = _STRINGS_ADAPTER.validate_python(
+            await self.redis.smembers(blocked_key)
+        )
 
         return {
             "allowed": sorted(allowed) if allowed else [],
@@ -275,32 +335,23 @@ class AuthorizationModule:
         Returns:
             True if agent has permission through any of their roles
         """
-        # Get agent's roles
-        roles_key = f"agent:{agent_id}:roles"
-        roles = await self.redis.smembers(roles_key)
-
-        if not roles:
-            return False
-
-        # Check each role's permissions
-        for role in roles:
-            role_perms_key = f"role:{role}:permissions"
-            role_permissions = await self.redis.smembers(role_perms_key)
-
-            for role_perm in role_permissions:
-                if self._matches_permission(permission, role_perm):
-                    logger.debug(
-                        "RBAC permission matched",
-                        extra={
-                            "agent_id": agent_id,
-                            "role": role,
-                            "required": permission,
-                            "granted": role_perm,
-                        },
-                    )
-                    return True
-
-        return False
+        roles = self._role_hints.get(agent_id, ())
+        for _ in range(4):
+            keys = (
+                f"agent:{agent_id}:roles",
+                *(f"role:{role}:permissions" for role in roles),
+            )
+            snapshot = _ROLE_SNAPSHOT_ADAPTER.validate_python(
+                await self.redis.eval_ro(_ROLE_SCRIPT, len(keys), *keys, *roles)
+            )
+            self._remember_role_hint(agent_id, snapshot.roles)
+            if snapshot.unchanged:
+                return any(
+                    self._matches_permission(permission, granted)
+                    for granted in snapshot.permissions
+                )
+            roles = snapshot.roles
+        raise RedisError("authorization_changed_during_read")
 
     def _matches_permission(self, required: str, granted: str) -> bool:
         """
@@ -430,7 +481,9 @@ class AuthorizationModule:
             List of permission patterns
         """
         perms_key = f"role:{role_name}:permissions"
-        permissions = await self.redis.smembers(perms_key)
+        permissions = _STRINGS_ADAPTER.validate_python(
+            await self.redis.smembers(perms_key)
+        )
         return sorted(permissions) if permissions else []
 
     async def assign_role(self, agent_id: str, role_name: str) -> None:
@@ -476,7 +529,7 @@ class AuthorizationModule:
             List of role names
         """
         roles_key = f"agent:{agent_id}:roles"
-        roles = await self.redis.smembers(roles_key)
+        roles = _STRINGS_ADAPTER.validate_python(await self.redis.smembers(roles_key))
         return sorted(roles) if roles else []
 
     async def list_roles(self) -> list[dict[str, str]]:
@@ -490,7 +543,9 @@ class AuthorizationModule:
         role_keys: list[str] = []
         cursor = 0
         while True:
-            cursor, keys = await self.redis.scan(cursor, match="role:*", count=100)
+            cursor, keys = _SCAN_ADAPTER.validate_python(
+                await self.redis.scan(cursor, match="role:*", count=100)
+            )
             # Filter out permission keys
             role_keys.extend([k for k in keys if not k.endswith(":permissions")])
             if cursor == 0:
@@ -498,7 +553,9 @@ class AuthorizationModule:
 
         roles: list[dict[str, str]] = []
         for role_key in role_keys:
-            role_data = await self.redis.hgetall(role_key)
+            role_data = _HASH_ADAPTER.validate_python(
+                await self.redis.hgetall(role_key)
+            )
             if role_data:
                 roles.append(role_data)
 

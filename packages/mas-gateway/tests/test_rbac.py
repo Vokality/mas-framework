@@ -1,6 +1,7 @@
 """Tests for RBAC (Role-Based Access Control) functionality."""
 
 import pytest
+from mas_core.sessions import SessionLeaseSettings, SessionLeaseStore
 from mas_gateway.authorization import AuthorizationModule
 
 pytestmark = pytest.mark.asyncio
@@ -76,7 +77,9 @@ class TestAgentRoleAssignment:
     async def test_assign_role(self, authz_rbac, redis):
         """Test assigning a role to an agent."""
         # Create agent
-        await redis.hset("agent:agent-1", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire(
+            "agent-1", "live"
+        )
 
         # Create role and assign
         await authz_rbac.create_role("admin", permissions=["send:*"])
@@ -87,7 +90,9 @@ class TestAgentRoleAssignment:
 
     async def test_assign_multiple_roles(self, authz_rbac, redis):
         """Test assigning multiple roles to an agent."""
-        await redis.hset("agent:agent-1", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire(
+            "agent-1", "live"
+        )
 
         await authz_rbac.create_role("operator")
         await authz_rbac.create_role("auditor")
@@ -99,7 +104,9 @@ class TestAgentRoleAssignment:
 
     async def test_unassign_role(self, authz_rbac, redis):
         """Test removing a role from an agent."""
-        await redis.hset("agent:agent-1", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire(
+            "agent-1", "live"
+        )
 
         await authz_rbac.create_role("admin")
         await authz_rbac.assign_role("agent-1", "admin")
@@ -148,8 +155,8 @@ class TestRBACAuthorization:
     async def test_rbac_allows_with_wildcard(self, authz_rbac, redis):
         """Test RBAC authorization with wildcard permission."""
         # Setup agents
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("target", "live")
 
         # Create role with wildcard permission
         await authz_rbac.create_role("admin", permissions=["send:*"])
@@ -161,8 +168,10 @@ class TestRBACAuthorization:
 
     async def test_rbac_allows_with_specific_permission(self, authz_rbac, redis):
         """Test RBAC authorization with specific permission."""
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target-1", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire(
+            "target-1", "live"
+        )
 
         await authz_rbac.create_role("limited", permissions=["send:target-1"])
         await authz_rbac.assign_role("sender", "limited")
@@ -172,8 +181,8 @@ class TestRBACAuthorization:
 
     async def test_rbac_denies_without_permission(self, authz_rbac, redis):
         """Test RBAC denies when permission not granted."""
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("target", "live")
 
         await authz_rbac.create_role("readonly", permissions=["read:*"])
         await authz_rbac.assign_role("sender", "readonly")
@@ -188,7 +197,7 @@ class TestRBACAuthorization:
 
     async def test_rbac_with_pattern_permission(self, authz_rbac, redis):
         """Test RBAC with pattern-based permissions."""
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
 
         await authz_rbac.create_role("operator", permissions=["send:agent.*"])
         await authz_rbac.assign_role("sender", "operator")
@@ -209,8 +218,8 @@ class TestCombinedACLAndRBAC:
     async def test_rbac_allows_when_acl_denies(self, authz_rbac, redis):
         """Test that RBAC can grant access even if ACL doesn't."""
         # Setup agents
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("target", "live")
 
         # No ACL permissions set, but RBAC grants access
         await authz_rbac.create_role("sender_role", permissions=["send:*"])
@@ -223,8 +232,8 @@ class TestCombinedACLAndRBAC:
     async def test_acl_allows_when_rbac_denies(self, authz_rbac, redis):
         """Test that ACL can grant access even if RBAC doesn't."""
         # Setup agents
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("target", "live")
 
         # Set ACL permission
         await authz_rbac.set_permissions("sender", allowed_targets=["target"])
@@ -236,8 +245,8 @@ class TestCombinedACLAndRBAC:
 
     async def test_both_acl_and_rbac_allow(self, authz_rbac, redis):
         """Test when both ACL and RBAC grant permission."""
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("target", "live")
 
         # Set both ACL and RBAC permissions
         await authz_rbac.set_permissions("sender", allowed_targets=["target"])
@@ -249,8 +258,8 @@ class TestCombinedACLAndRBAC:
 
     async def test_neither_acl_nor_rbac_allow(self, authz_rbac, redis):
         """Test when neither ACL nor RBAC grant permission."""
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("target", "live")
 
         # No permissions set
         allowed = await authz_rbac.authorize("sender", "target", "send")
@@ -262,8 +271,8 @@ class TestBackwardCompatibility:
 
     async def test_acl_only_ignores_rbac(self, authz_acl_only, redis):
         """Test that ACL-only mode doesn't check RBAC."""
-        await redis.hset("agent:sender", mapping={"status": "ACTIVE"})
-        await redis.hset("agent:target", mapping={"status": "ACTIVE"})
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("sender", "live")
+        await SessionLeaseStore(redis, SessionLeaseSettings()).acquire("target", "live")
 
         # Create RBAC role (should be ignored)
         await authz_acl_only.create_role("admin", permissions=["send:*"])

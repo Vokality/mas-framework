@@ -1,0 +1,3 @@
+# Generated bundles may contain significant whitespace inside template literals.
+packages/mas-server/src/mas_server/dashboard_assets/** linguist-generated=true
+packages/mas-server/src/mas_server/dashboard_assets/assets/dashboard.js -whitespace

@@ -9,34 +9,314 @@ import hashlib
 import io
 import json
 import logging
+import math
 import time
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated, TypedDict
 
 from mas_core import JsonObject, SpanKind, get_telemetry, validate_json_value
-from pydantic import BaseModel, Field
+from mas_core.durability import RedisDurability
+from mas_core.protocol import validate_json_object
+from mas_core.redis_commit import RedisCommitTarget, StreamAppend
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from redis.asyncio import Redis
-from redis.exceptions import WatchError
+
+from .audit_archive import (
+    ArchivedAuditRow,
+    AuditArchive,
+    AuditArchiveError,
+    AuditCapacityError,
+    AuditCheckpoint,
+    AuditRetentionSettings,
+    AuditScanLimitError,
+    AuditSegment,
+    AuditStream,
+)
 
 logger = logging.getLogger(__name__)
 
 AuditRecord = JsonObject
+_STREAM_ADAPTER = TypeAdapter(list[tuple[str, dict[str, str]]])
+_STRING_ADAPTER = TypeAdapter(str)
+_OPTIONAL_STRING_ADAPTER = TypeAdapter(str | None)
+_HEAD_ADAPTER = TypeAdapter(Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None)
+_STRINGS_ADAPTER = TypeAdapter(list[str])
+_SNAPSHOT_ADAPTER = TypeAdapter(
+    tuple[str | None, str | None, list[tuple[str, dict[str, str]]]]
+)
+_ARCHIVE_SNAPSHOT_ADAPTER = TypeAdapter(
+    tuple[str | None, list[tuple[str, dict[str, str]]]]
+)
+_STATS_ADAPTER = TypeAdapter(tuple[int, int, str | None, str | None])
+_MAX_SCAN_ENTRIES = 1_000_000
+_ROUTABLE_DECISIONS = frozenset({"ALLOWED", "ALERT", "DLP_REDACTED"})
+
+_APPEND_SCRIPT = """
+for i, key in ipairs(KEYS) do
+    local kind = redis.call('TYPE', key).ok
+    local expected = i == 2 and 'string' or 'stream'
+    if kind ~= 'none' and kind ~= expected then
+        return redis.error_reply('invalid_audit_key_type')
+    end
+end
+local previous = redis.call('GET', KEYS[2]) or ''
+if previous ~= ARGV[1] then return {'retry', previous} end
+local length = redis.call('XLEN', KEYS[1])
+if length > 0 and previous == '' then
+    return redis.error_reply('missing_audit_chain_head')
+end
+local records = cjson.decode(ARGV[4])
+if type(records) ~= 'table' or #records == 0 then
+    return redis.error_reply('invalid_audit_batch')
+end
+local available = tonumber(ARGV[3]) - length
+if #records > available then return {'capacity', tostring(available)} end
+local index_count = tonumber(ARGV[5])
+if not index_count or index_count < 0 or index_count > #KEYS - 2
+    or index_count ~= math.floor(index_count) then
+    return redis.error_reply('invalid_audit_indexes')
+end
+local append_counts = {[1] = #records}
+for _, record in ipairs(records) do
+    local fields = record.fields
+    if type(fields) ~= 'table' or #fields == 0 or #fields > 2048
+        or #fields % 2 ~= 0 then
+        return redis.error_reply('invalid_audit_fields')
+    end
+    for _, value in ipairs(fields) do
+        if type(value) ~= 'string' then
+            return redis.error_reply('invalid_audit_fields')
+        end
+    end
+    if type(record.indexes) ~= 'table' then
+        return redis.error_reply('invalid_audit_indexes')
+    end
+    for _, index in ipairs(record.indexes) do
+        if type(index) ~= 'number' or index < 3 or index > 2 + index_count
+            or index ~= math.floor(index) then
+            return redis.error_reply('invalid_audit_indexes')
+        end
+    end
+    local effect = record.append
+    if effect ~= nil and effect ~= cjson.null then
+        if type(effect) ~= 'table' or type(effect.key) ~= 'number'
+            or effect.key <= 2 + index_count or effect.key > #KEYS
+            or effect.key ~= math.floor(effect.key)
+            or type(effect.fields) ~= 'table' or #effect.fields == 0
+            or #effect.fields > 2048 or #effect.fields % 2 ~= 0 then
+            return redis.error_reply('invalid_audit_stream_append')
+        end
+        for _, value in ipairs(effect.fields) do
+            if type(value) ~= 'string' then
+                return redis.error_reply('invalid_audit_stream_append')
+            end
+        end
+        append_counts[effect.key] = (append_counts[effect.key] or 0) + 1
+    end
+end
+local function last_id(key)
+    if redis.call('EXISTS', key) == 0 then return '0-0' end
+    local info = redis.call('XINFO', 'STREAM', key)
+    for i = 1, #info, 2 do
+        if info[i] == 'last-generated-id' then return info[i + 1] end
+    end
+end
+local function greater(left, right)
+    local lm, ls = string.match(left, '^(%d+)%-(%d+)$')
+    local rm, rs = string.match(right, '^(%d+)%-(%d+)$')
+    if lm ~= rm then return #lm > #rm or (#lm == #rm and lm > rm) end
+    return #ls > #rs or (#ls == #rs and ls > rs)
+end
+local main_last = last_id(KEYS[1])
+for i = 3, 2 + index_count do
+    if greater(last_id(KEYS[i]), main_last) then
+        return redis.error_reply('invalid_audit_index_position')
+    end
+end
+local function increment(value)
+    local result = ''
+    local carry = 1
+    for i = #value, 1, -1 do
+        local digit = tonumber(string.sub(value, i, i)) + carry
+        carry = digit >= 10 and 1 or 0
+        result = tostring(digit % 10) .. result
+    end
+    return carry == 1 and '1' .. result or result
+end
+local maximum = '18446744073709551615'
+for key, count in pairs(append_counts) do
+    local milliseconds, sequence = string.match(last_id(KEYS[key]), '^(%d+)%-(%d+)$')
+    if milliseconds == maximum then
+        for _ = 1, count do sequence = increment(sequence) end
+        if #sequence > #maximum or (#sequence == #maximum and sequence > maximum) then
+            return redis.error_reply('audit_stream_id_exhausted')
+        end
+    end
+end
+local result = {'ok'}
+for _, record in ipairs(records) do
+    local id = redis.call('XADD', KEYS[1], '*', unpack(record.fields))
+    for _, index in ipairs(record.indexes) do
+        redis.call('XADD', KEYS[index], id, unpack(record.fields))
+    end
+    if record.append ~= nil and record.append ~= cjson.null then
+        redis.call('XADD', KEYS[record.append.key], '*', unpack(record.append.fields))
+    end
+    result[#result + 1] = id
+end
+redis.call('SET', KEYS[2], ARGV[2])
+return result
+"""
+
+_ARCHIVE_SCRIPT = """
+for i, key in ipairs(KEYS) do
+    local kind = redis.call('TYPE', key).ok
+    local expected = i == 2 and 'string' or 'stream'
+    if kind ~= 'none' and kind ~= expected then
+        return redis.error_reply('invalid_audit_key_type')
+    end
+end
+if (redis.call('GET', KEYS[2]) or '') ~= ARGV[1] then return false end
+local expected = cjson.decode(ARGV[4])
+local current = redis.call('XRANGE', KEYS[1], '-', ARGV[2], 'COUNT', #expected + 1)
+if #current ~= #expected then return false end
+for i, row in ipairs(current) do
+    if row[1] ~= expected[i].stream_id then return false end
+    local fields = expected[i].fields
+    local field_count = 0
+    for _, _ in pairs(fields) do field_count = field_count + 1 end
+    if #row[2] ~= field_count * 2 then return false end
+    for j = 1, #row[2], 2 do
+        if fields[row[2][j]] ~= row[2][j + 1] then return false end
+    end
+end
+redis.call('SET', KEYS[2], ARGV[5])
+for i, key in ipairs(KEYS) do
+    if i ~= 2 then
+        redis.call('XTRIM', key, 'MINID', '=', ARGV[3])
+        if i > 2 and redis.call('XLEN', key) == 0 then redis.call('DEL', key) end
+    end
+end
+return true
+"""
+
+
+class AuditStats(TypedDict):
+    """Persisted audit counts for health and management views."""
+
+    total_messages: int
+    security_events: int
 
 
 class AuditEntry(BaseModel):
     """Audit log entry."""
 
+    model_config = ConfigDict(extra="forbid")
+
     message_id: str
-    timestamp: float = Field(default_factory=time.time)
+    timestamp: float = Field(default_factory=time.time, allow_inf_nan=False)
     sender_id: str
     sender_instance_id: str | None = None
     target_id: str
     message_type: str | None = None
     correlation_id: str | None = None
     decision: str  # ALLOWED, DENIED, RATE_LIMITED, DLP_BLOCKED, etc.
-    latency_ms: float
+    latency_ms: float = Field(ge=0, allow_inf_nan=False)
     payload_hash: str
     violations: list[str] = Field(default_factory=list)
-    previous_hash: str | None = None
+    previous_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    hash_version: int = Field(default=2, ge=1, le=2)
+
+
+class AuditMessageRecord(AuditEntry):
+    """Validated audit message with its persisted stream identity."""
+
+    stream_id: str
+
+
+class SecurityEvent(BaseModel):
+    """Validated security event stored in the audit stream."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: float = Field(allow_inf_nan=False)
+    event_type: str
+    details: JsonObject
+    previous_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    hash_version: int = Field(default=2, ge=1, le=2)
+
+
+@dataclass(frozen=True, slots=True)
+class AuditWriteReceipt:
+    """The individual identity and chain link of a durably appended record."""
+
+    stream_id: str
+    previous_hash: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedAuditEntry:
+    """Cache immutable record serialization while leaving its chain link open."""
+
+    canonical_prefix: str
+    canonical_suffix: str
+    fields: tuple[tuple[str, str | None], ...]
+
+    @classmethod
+    def from_entry(cls, entry: AuditEntry | SecurityEvent) -> PreparedAuditEntry:
+        """Validate and serialize static values once before a queued CAS attempt."""
+        data = validate_json_object(entry.model_dump(mode="json"))
+        keys = sorted(data)
+        link_index = keys.index("previous_hash")
+        before = {key: data[key] for key in keys[:link_index]}
+        after = {key: data[key] for key in keys[link_index + 1 :]}
+        return cls(
+            json.dumps(before, sort_keys=True, separators=(",", ":"))[:-1]
+            + ("," if before else "")
+            + '"previous_hash":',
+            ("," if after else "")
+            + json.dumps(after, sort_keys=True, separators=(",", ":"))[1:],
+            tuple(
+                (
+                    key,
+                    None
+                    if key == "previous_hash"
+                    else json.dumps(value)
+                    if isinstance(value, (list, dict))
+                    else str(value),
+                )
+                for key, value in data.items()
+                if key == "previous_hash" or value is not None
+            ),
+        )
+
+    def linked(self, previous_hash: str | None) -> tuple[dict[str, str], str]:
+        """Fill the current predecessor without reserializing the static record."""
+        fields: dict[str, str] = {}
+        for key, value in self.fields:
+            linked_value = previous_hash if key == "previous_hash" else value
+            if linked_value is not None:
+                fields[key] = linked_value
+        canonical = (
+            self.canonical_prefix + json.dumps(previous_hash) + self.canonical_suffix
+        )
+        return fields, hashlib.sha256(canonical.encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAuditWrite:
+    """One queued domain record awaiting its individual commit receipt."""
+
+    entry: AuditEntry | SecurityEvent
+    stream: AuditStream
+    indexes: tuple[str, ...]
+    result: asyncio.Future[AuditWriteReceipt]
+    stream_append: StreamAppend | None
+    instrumented: bool
+    prepared: PreparedAuditEntry
 
 
 class AuditFileSink:
@@ -109,7 +389,14 @@ class AuditModule:
         audit:last_hash → Last hash for chain integrity
     """
 
-    def __init__(self, redis: Redis[str], *, file_sink: AuditFileSink | None) -> None:
+    def __init__(
+        self,
+        redis: Redis,
+        *,
+        file_sink: AuditFileSink | None,
+        retention: AuditRetentionSettings = AuditRetentionSettings(),
+        durability: RedisDurability | None = None,
+    ) -> None:
         """
         Initialize audit module.
 
@@ -118,7 +405,31 @@ class AuditModule:
         """
         self.redis = redis
         self._file_sink = file_sink
-        self._chain_lock = asyncio.Lock()
+        self._heads: dict[AuditStream, str | None] = {}
+        self._append_locks: dict[AuditStream, asyncio.Lock] = {
+            "audit:messages": asyncio.Lock(),
+            "audit:security_events": asyncio.Lock(),
+        }
+        self._retention = retention
+        self._durability = durability or RedisDurability()
+        self._archive = (
+            AuditArchive(retention.archive_directory)
+            if retention.archive_directory is not None
+            else None
+        )
+        self._pending: asyncio.Queue[PendingAuditWrite] = asyncio.Queue(
+            maxsize=2 * retention.batch_size
+        )
+        self._pending_results: set[asyncio.Future[AuditWriteReceipt]] = set()
+        self._writer: asyncio.Task[None] | None = None
+        self._active_batches: set[asyncio.Task[None]] = set()
+        self._batch_slots = asyncio.Semaphore(2)
+        self._closed = False
+
+    @property
+    def commit_target(self) -> RedisCommitTarget:
+        """Describe the backend and confirmation policy for combined writes."""
+        return RedisCommitTarget(self.redis.connection_pool, self._durability)
 
     async def log_message(
         self,
@@ -133,12 +444,13 @@ class AuditModule:
         message_type: str | None = None,
         correlation_id: str | None = None,
         sender_instance_id: str | None = None,
+        stream_append: StreamAppend | None = None,
     ) -> str:
         """
         Log message to audit stream.
 
-        Uses a Redis transaction to keep the hash-chain tail consistent across
-        multiple AuditModule instances sharing the same Redis backend.
+        A compare-and-append operation preserves one chain across all writers.
+        Full streams are archived durably or refuse new writes without discard.
 
         Args:
             message_id: Unique message identifier
@@ -153,54 +465,37 @@ class AuditModule:
             Stream entry ID
         """
         telemetry = get_telemetry()
+        if stream_append is not None and (
+            decision not in _ROUTABLE_DECISIONS
+            or stream_append.stream.startswith("audit:")
+        ):
+            raise ValueError(
+                "stream append requires a routable decision and non-audit stream"
+            )
         with telemetry.start_span(
             "mas.gateway.audit.log_message",
             kind=SpanKind.INTERNAL,
             attributes={"mas.decision": decision},
         ):
-            async with self._chain_lock:
-                # Compute payload hash
-                payload_str = json.dumps(payload, sort_keys=True)
-                payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
-                sender_stream = f"audit:by_sender:{sender_id}"
-                target_stream = f"audit:by_target:{target_id}"
-
-                while True:
-                    pipe = self.redis.pipeline()
-                    try:
-                        await pipe.watch("audit:last_hash")
-                        previous_hash = await pipe.get("audit:last_hash")
-                        entry = AuditEntry(
-                            message_id=message_id,
-                            timestamp=time.time(),
-                            sender_id=sender_id,
-                            sender_instance_id=sender_instance_id,
-                            target_id=target_id,
-                            message_type=message_type,
-                            correlation_id=correlation_id,
-                            decision=decision,
-                            latency_ms=latency_ms,
-                            payload_hash=payload_hash,
-                            violations=violations or [],
-                            previous_hash=previous_hash,
-                        )
-                        entry_hash = self._hash_entry(entry)
-                        fields = self._entry_to_stream_fields(entry)
-
-                        pipe.multi()
-                        pipe.xadd("audit:messages", fields)
-                        pipe.xadd(sender_stream, fields)
-                        pipe.xadd(target_stream, fields)
-                        pipe.set("audit:last_hash", entry_hash)
-                        results = await pipe.execute()
-                        break
-                    except WatchError:
-                        continue
-                    finally:
-                        await pipe.reset()
-
-            # First pipeline result is the main stream ID.
-            main_stream_id = str(results[0])
+            payload_str = json.dumps(payload, sort_keys=True)
+            entry = AuditEntry(
+                message_id=message_id,
+                sender_id=sender_id,
+                sender_instance_id=sender_instance_id,
+                target_id=target_id,
+                message_type=message_type,
+                correlation_id=correlation_id,
+                decision=decision,
+                latency_ms=latency_ms,
+                payload_hash=hashlib.sha256(payload_str.encode()).hexdigest(),
+                violations=violations or [],
+            )
+            main_stream_id, entry = await self._append_entry(
+                entry,
+                "audit:messages",
+                (f"audit:by_sender:{sender_id}", f"audit:by_target:{target_id}"),
+                stream_append,
+            )
 
             logger.debug(
                 "Audit entry logged",
@@ -223,10 +518,26 @@ class AuditModule:
 
             return main_stream_id
 
+    async def close(self) -> None:
+        """Finish audit work before the owning Redis connection is closed."""
+        self._closed = True
+        while self._pending_results:
+            await asyncio.shield(
+                asyncio.gather(*self._pending_results, return_exceptions=True)
+            )
+        if self._writer is not None:
+            await asyncio.shield(self._writer)
+        if self._active_batches:
+            await asyncio.shield(
+                asyncio.gather(*self._active_batches, return_exceptions=True)
+            )
+
     async def log_security_event(
         self,
         event_type: str,
         details: AuditRecord,
+        *,
+        instrumented: bool = True,
     ) -> str:
         """
         Log security event to audit stream.
@@ -234,25 +545,343 @@ class AuditModule:
         Args:
             event_type: Event type (AUTH_FAILURE, AUTHZ_DENIED, etc.)
             details: Event details dictionary
+            instrumented: Emit operational spans for this audit write. Collectors
+                disable this to avoid exporting observations of their own intake.
 
         Returns:
             Stream entry ID
         """
-        entry_raw = {
-            "timestamp": time.time(),
-            "event_type": event_type,
-            "details": json.dumps(details),
-        }
-        entry_fields: dict[str, str] = {k: str(v) for k, v in entry_raw.items()}
-
-        stream_id = await self.redis.xadd("audit:security_events", entry_fields)
+        stream_id, _ = await self._append_entry(
+            SecurityEvent(
+                timestamp=time.time(), event_type=event_type, details=details
+            ),
+            "audit:security_events",
+            instrumented=instrumented,
+        )
 
         logger.info(
             "Security event logged",
             extra={"event_type": event_type, "stream_id": stream_id},
         )
 
-        return stream_id
+        return _STRING_ADAPTER.validate_python(stream_id)
+
+    async def _append_entry[EntryT: AuditEntry | SecurityEvent](
+        self,
+        entry: EntryT,
+        stream: AuditStream,
+        indexes: tuple[str, ...] = (),
+        stream_append: StreamAppend | None = None,
+        *,
+        instrumented: bool = True,
+    ) -> tuple[str, EntryT]:
+        if self._closed:
+            raise AuditArchiveError("audit_writer_closed")
+        result: asyncio.Future[AuditWriteReceipt] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending_results.add(result)
+        result.add_done_callback(self._result_finished)
+        try:
+            await self._pending.put(
+                PendingAuditWrite(
+                    entry,
+                    stream,
+                    indexes,
+                    result,
+                    stream_append,
+                    instrumented,
+                    PreparedAuditEntry.from_entry(entry),
+                )
+            )
+        except BaseException:
+            result.cancel()
+            raise
+        if self._writer is None or self._writer.done():
+            self._writer = asyncio.create_task(self._run_writer())
+        receipt = await asyncio.shield(result)
+        return receipt.stream_id, entry.model_copy(
+            update={"previous_hash": receipt.previous_hash}
+        )
+
+    def _result_finished(self, result: asyncio.Future[AuditWriteReceipt]) -> None:
+        self._pending_results.discard(result)
+        if not result.cancelled():
+            result.exception()
+
+    async def _run_writer(self) -> None:
+        while not self._pending.empty():
+            await self._batch_slots.acquire()
+            await asyncio.sleep(0.001)
+            groups: dict[AuditStream, list[PendingAuditWrite]] = {}
+            for _ in range(self._retention.batch_size):
+                try:
+                    write = self._pending.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                groups.setdefault(write.stream, []).append(write)
+            reserved = True
+            for stream, writes in groups.items():
+                capacity = (
+                    self._retention.max_messages
+                    if stream == "audit:messages"
+                    else self._retention.max_security_events
+                )
+                for offset in range(0, len(writes), capacity):
+                    if not reserved:
+                        await self._batch_slots.acquire()
+                    reserved = False
+                    task = asyncio.create_task(
+                        self._complete_batch(stream, writes[offset : offset + capacity])
+                    )
+                    self._active_batches.add(task)
+                    task.add_done_callback(self._active_batches.discard)
+            if reserved:
+                self._batch_slots.release()
+
+    async def _complete_batch(
+        self, stream: AuditStream, writes: list[PendingAuditWrite]
+    ) -> None:
+        try:
+            with (
+                get_telemetry().start_span(
+                    "mas.gateway.audit.commit_batch",
+                    attributes={
+                        "mas.audit.stream": stream,
+                        "mas.audit.batch_size": len(writes),
+                    },
+                )
+                if any(write.instrumented for write in writes)
+                else contextlib.nullcontext()
+            ):
+                receipts = await self._commit_batch(stream, writes)
+            for write, receipt in receipts:
+                if not write.result.done():
+                    write.result.set_result(receipt)
+        except BaseException as exc:
+            for write in writes:
+                if not write.result.done():
+                    write.result.set_exception(exc)
+        finally:
+            self._batch_slots.release()
+
+    async def _commit_batch(
+        self, stream: AuditStream, writes: list[PendingAuditWrite]
+    ) -> list[tuple[PendingAuditWrite, AuditWriteReceipt]]:
+        head_key = self._head_key(stream)
+        capacity = (
+            self._retention.max_messages
+            if stream == "audit:messages"
+            else self._retention.max_security_events
+        )
+        active = writes
+        while True:
+            indexes = sorted({index for write in active for index in write.indexes})
+            effects = sorted(
+                {
+                    write.stream_append.stream
+                    for write in active
+                    if write.stream_append is not None
+                }
+            )
+            positions = {key: i + 3 for i, key in enumerate([*indexes, *effects])}
+            records: list[dict[str, object]] = [
+                {
+                    "fields": [],
+                    "indexes": [positions[index] for index in write.indexes],
+                    "append": (
+                        {
+                            "key": positions[write.stream_append.stream],
+                            "fields": [
+                                value
+                                for pair in write.stream_append.fields
+                                for value in pair
+                            ],
+                        }
+                        if write.stream_append is not None
+                        else None
+                    ),
+                }
+                for write in active
+            ]
+            while True:
+                async with self.redis.client() as connection:
+                    async with self._append_locks[stream]:
+                        previous = self._heads.get(stream)
+                        links: list[str | None] = []
+                        final_hash = previous
+                        for write, record in zip(active, records, strict=True):
+                            links.append(final_hash)
+                            fields, final_hash = write.prepared.linked(final_hash)
+                            record["fields"] = [
+                                value for pair in fields.items() for value in pair
+                            ]
+                        with (
+                            get_telemetry().start_span(
+                                "mas.gateway.audit.append_batch",
+                                attributes={"mas.audit.batch_size": len(active)},
+                            )
+                            if any(write.instrumented for write in active)
+                            else contextlib.nullcontext()
+                        ):
+                            result = _STRINGS_ADAPTER.validate_python(
+                                await connection.eval(
+                                    _APPEND_SCRIPT,
+                                    2 + len(indexes) + len(effects),
+                                    stream,
+                                    head_key,
+                                    *indexes,
+                                    *effects,
+                                    previous or "",
+                                    final_hash or "",
+                                    capacity,
+                                    json.dumps(records),
+                                    len(indexes),
+                                )
+                            )
+                        if len(result) == 2 and result[0] == "retry":
+                            try:
+                                self._heads[stream] = _HEAD_ADAPTER.validate_python(
+                                    result[1] or None
+                                )
+                            except ValidationError as exc:
+                                raise AuditArchiveError(
+                                    "invalid_audit_chain_head"
+                                ) from exc
+                            continue
+                        at_capacity = len(result) == 2 and result[0] == "capacity"
+                        if not at_capacity:
+                            if len(result) != len(active) + 1 or result[0] != "ok":
+                                raise AuditArchiveError("invalid_audit_append_result")
+                            self._heads[stream] = final_hash
+                    if at_capacity:
+                        if self._archive is None:
+                            available = int(result[1])
+                            if available <= 0:
+                                raise AuditCapacityError(
+                                    f"audit_capacity_exceeded:{stream}"
+                                )
+                            if available >= len(active):
+                                raise AuditArchiveError("invalid_audit_capacity_result")
+                            for write in active[available:]:
+                                write.result.set_exception(
+                                    AuditCapacityError(
+                                        f"audit_capacity_exceeded:{stream}"
+                                    )
+                                )
+                            active = active[:available]
+                            break
+                        await self._archive_prefix(stream)
+                        continue
+                    with (
+                        get_telemetry().start_span("mas.gateway.audit.confirm_batch")
+                        if any(write.instrumented for write in active)
+                        else contextlib.nullcontext()
+                    ):
+                        await self._durability.confirm(connection)
+                    return [
+                        (write, AuditWriteReceipt(id_, link))
+                        for write, id_, link in zip(
+                            active, result[1:], links, strict=True
+                        )
+                    ]
+
+    @staticmethod
+    def _head_key(stream: AuditStream) -> str:
+        return (
+            "audit:last_hash"
+            if stream == "audit:messages"
+            else "audit:security_last_hash"
+        )
+
+    async def _archive_prefix(self, stream: AuditStream) -> None:
+        archive = self._archive
+        if archive is None:
+            raise AuditCapacityError(f"audit_capacity_exceeded:{stream}")
+        checkpoint_key = f"{stream}:checkpoint"
+        async with self.redis.pipeline(transaction=True) as pipeline:
+            pipeline.get(checkpoint_key)
+            pipeline.xrange(stream, count=self._retention.batch_size)
+            old_value, rows = _ARCHIVE_SNAPSHOT_ADAPTER.validate_python(
+                await pipeline.execute()
+            )
+        previous = (
+            AuditCheckpoint.model_validate_json(old_value)
+            if old_value is not None
+            else None
+        )
+        if not rows:
+            return
+        expected_hash = previous.last_hash if previous is not None else None
+        indexes: set[str] = set()
+        for _, raw in rows:
+            entry = self._chain_entry(stream, raw)
+            if entry.hash_version != 2 or entry.previous_hash != expected_hash:
+                raise AuditArchiveError("audit_archive_chain_invalid")
+            expected_hash = self._hash_entry(entry)
+            if isinstance(entry, AuditEntry):
+                indexes.update(
+                    (
+                        f"audit:by_sender:{entry.sender_id}",
+                        f"audit:by_target:{entry.target_id}",
+                    )
+                )
+        assert expected_hash is not None
+        segment = AuditSegment(
+            stream=stream,
+            previous_checkpoint=previous,
+            rows=[ArchivedAuditRow(stream_id=id_, fields=raw) for id_, raw in rows],
+            last_hash=expected_hash,
+        )
+        digest = await archive.write(segment)
+        last_id = rows[-1][0]
+        milliseconds, sequence = last_id.split("-")
+        if int(sequence) < 2**64 - 1:
+            next_id = f"{milliseconds}-{int(sequence) + 1}"
+        elif int(milliseconds) < 2**64 - 1:
+            next_id = f"{int(milliseconds) + 1}-0"
+        else:
+            raise AuditArchiveError("audit_stream_identity_exhausted")
+        checkpoint = AuditCheckpoint(
+            stream=stream,
+            last_stream_id=last_id,
+            last_hash=expected_hash,
+            segment_digest=digest,
+            total_entries=(previous.total_entries if previous is not None else 0)
+            + len(rows),
+        )
+        async with self.redis.client() as connection:
+            committed = await connection.eval(
+                _ARCHIVE_SCRIPT,
+                2 + len(indexes),
+                stream,
+                checkpoint_key,
+                *sorted(indexes),
+                old_value or "",
+                last_id,
+                next_id,
+                json.dumps([row.model_dump() for row in segment.rows]),
+                checkpoint.model_dump_json(),
+            )
+            if committed:
+                await self._durability.confirm(connection)
+
+    @staticmethod
+    def _chain_entry(
+        stream: AuditStream, raw: dict[str, str]
+    ) -> AuditEntry | SecurityEvent:
+        if stream == "audit:messages":
+            message = AuditModule._record_to_entry(raw)
+            if message is None:
+                raise AuditArchiveError("invalid_audit_message")
+            return message
+        try:
+            fields: dict[str, object] = dict(raw)
+            fields["details"] = validate_json_value(json.loads(raw["details"]))
+            fields.setdefault("hash_version", 1)
+            return SecurityEvent.model_validate(fields)
+        except (KeyError, ValueError) as exc:
+            raise AuditArchiveError("invalid_audit_security_event") from exc
 
     async def query_by_sender(
         self,
@@ -348,107 +977,267 @@ class AuditModule:
         start_time: float | None,
         end_time: float | None,
         count: int | None,
+        predicate: Callable[[AuditRecord], bool] | None = None,
     ) -> list[AuditRecord]:
-        """
-        Query Redis Stream with time range.
+        """Page through a time range, stopping after the requested matches."""
+        if count is not None and count < 0:
+            raise ValueError("count must be nonnegative")
+        for timestamp in (start_time, end_time):
+            if timestamp is not None and (
+                not math.isfinite(timestamp) or timestamp < 0
+            ):
+                raise ValueError("Audit timestamps must be finite and nonnegative")
+        if start_time is not None and end_time is not None and start_time > end_time:
+            raise ValueError("start_time must not exceed end_time")
+        if count == 0:
+            return []
+        start_id = (
+            self._timestamp_to_stream_id(start_time) if start_time is not None else "-"
+        )
+        end_id = str(int(end_time * 1000)) if end_time is not None else "+"
+        result, checkpoint_value = await self._query_archived(
+            stream, start_time, end_time, count, predicate
+        )
+        scanned = (
+            AuditCheckpoint.model_validate_json(checkpoint_value).total_entries
+            if checkpoint_value is not None
+            else 0
+        )
+        if count is not None and len(result) >= count:
+            return result
+        cursor = start_id
+        archive_stream: AuditStream = (
+            "audit:security_events"
+            if stream == "audit:security_events"
+            else "audit:messages"
+        )
 
-        Args:
-            stream: Stream name
-            start_time: Start timestamp
-            end_time: End timestamp
-            count: Max entries
+        async def finish() -> list[AuditRecord]:
+            current = _OPTIONAL_STRING_ADAPTER.validate_python(
+                await self.redis.get(f"{archive_stream}:checkpoint")
+            )
+            if current != checkpoint_value:
+                raise AuditArchiveError("audit_query_snapshot_changed_retry")
+            return result
 
-        Returns:
-            List of entries
-        """
         telemetry = get_telemetry()
         with telemetry.start_span(
             "mas.gateway.audit.query_stream",
             kind=SpanKind.INTERNAL,
             attributes={"mas.audit.stream": stream},
         ):
-            # Check if stream exists
-            exists = await self.redis.exists(stream)
-            if not exists:
-                return []
-
-            # Convert timestamps to Redis Stream IDs
-            start_id = self._timestamp_to_stream_id(start_time) if start_time else "-"
-            end_id = self._timestamp_to_stream_id(end_time) if end_time else "+"
-
             try:
-                if count is not None:
-                    entries = await self.redis.xrange(stream, start_id, end_id, count)
-                    return [
-                        self._stream_entry_to_record(stream_id, raw)
-                        for stream_id, raw in entries
-                    ]
-
-                # Full-scan mode (paged) for filtered queries to avoid false negatives.
-                result: list[AuditRecord] = []
-                batch_size = 500
-                cursor = start_id
-
                 while True:
-                    entries = await self.redis.xrange(
-                        stream, cursor, end_id, count=batch_size
+                    batch_size = (
+                        min(500, count - len(result))
+                        if count is not None and predicate is None
+                        else 500
+                    )
+                    batch_size = min(batch_size, _MAX_SCAN_ENTRIES - scanned + 1)
+                    entries = _STREAM_ADAPTER.validate_python(
+                        await self.redis.xrange(
+                            stream, cursor, end_id, count=batch_size
+                        )
                     )
                     if not entries:
-                        break
-
-                    result.extend(
-                        self._stream_entry_to_record(stream_id, raw)
-                        for stream_id, raw in entries
-                    )
-
+                        return await finish()
+                    scanned += len(entries)
+                    if scanned > _MAX_SCAN_ENTRIES:
+                        raise AuditScanLimitError("audit_query_scan_limit_exceeded")
+                    for stream_id, raw in entries:
+                        record = self._stream_entry_to_record(stream_id, raw)
+                        if predicate is None or predicate(record):
+                            result.append(record)
+                            if count is not None and len(result) >= count:
+                                return await finish()
                     if len(entries) < batch_size:
-                        break
-
-                    next_cursor = self._next_stream_id(entries[-1][0])
-                    if next_cursor == cursor:
-                        break
-                    cursor = next_cursor
-
-                return result
-            except Exception as e:
+                        return await finish()
+                    cursor = f"({entries[-1][0]}"
+            except Exception:
                 telemetry.record_redis_error(component="audit", operation="xrange")
-                logger.error(
-                    "Failed to query stream", exc_info=e, extra={"stream": stream}
+                raise
+
+    async def _query_archived(
+        self,
+        stream: str,
+        start_time: float | None,
+        end_time: float | None,
+        count: int | None,
+        predicate: Callable[[AuditRecord], bool] | None,
+    ) -> tuple[list[AuditRecord], str | None]:
+        archive_stream: AuditStream = (
+            "audit:security_events"
+            if stream == "audit:security_events"
+            else "audit:messages"
+        )
+        raw_checkpoint = _OPTIONAL_STRING_ADAPTER.validate_python(
+            await self.redis.get(f"{archive_stream}:checkpoint")
+        )
+        if raw_checkpoint is None:
+            return [], None
+        if self._archive is None:
+            raise AuditArchiveError("audit_archive_directory_required")
+        checkpoint = AuditCheckpoint.model_validate_json(raw_checkpoint)
+        if checkpoint.total_entries > _MAX_SCAN_ENTRIES:
+            raise AuditScanLimitError("audit_query_scan_limit_exceeded")
+        records: deque[AuditRecord] = deque(maxlen=count)
+        lower = (int(start_time * 1000), 0) if start_time is not None else None
+        upper = (int(end_time * 1000), 2**64 - 1) if end_time is not None else None
+        while checkpoint is not None:
+            segment = await self._archive.read(checkpoint.segment_digest)
+            if segment.stream != archive_stream or checkpoint.stream != archive_stream:
+                raise AuditArchiveError("audit_archive_stream_mismatch")
+            predecessor = segment.previous_checkpoint
+            if predecessor is not None and (
+                predecessor.total_entries >= checkpoint.total_entries
+                or self._stream_id(predecessor.last_stream_id)
+                >= self._stream_id(segment.rows[0].stream_id)
+            ):
+                raise AuditArchiveError("audit_archive_checkpoint_invalid")
+            for row in reversed(segment.rows):
+                identity = self._stream_id(row.stream_id)
+                if (lower is not None and identity < lower) or (
+                    upper is not None and identity > upper
+                ):
+                    continue
+                record = self._stream_entry_to_record(row.stream_id, row.fields)
+                if stream.startswith("audit:by_sender:") and record.get(
+                    "sender_id"
+                ) != stream.removeprefix("audit:by_sender:"):
+                    continue
+                if stream.startswith("audit:by_target:") and record.get(
+                    "target_id"
+                ) != stream.removeprefix("audit:by_target:"):
+                    continue
+                if predicate is None or predicate(record):
+                    records.appendleft(record)
+            checkpoint = predecessor
+        return list(records), raw_checkpoint
+
+    async def query_recent(self, count: int = 100) -> list[AuditMessageRecord]:
+        """Read the latest validated messages in descending stream order."""
+        if count < 0:
+            raise ValueError("count must be nonnegative")
+        if count == 0:
+            return []
+        entries = _STREAM_ADAPTER.validate_python(
+            await self.redis.xrevrange("audit:messages", count=count)
+        )
+        return [
+            AuditMessageRecord.model_validate(
+                self._stream_entry_to_record(stream_id, raw)
+            )
+            for stream_id, raw in entries
+        ]
+
+    async def verify_integrity(
+        self, message_id: str, *, max_entries: int = _MAX_SCAN_ENTRIES
+    ) -> bool:
+        """Verify v2 history in bounded pages through a consistent upper snapshot."""
+        return await self._verify_chain("audit:messages", message_id, max_entries)
+
+    async def verify_security_integrity(
+        self, *, max_entries: int = _MAX_SCAN_ENTRIES
+    ) -> bool:
+        """Verify the independent v2 security-event chain and its archives."""
+        return await self._verify_chain("audit:security_events", None, max_entries)
+
+    async def _verify_chain(
+        self, stream: AuditStream, message_id: str | None, max_entries: int
+    ) -> bool:
+        if isinstance(max_entries, bool) or max_entries <= 0:
+            raise ValueError("max_entries must be positive")
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.get(f"{stream}:checkpoint")
+            pipe.get(self._head_key(stream))
+            pipe.xrevrange(stream, count=1)
+            checkpoint_value, head, tail = _SNAPSHOT_ADAPTER.validate_python(
+                await pipe.execute()
+            )
+        try:
+            checkpoint = (
+                AuditCheckpoint.model_validate_json(checkpoint_value)
+                if checkpoint_value is not None
+                else None
+            )
+            if head is None or (not tail and checkpoint is None):
+                return False
+            expected = checkpoint.last_hash if checkpoint is not None else None
+            last_id = checkpoint.last_stream_id if checkpoint is not None else "0-0"
+            found = message_id is None
+            scanned = 0
+            archived = checkpoint
+            while archived is not None:
+                if self._archive is None:
+                    return False
+                segment = await self._archive.read(archived.segment_digest)
+                predecessor = segment.previous_checkpoint
+                if (
+                    segment.stream != stream
+                    or archived.stream != stream
+                    or segment.last_hash != archived.last_hash
+                    or segment.rows[-1].stream_id != archived.last_stream_id
+                    or archived.total_entries
+                    != (predecessor.total_entries if predecessor is not None else 0)
+                    + len(segment.rows)
+                ):
+                    return False
+                archived_hash = predecessor.last_hash if predecessor else None
+                archived_id = predecessor.last_stream_id if predecessor else "0-0"
+                for row in segment.rows:
+                    scanned += 1
+                    if scanned > max_entries:
+                        raise AuditScanLimitError("audit_integrity_scan_limit_exceeded")
+                    entry = self._chain_entry(stream, row.fields)
+                    if (
+                        entry.hash_version != 2
+                        or entry.previous_hash != archived_hash
+                        or self._stream_id(row.stream_id)
+                        <= self._stream_id(archived_id)
+                    ):
+                        return False
+                    archived_hash = self._hash_entry(entry)
+                    archived_id = row.stream_id
+                    if isinstance(entry, AuditEntry) and entry.message_id == message_id:
+                        found = True
+                if archived_hash != archived.last_hash:
+                    return False
+                archived = predecessor
+            upper_id = tail[0][0] if tail else last_id
+            cursor = f"({last_id}" if checkpoint is not None else "-"
+            while True:
+                rows = _STREAM_ADAPTER.validate_python(
+                    await self.redis.xrange(
+                        stream,
+                        cursor,
+                        upper_id,
+                        count=min(
+                            self._retention.batch_size, max_entries - scanned + 1
+                        ),
+                    )
                 )
-                return []
-
-    async def verify_integrity(self, message_id: str) -> bool:
-        """
-        Verify audit log integrity using hash chain.
-
-        Args:
-            message_id: Message ID to verify
-
-        Returns:
-            True if integrity check passes
-        """
-        entries = await self.redis.xrange("audit:messages", "-", "+")
-        if not entries:
+                if not rows:
+                    break
+                for stream_id, fields in rows:
+                    scanned += 1
+                    if scanned > max_entries:
+                        raise AuditScanLimitError("audit_integrity_scan_limit_exceeded")
+                    entry = self._chain_entry(stream, fields)
+                    if entry.hash_version != 2 or entry.previous_hash != expected:
+                        return False
+                    expected = self._hash_entry(entry)
+                    last_id = stream_id
+                    if isinstance(entry, AuditEntry) and entry.message_id == message_id:
+                        found = True
+                cursor = f"({last_id}"
+            return found and expected == head and last_id == upper_id
+        except (ValueError, KeyError, AuditArchiveError):
             return False
 
-        found = False
-        expected_previous_hash: str | None = None
-
-        for _, fields in entries:
-            entry = self._record_to_entry(fields)
-            if entry is None:
-                return False
-            if entry.previous_hash != expected_previous_hash:
-                return False
-
-            expected_previous_hash = self._hash_entry(entry)
-            if entry.message_id == message_id:
-                found = True
-
-        if not found:
-            return False
-
-        return await self.redis.get("audit:last_hash") == expected_previous_hash
+    @staticmethod
+    def _stream_id(value: str) -> tuple[int, int]:
+        milliseconds, sequence = value.split("-")
+        return int(milliseconds), int(sequence)
 
     @staticmethod
     def _timestamp_to_stream_id(timestamp: float) -> str:
@@ -483,11 +1272,13 @@ class AuditModule:
         Returns:
             List of audit entries matching decision
         """
-        all_entries = await self._query_messages(start_time, end_time, count=None)
-
-        # Filter by decision
-        filtered = [entry for entry in all_entries if entry.get("decision") == decision]
-        return filtered[:count]
+        return await self._query_stream(
+            "audit:messages",
+            start_time,
+            end_time,
+            count,
+            predicate=lambda entry: entry.get("decision") == decision,
+        )
 
     async def query_by_violation(
         self,
@@ -508,20 +1299,14 @@ class AuditModule:
         Returns:
             List of audit entries with specified violation
         """
-        all_entries = await self._query_messages(start_time, end_time, count=None)
 
-        # Filter by violation type
-        filtered: list[AuditRecord] = []
-        for entry in all_entries:
+        def matches(entry: AuditRecord) -> bool:
             violations = entry.get("violations")
-            if not isinstance(violations, list):
-                continue
-            if violation_type in violations:
-                filtered.append(entry)
-                if len(filtered) >= count:
-                    break
+            return isinstance(violations, list) and violation_type in violations
 
-        return filtered
+        return await self._query_stream(
+            "audit:messages", start_time, end_time, count, predicate=matches
+        )
 
     async def query_all(
         self,
@@ -627,8 +1412,9 @@ class AuditModule:
         Returns:
             Formatted report string
         """
-        # Query all entries in range
-        entries = await self.query_all(start_time, end_time, count=10000)
+        if format_type not in {"csv", "json"}:
+            raise ValueError(f"Unsupported format: {format_type}")
+        entries = await self._query_messages(start_time, end_time, count=None)
 
         if format_type == "csv":
             return await self.export_to_csv(entries)
@@ -637,129 +1423,85 @@ class AuditModule:
         else:
             raise ValueError(f"Unsupported format: {format_type}")
 
-    async def get_stats(self) -> dict[str, int]:
-        """
-        Get audit log statistics.
-
-        Returns:
-            Dictionary with audit statistics
-        """
-        telemetry = get_telemetry()
-
-        # Get total message count
-        try:
-            main_len = await self.redis.xlen("audit:messages")
-        except Exception:
-            telemetry.record_redis_error(
-                component="audit", operation="xlen_audit_messages"
+    async def get_stats(self) -> AuditStats:
+        """Read persisted counts; backend failures must not appear as zero activity."""
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.xlen("audit:messages")
+            pipe.xlen("audit:security_events")
+            pipe.get("audit:messages:checkpoint")
+            pipe.get("audit:security_events:checkpoint")
+            messages, security, message_anchor, security_anchor = (
+                _STATS_ADAPTER.validate_python(await pipe.execute())
             )
-            main_len = 0
-
-        # Get security event count
-        try:
-            security_len = await self.redis.xlen("audit:security_events")
-        except Exception:
-            telemetry.record_redis_error(
-                component="audit", operation="xlen_audit_security_events"
-            )
-            security_len = 0
-
         return {
-            "total_messages": main_len,
-            "security_events": security_len,
+            "total_messages": messages
+            + (
+                AuditCheckpoint.model_validate_json(message_anchor).total_entries
+                if message_anchor is not None
+                else 0
+            ),
+            "security_events": security
+            + (
+                AuditCheckpoint.model_validate_json(security_anchor).total_entries
+                if security_anchor is not None
+                else 0
+            ),
         }
 
     @staticmethod
-    def _entry_to_stream_fields(entry: AuditEntry) -> dict[str, str]:
+    def _entry_to_stream_fields(
+        entry: AuditEntry | SecurityEvent,
+    ) -> dict[str, str]:
         """Serialize an audit entry to Redis Stream fields."""
-        entry_dict = entry.model_dump()
-        entry_dict["violations"] = json.dumps(entry_dict["violations"])
-        cleaned = {k: v for k, v in entry_dict.items() if v is not None}
-        return {k: str(v) for k, v in cleaned.items()}
+        data = validate_json_value(entry.model_dump(mode="json", exclude_none=True))
+        if not isinstance(data, dict):
+            raise ValueError("Audit fields must be a JSON object")
+        return {
+            key: json.dumps(value) if isinstance(value, (list, dict)) else str(value)
+            for key, value in data.items()
+        }
 
     @staticmethod
-    def _hash_entry(entry: AuditEntry) -> str:
-        """Compute the entry hash used by the audit chain."""
-        entry_data = entry.model_dump_json(exclude={"previous_hash"})
+    def _hash_entry(entry: AuditEntry | SecurityEvent) -> str:
+        """Hash the canonical record including the link to its predecessor."""
+        entry_data = json.dumps(
+            entry.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        )
         return hashlib.sha256(entry_data.encode()).hexdigest()
 
     @staticmethod
-    def _next_stream_id(stream_id: str) -> str:
-        """Return the next stream id after a concrete id."""
-        ms_text, sep, seq_text = stream_id.partition("-")
-        if not sep:
-            return stream_id
-        try:
-            ms = int(ms_text)
-            seq = int(seq_text)
-        except ValueError:
-            return stream_id
-        return f"{ms}-{seq + 1}"
-
-    @staticmethod
     def _stream_entry_to_record(stream_id: str, raw: dict[str, str]) -> AuditRecord:
-        """Convert a Redis Stream entry to an API record."""
-        data: AuditRecord = {str(k): v for k, v in raw.items()}
-        if "violations" in data:
-            try:
-                parsed = json.loads(str(data["violations"]))
-                data["violations"] = parsed if isinstance(parsed, list) else []
-            except (json.JSONDecodeError, TypeError):
-                data["violations"] = []
-        if "details" in data:
-            with contextlib.suppress(json.JSONDecodeError, TypeError):
-                data["details"] = validate_json_value(json.loads(str(data["details"])))
+        """Validate persisted fields and decode JSON before returning API data."""
+        if "event_type" in raw:
+            fields: dict[str, object] = dict(raw)
+            fields["details"] = validate_json_value(json.loads(raw["details"]))
+            fields.setdefault("hash_version", 1)
+            model = SecurityEvent.model_validate(fields)
+            data = validate_json_value(model.model_dump(mode="json"))
+        else:
+            entry = AuditModule._record_to_entry(raw)
+            if entry is None:
+                raise ValueError(f"Malformed audit message at {stream_id}")
+            data = validate_json_value(entry.model_dump(mode="json", exclude_none=True))
+        if not isinstance(data, dict):
+            raise ValueError("Audit record must be a JSON object")
         data["stream_id"] = stream_id
         return data
 
     @staticmethod
     def _record_to_entry(raw: dict[str, str]) -> AuditEntry | None:
-        """Parse stored stream fields back into an AuditEntry."""
-        message_id = raw.get("message_id")
-        sender_id = raw.get("sender_id")
-        target_id = raw.get("target_id")
-        decision = raw.get("decision")
-        payload_hash = raw.get("payload_hash")
-        timestamp_raw = raw.get("timestamp")
-        latency_raw = raw.get("latency_ms")
-
-        if (
-            message_id is None
-            or sender_id is None
-            or target_id is None
-            or decision is None
-            or payload_hash is None
-            or timestamp_raw is None
-            or latency_raw is None
-        ):
+        """Validate stored stream fields before domain or integrity checks."""
+        if "timestamp" not in raw:
             return None
-
+        fields: dict[str, object] = dict(raw)
+        fields.setdefault("hash_version", 1)
         try:
-            timestamp = float(timestamp_raw)
-            latency_ms = float(latency_raw)
-        except ValueError:
+            violations: object = json.loads(raw.get("violations", "[]"))
+            if not isinstance(violations, list) or not all(
+                isinstance(item, str) for item in violations
+            ):
+                return None
+            fields["violations"] = violations
+            return AuditEntry.model_validate(fields)
+        except (json.JSONDecodeError, ValidationError):
             return None
-
-        violations_raw = raw.get("violations", "[]")
-        try:
-            violations_loaded = json.loads(violations_raw)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(violations_loaded, list):
-            return None
-        violations = [str(item) for item in violations_loaded]
-
-        return AuditEntry(
-            message_id=message_id,
-            timestamp=timestamp,
-            sender_id=sender_id,
-            sender_instance_id=raw.get("sender_instance_id"),
-            target_id=target_id,
-            message_type=raw.get("message_type"),
-            correlation_id=raw.get("correlation_id"),
-            decision=decision,
-            latency_ms=latency_ms,
-            payload_hash=payload_hash,
-            violations=violations,
-            previous_hash=raw.get("previous_hash"),
-        )

@@ -1,0 +1,59 @@
+name: Production acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  capacity-and-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      redis:
+        image: redis:8.10.2-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups --all-packages
+      - name: Verify dashboard
+        uses: ./.github/actions/dashboard
+      - name: Install verified Redis executable
+        run: |
+          curl --fail --silent --show-error --location https://download.redis.io/releases/redis-8.10.2.tar.gz --output /tmp/redis.tar.gz
+          echo 'b9ffee226b5eecdba98a679260dad764b2a4ebd90dce4ad5ac9e9f3eef9c02b3  /tmp/redis.tar.gz' | sha256sum --check
+          tar -xzf /tmp/redis.tar.gz -C /tmp
+          make -C /tmp/redis-8.10.2 -j2 BUILD_TLS=yes MALLOC=libc redis-server
+          sudo install /tmp/redis-8.10.2/src/redis-server /usr/local/bin/redis-server
+      - name: Real primary crash, broker crash, reply crash and restore checks
+        run: >-
+          uv run pytest -q integration_tests/test_production_recovery.py
+          packages/mas-core/tests/test_durability.py
+          packages/mas-server/tests/test_multi_broker.py
+          packages/mas-server/tests/test_reply_crash_consistency.py
+      - name: Sustained CPU-scaled throughput with RBAC and exported tracing
+        run: >-
+          uv run python -m tools.validate_production --rate-per-cpu 62.5
+          --output artifacts/ci-production-load.json
+      - name: Preserve measured acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: production-load
+          path: artifacts/ci-production-load.json
+          if-no-files-found: warn

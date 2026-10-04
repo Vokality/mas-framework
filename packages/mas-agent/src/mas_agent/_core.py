@@ -126,6 +126,10 @@ class EarlyReplies:
     def __len__(self) -> int:
         return len(self._items)
 
+    def clear(self) -> None:
+        """Discard replies when the client lifecycle ends."""
+        self._items.clear()
+
 
 class AgentCore:
     """Shared instance state and low-level helpers for the agent mixins."""
@@ -151,6 +155,13 @@ class AgentCore:
         if not self._stub:
             raise RuntimeError("Agent not started")
         return self._stub
+
+    def _fail_pending_requests(self, reason: str) -> None:
+        """Release reply waiters when their transport cannot deliver a reply."""
+        for pending in self._pending_requests.values():
+            if not pending.future.done():
+                pending.future.set_exception(ConnectionError(reason))
+        self._pending_requests.clear()
 
     def _reply_authorized(
         self, reply: AgentMessage, expected_sender: str, *, source: str

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 
+from mas_core.sessions import SessionLeaseSettings, SessionLeaseStore
 from redis.asyncio import Redis
 
 from .types import AgentDefinition, AgentDiscoveryRecord
@@ -13,12 +14,11 @@ from .types import AgentDefinition, AgentDiscoveryRecord
 class RegistryService:
     """Manage allowlisted agents and discovery records."""
 
-    def __init__(
-        self, *, redis: Redis[str], agents: dict[str, AgentDefinition]
-    ) -> None:
+    def __init__(self, *, redis: Redis, agents: dict[str, AgentDefinition]) -> None:
         """Initialize registry service."""
         self._redis = redis
         self._agents = agents
+        self._leases = SessionLeaseStore(redis, SessionLeaseSettings())
 
     async def bootstrap_registry(self) -> None:
         """Populate Redis agent records from allowlist."""
@@ -32,19 +32,11 @@ class RegistryService:
                     "id": agent_id,
                     "capabilities": json.dumps(definition.capabilities),
                     "metadata": json.dumps(definition.metadata),
-                    "status": "INACTIVE",
                     "registered_at": now,
                 },
             )
 
         await pipe.execute()
-
-    async def set_agent_status(self, agent_id: str, status: str) -> None:
-        """Update an agent's status field in Redis."""
-        await self._redis.hset(
-            f"agent:{agent_id}",
-            mapping={"status": status, "registered_at": str(time.time())},
-        )
 
     async def discover(
         self,
@@ -61,29 +53,35 @@ class RegistryService:
         else:
             candidates = [target for target in allowed if target]
 
-        candidates = [target for target in candidates if target not in blocked]
+        candidates = sorted(
+            target
+            for target in candidates
+            if target not in blocked
+            and target in self._agents
+            and (
+                not capabilities
+                or any(
+                    capability in self._agents[target].capabilities
+                    for capability in capabilities
+                )
+            )
+        )
 
+        if not candidates:
+            return []
         results: list[AgentDiscoveryRecord] = []
         for target in candidates:
-            if target not in self._agents:
-                continue
-
-            status = await self._redis.hget(f"agent:{target}", "status")
-            if status != "ACTIVE":
+            if not await self._leases.active(target):
                 continue
 
             definition = self._agents[target]
-            if capabilities and not any(
-                capability in definition.capabilities for capability in capabilities
-            ):
-                continue
 
             results.append(
                 {
                     "id": definition.agent_id,
                     "capabilities": list(definition.capabilities),
-                    "metadata": dict(definition.metadata),
-                    "status": status,
+                    "metadata": definition.metadata.copy(),
+                    "status": "ACTIVE",
                 }
             )
 

@@ -1,0 +1,6 @@
+node_modules
+src/lib/contracts.ts
+src/lib/contracts.schema.json
+src/lib/validators.js
+src/lib/validators.d.ts
+tests/fixtures.json

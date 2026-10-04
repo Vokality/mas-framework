@@ -1,18 +1,25 @@
-"""Circuit Breaker Module - Detect and handle target agent failures."""
+"""Circuit breaker state transitions coordinated across broker instances."""
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import time
 from collections.abc import Callable, Mapping
 from enum import StrEnum
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from mas_core import JsonObject
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, TypeAdapter
 from redis.asyncio import Redis
+from redis.asyncio.client import Pipeline
+from redis.exceptions import RedisError, WatchError
 
 logger = logging.getLogger(__name__)
+_HASH_ADAPTER = TypeAdapter(dict[str, str])
+_STREAM_ADAPTER = TypeAdapter(list[tuple[str, dict[str, str]]])
+_STRING_ADAPTER = TypeAdapter(str)
 
 
 class DLQMessage(TypedDict):
@@ -28,531 +35,215 @@ class DLQMessage(TypedDict):
 class CircuitState(StrEnum):
     """Circuit breaker states."""
 
-    CLOSED = "closed"  # Normal operation, requests pass through
-    OPEN = "open"  # Circuit tripped, requests blocked
-    HALF_OPEN = "half_open"  # Testing if service recovered
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
 
 
 class CircuitBreakerConfig(BaseModel):
-    """Circuit breaker configuration."""
+    """Positive thresholds and finite timeout/window durations."""
 
-    failure_threshold: int = 5  # Failures before opening circuit
-    success_threshold: int = 2  # Successes to close from half-open
-    timeout_seconds: float = 60.0  # Time before trying half-open
-    window_seconds: float = 300.0  # Rolling window (matches CircuitBreakerSettings)
+    failure_threshold: int = Field(default=5, ge=1)
+    success_threshold: int = Field(default=2, ge=1)
+    timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    window_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
 
 
 class CircuitStatus(BaseModel):
-    """Current circuit breaker status."""
+    """Validated circuit state and its admission decision."""
 
-    state: CircuitState
-    failure_count: int
-    success_count: int
-    last_failure_time: float | None = None
-    opened_at: float | None = None
-    allowed: bool  # Whether message is allowed through
+    state: CircuitState = CircuitState.CLOSED
+    failure_count: int = Field(default=0, ge=0)
+    success_count: int = Field(default=0, ge=0)
+    last_failure_time: float | None = Field(default=None, allow_inf_nan=False)
+    opened_at: float | None = Field(default=None, allow_inf_nan=False)
+    allowed: bool = True
 
 
 class CircuitBreakerModule:
-    """
-    Circuit Breaker module for handling target agent failures.
-
-    Implements the circuit breaker pattern as per GATEWAY.md:
-    - Monitor target agent health (response rate, error rate)
-    - Open circuit after N failures (stop forwarding messages)
-    - Half-open state (trial messages to test recovery)
-    - Auto-recovery after timeout
-    - Dead Letter Queue (DLQ) for failed messages
-
-    States:
-    - CLOSED: Normal operation, all messages pass through
-    - OPEN: Circuit tripped, messages are blocked/queued
-    - HALF_OPEN: Testing recovery, limited messages pass through
-
-    Usage:
-        breaker = CircuitBreakerModule(redis, config)
-        status = await breaker.check_circuit(target_id)
-        if status.allowed:
-            # Send message
-            await breaker.record_success(target_id)
-        else:
-            # Route to DLQ
-            await breaker.record_failure(target_id, reason)
-    """
+    """Persist circuit transitions with optimistic locking across instances."""
 
     def __init__(
         self,
-        redis: Redis[str],
+        redis: Redis,
         config: CircuitBreakerConfig,
         *,
         clock: Callable[[], float] = time.time,
-    ):
-        """
-        Initialize circuit breaker module.
-
-        Args:
-            redis: Redis connection
-            config: Circuit breaker configuration
-            clock: Wall-clock/epoch time source in seconds (e.g. ``time.time``).
-                Timestamps are persisted to Redis and compared as absolute values
-                across processes, so a per-process monotonic clock must NOT be
-                used. Injectable so timeout/window transitions can be driven
-                deterministically in tests; defaults to ``time.time``.
-        """
-        self.redis: Redis[str] = redis
+    ) -> None:
+        self.redis = redis
         self.config = config
         self._clock = clock
 
-    def _parse_circuit_data(
-        self, circuit_data: Mapping[str, str]
-    ) -> tuple[CircuitState, int, int, float | None, float | None]:
-        """Parse Redis circuit data into typed values."""
-        state = CircuitState(circuit_data.get("state", CircuitState.CLOSED.value))
-        failure_count = int(circuit_data.get("failure_count", 0))
-        success_count = int(circuit_data.get("success_count", 0))
-        last_failure_time_raw = circuit_data.get("last_failure_time")
-        opened_at_raw = circuit_data.get("opened_at")
-
-        last_failure_time = (
-            float(last_failure_time_raw) if last_failure_time_raw else None
-        )
-        opened_at = float(opened_at_raw) if opened_at_raw else None
-        return state, failure_count, success_count, last_failure_time, opened_at
-
-    def _maybe_transition_half_open(
-        self,
-        state: CircuitState,
-        opened_at: float | None,
-        success_count: int,
-        current_time: float,
-    ) -> tuple[CircuitState, int, bool]:
-        """Transition OPEN to HALF_OPEN when timeout expires."""
-        if (
-            state == CircuitState.OPEN
-            and opened_at
-            and (current_time - opened_at) >= self.config.timeout_seconds
-        ):
-            return CircuitState.HALF_OPEN, 0, True
-        return state, success_count, False
-
-    def _next_failure_count(
-        self,
-        *,
-        has_data: bool,
-        last_failure_time: float | None,
-        current_time: float,
-        failure_count: int,
-    ) -> int:
-        """Compute the next failure count based on windowing."""
-        if not has_data:
-            return 1
-        if last_failure_time and (
-            current_time - last_failure_time > self.config.window_seconds
-        ):
-            return 1
-        return failure_count + 1
-
     @staticmethod
-    def _default_status() -> CircuitStatus:
-        """Return default closed circuit status."""
-        return CircuitStatus(
-            state=CircuitState.CLOSED,
-            failure_count=0,
-            success_count=0,
-            allowed=True,
-        )
+    def _status_from_data(raw: Mapping[str, str]) -> CircuitStatus:
+        """Validate persisted values before applying circuit rules."""
+        fields: dict[str, object] = dict(raw)
+        for name in ("last_failure_time", "opened_at"):
+            if fields.get(name) == "":
+                fields[name] = None
+        status = CircuitStatus.model_validate(fields)
+        status.allowed = status.state != CircuitState.OPEN
+        return status
 
     async def check_circuit(self, target_id: str) -> CircuitStatus:
-        """
-        Check circuit breaker state for target agent.
+        """Check admission, persisting timeout transitions when necessary."""
+        checked, _ = await self._apply_event(target_id, "check")
+        return checked
 
-        Args:
-            target_id: Target agent ID
+    def queue_check(self, pipeline: Pipeline, target_id: str) -> None:
+        """Queue a read-only admission snapshot on an unwatched pipeline."""
+        if pipeline.watching:
+            raise ValueError("admission checks require an unwatched pipeline")
+        pipeline.hgetall(f"circuit:{target_id}")
 
-        Returns:
-            Circuit status with state and whether message is allowed
-        """
-        circuit_key = f"circuit:{target_id}"
-        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
-
-        if not circuit_data:
-            # No circuit data, default to CLOSED
-            return self._default_status()
-
-        state, failure_count, success_count, last_failure_time, opened_at = (
-            self._parse_circuit_data(circuit_data)
-        )
-
-        current_time = self._clock()
-
-        # State transitions
-        state, success_count, transitioned = self._maybe_transition_half_open(
-            state, opened_at, success_count, current_time
-        )
-        if transitioned:
-            await self._update_state(target_id, state, failure_count, success_count)
-            logger.info(
-                f"Circuit breaker HALF_OPEN for {target_id} after timeout",
-                extra={"target_id": target_id, "state": state},
-            )
-
-        # Determine if message is allowed
-        allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
-
-        return CircuitStatus(
-            state=state,
-            failure_count=failure_count,
-            success_count=success_count,
-            last_failure_time=last_failure_time,
-            opened_at=opened_at,
-            allowed=allowed,
-        )
+    async def resolve_check(self, raw: object, target_id: str) -> CircuitStatus:
+        """Validate a queued read and recheck current state before a transition."""
+        if isinstance(raw, RedisError):
+            raise raw
+        original = self._status_from_data(_HASH_ADAPTER.validate_python(raw))
+        checked, recorded = self._transition(original, "check")
+        if recorded == original:
+            return checked
+        return await self.check_circuit(target_id)
 
     async def record_success(self, target_id: str) -> CircuitStatus:
-        """
-        Record successful message delivery to target.
-
-        Args:
-            target_id: Target agent ID
-
-        Returns:
-            Updated circuit status
-        """
-        circuit_key = f"circuit:{target_id}"
-        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
-
-        if not circuit_data:
-            # No circuit data, initialize
-            return self._default_status()
-
-        state, failure_count, success_count, _last_failure_time, _opened_at = (
-            self._parse_circuit_data(circuit_data)
-        )
-
-        if state == CircuitState.HALF_OPEN:
-            success_count += 1
-
-            # Check if we've had enough successes to close circuit
-            if success_count >= self.config.success_threshold:
-                state = CircuitState.CLOSED
-                failure_count = 0
-                success_count = 0
-                logger.info(
-                    "Circuit breaker CLOSED for %s after %s successes",
-                    target_id,
-                    self.config.success_threshold,
-                    extra={"target_id": target_id, "state": state},
-                )
-
-            await self._update_state(target_id, state, failure_count, success_count)
-
-        elif state == CircuitState.CLOSED:
-            # Reset failure count on success in closed state
-            if failure_count > 0:
-                failure_count = 0
-                await self._update_state(target_id, state, failure_count, success_count)
-
-        return CircuitStatus(
-            state=state,
-            failure_count=failure_count,
-            success_count=success_count,
-            allowed=state != CircuitState.OPEN,
-        )
-
-    async def check_and_record_success(
-        self, target_id: str
-    ) -> tuple[CircuitStatus, CircuitStatus]:
-        """
-        Check circuit and record success in one operation.
-
-        This method combines check_circuit and record_success to avoid
-        the double-fetch pattern where both methods read the same data.
-        Uses a single hgetall call instead of two.
-
-        Args:
-            target_id: Target agent ID
-
-        Returns:
-            Tuple of (check_status, record_status)
-        """
-        circuit_key = f"circuit:{target_id}"
-        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
-
-        if not circuit_data:
-            # No circuit data, default to CLOSED - no need to record
-            status = self._default_status()
-            return status, status
-
-        state, failure_count, success_count, last_failure_time, opened_at = (
-            self._parse_circuit_data(circuit_data)
-        )
-
-        current_time = self._clock()
-
-        # State transitions for check
-        state, success_count, _transitioned = self._maybe_transition_half_open(
-            state, opened_at, success_count, current_time
-        )
-
-        allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
-
-        check_status = CircuitStatus(
-            state=state,
-            failure_count=failure_count,
-            success_count=success_count,
-            last_failure_time=last_failure_time,
-            opened_at=opened_at,
-            allowed=allowed,
-        )
-
-        # Now record success if allowed
-        if not allowed:
-            return check_status, check_status
-
-        if state == CircuitState.HALF_OPEN:
-            success_count += 1
-            if success_count >= self.config.success_threshold:
-                state = CircuitState.CLOSED
-                failure_count = 0
-                success_count = 0
-            await self._update_state(target_id, state, failure_count, success_count)
-        elif state == CircuitState.CLOSED and failure_count > 0:
-            failure_count = 0
-            await self._update_state(target_id, state, failure_count, success_count)
-
-        record_status = CircuitStatus(
-            state=state,
-            failure_count=failure_count,
-            success_count=success_count,
-            allowed=state != CircuitState.OPEN,
-        )
-
-        return check_status, record_status
-
-    async def check_and_record_failure(
-        self, target_id: str, reason: str = "unknown"
-    ) -> tuple[CircuitStatus, CircuitStatus]:
-        """
-        Check circuit and record failure in one operation.
-
-        This method combines check_circuit and record_failure to avoid
-        the double-fetch pattern where both methods read the same data.
-        Uses a single hgetall call instead of two.
-
-        Args:
-            target_id: Target agent ID
-            reason: Failure reason
-
-        Returns:
-            Tuple of (check_status, record_status)
-        """
-        circuit_key = f"circuit:{target_id}"
-        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
-
-        current_time = self._clock()
-        opened_at: float | None = None
-        has_data = bool(circuit_data)
-
-        if not circuit_data:
-            state = CircuitState.CLOSED
-            failure_count = 1
-            success_count = 0
-            last_failure_time = None
-        else:
-            state, failure_count, success_count, last_failure_time, opened_at = (
-                self._parse_circuit_data(circuit_data)
-            )
-
-            # State transition for check (OPEN -> HALF_OPEN after timeout)
-            state, success_count, _transitioned = self._maybe_transition_half_open(
-                state, opened_at, success_count, current_time
-            )
-
-        allowed = state == CircuitState.CLOSED or state == CircuitState.HALF_OPEN
-
-        check_status = CircuitStatus(
-            state=state,
-            failure_count=failure_count,
-            success_count=success_count,
-            last_failure_time=last_failure_time,
-            opened_at=opened_at,
-            allowed=allowed,
-        )
-
-        # Now record failure
-        failure_count = self._next_failure_count(
-            has_data=has_data,
-            last_failure_time=last_failure_time,
-            current_time=current_time,
-            failure_count=failure_count,
-        )
-
-        # Check if we should open circuit
-        if (
-            state == CircuitState.CLOSED
-            and failure_count >= self.config.failure_threshold
-        ):
-            state = CircuitState.OPEN
-            opened_at = current_time
-            logger.warning(
-                f"Circuit breaker OPEN for {target_id} after {failure_count} failures",
-                extra={
-                    "target_id": target_id,
-                    "state": state,
-                    "failure_count": failure_count,
-                    "reason": reason,
-                },
-            )
-        elif state == CircuitState.HALF_OPEN:
-            state = CircuitState.OPEN
-            opened_at = current_time
-            logger.warning(
-                f"Circuit breaker back to OPEN for {target_id} (half-open test failed)",
-                extra={"target_id": target_id, "state": state, "reason": reason},
-            )
-
-        # Update circuit state
-        await self.redis.hset(
-            circuit_key,
-            mapping={
-                "state": state.value,
-                "failure_count": str(failure_count),
-                "success_count": str(success_count),
-                "last_failure_time": str(current_time),
-                "opened_at": str(opened_at) if opened_at else "",
-            },
-        )
-        await self.redis.expire(circuit_key, int(self.config.timeout_seconds * 2))
-
-        record_status = CircuitStatus(
-            state=state,
-            failure_count=failure_count,
-            success_count=success_count,
-            last_failure_time=current_time,
-            opened_at=opened_at,
-            allowed=state != CircuitState.OPEN,
-        )
-
-        return check_status, record_status
+        """Record a successful delivery without losing concurrent events."""
+        _, recorded = await self._apply_event(target_id, "success")
+        return recorded
 
     async def record_failure(
         self, target_id: str, reason: str = "unknown"
     ) -> CircuitStatus:
-        """
-        Record failed message delivery to target.
+        """Record a failed delivery without losing concurrent events."""
+        _, recorded = await self._apply_event(target_id, "failure", reason)
+        return recorded
 
-        Args:
-            target_id: Target agent ID
-            reason: Failure reason
+    async def check_and_record_success(
+        self, target_id: str
+    ) -> tuple[CircuitStatus, CircuitStatus]:
+        """Return the admission and successful-delivery states atomically."""
+        return await self._apply_event(target_id, "success")
 
-        Returns:
-            Updated circuit status
-        """
-        circuit_key = f"circuit:{target_id}"
-        circuit_data = self._normalize_hash(await self.redis.hgetall(circuit_key))
+    async def check_and_record_failure(
+        self, target_id: str, reason: str = "unknown"
+    ) -> tuple[CircuitStatus, CircuitStatus]:
+        """Return the admission and failed-delivery states atomically."""
+        return await self._apply_event(target_id, "failure", reason)
 
-        current_time = self._clock()
-        opened_at: float | None = None
-        has_data = bool(circuit_data)
-
-        if not circuit_data:
-            # Initialize circuit data
-            state = CircuitState.CLOSED
-            failure_count = 1
-            success_count = 0
-            last_failure_time = None
-        else:
-            state, failure_count, success_count, last_failure_time, opened_at = (
-                self._parse_circuit_data(circuit_data)
-            )
-
-        # Check if failures are within window
-        failure_count = self._next_failure_count(
-            has_data=has_data,
-            last_failure_time=last_failure_time,
-            current_time=current_time,
-            failure_count=failure_count,
-        )
-
-        # Check if we should open circuit
+    def _transition(
+        self,
+        original: CircuitStatus,
+        event: Literal["check", "success", "failure"],
+    ) -> tuple[CircuitStatus, CircuitStatus]:
+        """Apply the configured rules to a validated state snapshot."""
+        checked = original.model_copy()
+        now = self._clock()
         if (
-            state == CircuitState.CLOSED
-            and failure_count >= self.config.failure_threshold
+            checked.state == CircuitState.OPEN
+            and checked.opened_at is not None
+            and now - checked.opened_at >= self.config.timeout_seconds
         ):
-            state = CircuitState.OPEN
-            opened_at = current_time
-            logger.warning(
-                f"Circuit breaker OPEN for {target_id} after {failure_count} failures",
-                extra={
-                    "target_id": target_id,
-                    "state": state,
-                    "failure_count": failure_count,
-                    "reason": reason,
-                },
-            )
-        elif state == CircuitState.HALF_OPEN:
-            # Failure in half-open means back to open
-            state = CircuitState.OPEN
-            opened_at = current_time
-            logger.warning(
-                f"Circuit breaker back to OPEN for {target_id} (half-open test failed)",
-                extra={"target_id": target_id, "state": state, "reason": reason},
-            )
-        else:
-            opened_at = opened_at if has_data else None
+            checked.state = CircuitState.HALF_OPEN
+            checked.success_count = 0
+            checked.allowed = True
 
-        # Update circuit state
-        await self.redis.hset(
-            circuit_key,
-            mapping={
-                "state": state.value,
-                "failure_count": str(failure_count),
-                "success_count": str(success_count),
-                "last_failure_time": str(current_time),
-                "opened_at": str(opened_at) if opened_at else "",
-            },
-        )
+        recorded = checked.model_copy()
+        if event == "success" and recorded.allowed:
+            if recorded.state == CircuitState.HALF_OPEN:
+                recorded.success_count += 1
+                if recorded.success_count >= self.config.success_threshold:
+                    recorded.state = CircuitState.CLOSED
+                    recorded.failure_count = 0
+                    recorded.success_count = 0
+                    recorded.last_failure_time = None
+                    recorded.opened_at = None
+            elif recorded.failure_count:
+                recorded.failure_count = 0
+                recorded.last_failure_time = None
+        elif event == "failure":
+            if (
+                recorded.last_failure_time is None
+                or now - recorded.last_failure_time > self.config.window_seconds
+            ):
+                recorded.failure_count = 0
+            recorded.failure_count += 1
+            recorded.last_failure_time = now
+            if recorded.state == CircuitState.HALF_OPEN or (
+                recorded.state == CircuitState.CLOSED
+                and recorded.failure_count >= self.config.failure_threshold
+            ):
+                recorded.state = CircuitState.OPEN
+                recorded.opened_at = now
+                recorded.success_count = 0
+        recorded.allowed = recorded.state != CircuitState.OPEN
+        return checked, recorded
 
-        # Set TTL to cleanup old circuits
-        await self.redis.expire(circuit_key, int(self.config.timeout_seconds * 2))
-
-        return CircuitStatus(
-            state=state,
-            failure_count=failure_count,
-            success_count=success_count,
-            last_failure_time=current_time,
-            opened_at=opened_at,
-            allowed=state != CircuitState.OPEN,
-        )
-
-    async def _update_state(
+    async def _apply_event(
         self,
         target_id: str,
-        state: CircuitState,
-        failure_count: int,
-        success_count: int,
-    ) -> None:
-        """
-        Update circuit breaker state in Redis.
+        event: Literal["check", "success", "failure"],
+        reason: str = "unknown",
+    ) -> tuple[CircuitStatus, CircuitStatus]:
+        """Observe unchanged states once; serialize mutations across brokers."""
+        key = f"circuit:{target_id}"
+        raw = await self.redis.hgetall(key)
+        original = self._status_from_data(_HASH_ADAPTER.validate_python(raw))
+        checked, recorded = self._transition(original, event)
+        if recorded == original:
+            return checked, recorded
 
-        Args:
-            target_id: Target agent ID
-            state: New state
-            failure_count: Current failure count
-            success_count: Current success count
-        """
-        circuit_key = f"circuit:{target_id}"
-        await self.redis.hset(
-            circuit_key,
-            mapping={
-                "state": state.value,
-                "failure_count": str(failure_count),
-                "success_count": str(success_count),
-            },
-        )
+        while True:
+            async with self.redis.pipeline() as pipe:
+                try:
+                    await pipe.watch(key)
+                    raw = await pipe.hgetall(key)
+                    original = self._status_from_data(
+                        _HASH_ADAPTER.validate_python(raw)
+                    )
+                    checked, recorded = self._transition(original, event)
 
-        # Set TTL
-        await self.redis.expire(circuit_key, int(self.config.timeout_seconds * 2))
+                    if recorded == original:
+                        return checked, recorded
+
+                    pipe.multi()
+                    pipe.hset(
+                        key,
+                        mapping={
+                            "state": recorded.state.value,
+                            "failure_count": str(recorded.failure_count),
+                            "success_count": str(recorded.success_count),
+                            "last_failure_time": (
+                                str(recorded.last_failure_time)
+                                if recorded.last_failure_time is not None
+                                else ""
+                            ),
+                            "opened_at": (
+                                str(recorded.opened_at)
+                                if recorded.opened_at is not None
+                                else ""
+                            ),
+                        },
+                    )
+                    pipe.expire(
+                        key,
+                        math.ceil(
+                            max(
+                                self.config.window_seconds,
+                                self.config.timeout_seconds * 2,
+                            )
+                        ),
+                    )
+                    await pipe.execute()
+                    if recorded.state != original.state:
+                        logger.info(
+                            "Circuit breaker changed from %s to %s",
+                            original.state,
+                            recorded.state,
+                            extra={"target_id": target_id, "reason": reason},
+                        )
+                    return checked, recorded
+                except WatchError:
+                    continue
 
     async def reset_circuit(self, target_id: str) -> None:
         """
@@ -568,20 +259,30 @@ class CircuitBreakerModule:
             extra={"target_id": target_id},
         )
 
-    async def get_all_circuits(self) -> dict[str, CircuitStatus]:
+    async def get_all_circuits(
+        self, *, limit: int | None = None
+    ) -> dict[str, CircuitStatus]:
         """
         Get status of all circuit breakers.
 
         Returns:
             Dictionary mapping target_id to circuit status
         """
+        if limit is not None and limit <= 0:
+            raise ValueError("circuit listing limit must be positive")
         circuits: dict[str, CircuitStatus] = {}
         pattern = "circuit:*"
 
-        async for key in self.redis.scan_iter(match=pattern):
-            target_id = key.replace("circuit:", "")
-            status = await self.check_circuit(target_id)
+        async for raw_key in self.redis.scan_iter(match=pattern):
+            key = _STRING_ADAPTER.validate_python(raw_key)
+            target_id = key.removeprefix("circuit:")
+            raw = await self.redis.hgetall(key)
+            if not raw:
+                continue
+            status = self._status_from_data(_HASH_ADAPTER.validate_python(raw))
             circuits[target_id] = status
+            if limit is not None and len(circuits) >= limit:
+                break
 
         return circuits
 
@@ -604,7 +305,7 @@ class CircuitBreakerModule:
             {
                 "message_id": message_id,
                 "target_id": target_id,
-                "payload": str(payload),
+                "payload": json.dumps(payload),
                 "reason": reason,
                 "timestamp": str(self._clock()),
             },
@@ -630,7 +331,9 @@ class CircuitBreakerModule:
             List of DLQ messages
         """
         dlq_key = "dlq:messages"
-        messages = await self.redis.xrange(dlq_key, "-", "+", count=count)
+        messages = _STREAM_ADAPTER.validate_python(
+            await self.redis.xrange(dlq_key, "-", "+", count=count)
+        )
 
         result: list[DLQMessage] = []
         for msg_id, msg_data in messages:
@@ -648,10 +351,3 @@ class CircuitBreakerModule:
             )
 
         return result
-
-    @staticmethod
-    def _normalize_hash(raw: Mapping[str, str] | None) -> dict[str, str]:
-        """Normalize Redis hash responses to a plain dict."""
-        if not raw:
-            return {}
-        return dict(raw)

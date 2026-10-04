@@ -71,49 +71,44 @@ class MessagingMixin(AgentCore):
             stub = self._require_stub()
 
             effective_timeout = DEFAULT_REQUEST_TIMEOUT if timeout is None else timeout
-            if effective_timeout <= 0:
-                raise ValueError("request timeout must be greater than 0")
+            if not math.isfinite(effective_timeout) or effective_timeout <= 0:
+                raise ValueError("request timeout must be finite and greater than 0")
             timeout_ms = math.ceil(effective_timeout * 1000)
-            resp = await stub.Request(
-                mas_pb2.RequestRequest(
-                    target_id=target_id,
-                    message_type=message_type,
-                    data_json=json.dumps(dict(data)),
-                    timeout_ms=timeout_ms,
-                    instance_id=self.instance_id,
-                ),
-                metadata=telemetry.grpc_metadata(),
-            )
+            if timeout_ms > 2_147_483_647:
+                raise ValueError("request timeout exceeds the protocol limit")
+            async with asyncio.timeout(effective_timeout):
+                resp = await stub.Request(
+                    mas_pb2.RequestRequest(
+                        target_id=target_id,
+                        message_type=message_type,
+                        data_json=json.dumps(dict(data)),
+                        timeout_ms=timeout_ms,
+                        instance_id=self.instance_id,
+                    ),
+                    metadata=telemetry.grpc_metadata(),
+                )
 
-            loop = asyncio.get_running_loop()
-            fut: asyncio.Future[AgentMessage] = loop.create_future()
-            self._pending_requests[resp.correlation_id] = PendingRequest(
-                future=fut, target_id=target_id
-            )
+                loop = asyncio.get_running_loop()
+                fut: asyncio.Future[AgentMessage] = loop.create_future()
+                self._pending_requests[resp.correlation_id] = PendingRequest(
+                    future=fut, target_id=target_id
+                )
 
-            # A reply may have raced ahead of this registration. Claim it
-            # regardless of buffer age (expire=False) — this request owns the
-            # correlation id, so even a reply buffered during a slow round-trip
-            # is still the right one — but only if it came from the agent we sent
-            # the request to (see _reply_authorized; a spoof is dropped, leaving
-            # us to await the legitimate reply or time out).
-            early = self._early_replies.pop(resp.correlation_id, None, expire=False)
-            if (
-                early is not None
-                and not fut.done()
-                and self._reply_authorized(early, target_id, source="early_reply")
-            ):
-                fut.set_result(early)
+                # A reply can arrive before the submission RPC returns.
+                early = self._early_replies.pop(resp.correlation_id, None, expire=False)
+                if (
+                    early is not None
+                    and not fut.done()
+                    and self._reply_authorized(early, target_id, source="early_reply")
+                ):
+                    fut.set_result(early)
 
-            try:
-                return await asyncio.wait_for(fut, effective_timeout)
-            finally:
-                # Always clear this request's correlation slot. The future may be
-                # done (early reply) or pending (timeout/cancel), and keeping it
-                # around leaks memory over long runtimes.
-                pending = self._pending_requests.get(resp.correlation_id)
-                if pending is not None and pending.future is fut:
-                    self._pending_requests.pop(resp.correlation_id, None)
+                try:
+                    return await fut
+                finally:
+                    pending = self._pending_requests.get(resp.correlation_id)
+                    if pending is not None and pending.future is fut:
+                        self._pending_requests.pop(resp.correlation_id, None)
 
     async def send_reply_envelope(
         self, original: AgentMessage, message_type: str, payload: JsonObject

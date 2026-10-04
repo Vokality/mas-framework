@@ -1,0 +1,495 @@
+{
+  "acceptance_finished_at_utc": "2026-10-04T15:19:40.410438+00:00",
+  "acceptance_interval_seconds": 60.0662678090157,
+  "accepted_messages": 61200,
+  "accepted_rate": 1018.8749049573952,
+  "acl_shortcut_present": false,
+  "actual_redis_replica_processes": 2,
+  "audit_capacity": 200000,
+  "broker_count": 2,
+  "broker_exit_codes": [
+    0,
+    0
+  ],
+  "broker_mode": "process",
+  "broker_process_ids": [
+    62,
+    88
+  ],
+  "concurrent_sends": 300,
+  "consumer_count": 2,
+  "cpu": "aarch64",
+  "cpu_cores": 16,
+  "cpu_measurement_scope": "load_driver",
+  "delivery_consumers": {
+    "24b44da8": {
+      "deliveries": 29258,
+      "inflight_max": 198,
+      "inflight_p95": 189.0,
+      "outbound_queue_max": 185,
+      "outbound_queue_p95": 137.0
+    },
+    "e3713b65": {
+      "deliveries": 31942,
+      "inflight_max": 200,
+      "inflight_p95": 188.0,
+      "outbound_queue_max": 187,
+      "outbound_queue_p95": 121.0
+    }
+  },
+  "delivery_latency": {
+    "outbound_queue": {
+      "count": 61200,
+      "mean_ms": 73.2714723359477,
+      "p95_ms": 211.546752
+    },
+    "outbound_to_handler": {
+      "count": 61200,
+      "mean_ms": 77.94480439915033,
+      "p95_ms": 218.163537
+    },
+    "receive_to_handler": {
+      "count": 61200,
+      "mean_ms": 0.10842857537581699,
+      "p95_ms": 0.236877
+    },
+    "rpc_start_to_handler": {
+      "count": 61200,
+      "mean_ms": 149.907300779693,
+      "p95_ms": 367.97853000462055
+    },
+    "scheduled_to_rpc_start": {
+      "count": 61200,
+      "mean_ms": 2.8557627418898717,
+      "p95_ms": 5.465508089400828
+    },
+    "stream_to_outbound": {
+      "count": 61200,
+      "mean_ms": 24.363881893856206,
+      "p95_ms": 147.365184
+    },
+    "transport_write": {
+      "count": 61200,
+      "mean_ms": 1.3980350609313725,
+      "p95_ms": 3.695982
+    },
+    "write_to_receive": {
+      "count": 61200,
+      "mean_ms": 4.555311252058823,
+      "p95_ms": 12.606707
+    }
+  },
+  "delivery_trace_coverage": {
+    "accepted_messages": 61200,
+    "fully_observed_messages": 61200,
+    "incomplete_messages": 0
+  },
+  "diagnostics_enabled": false,
+  "duplicate_deliveries": 0,
+  "duration_seconds": 60.0,
+  "elapsed_seconds": 60.066255143028684,
+  "end_to_end_p95_ms": 381.85029255691916,
+  "envelope_bytes_sample": 420,
+  "errors": {},
+  "event_loop_lag_count": 5468,
+  "event_loop_lag_interval_ms": 10,
+  "event_loop_lag_max_ms": 129.05599200166762,
+  "event_loop_lag_p95_ms": 3.1351690413430333,
+  "event_loop_lag_samples_retained": 5468,
+  "event_loop_thread_cpu_percent": 37.95058375938998,
+  "event_loop_thread_cpu_seconds": 22.795499276,
+  "exported_broker_messages": 61200,
+  "exported_handler_messages": 61200,
+  "exported_service_spans": {
+    "mas-load-broker-0": {
+      "mas.gateway.audit.append_batch": 7002,
+      "mas.gateway.audit.commit_batch": 3972,
+      "mas.gateway.audit.confirm_batch": 3972,
+      "mas.gateway.audit.log_message": 30601,
+      "mas.rpc.get_state": 3,
+      "mas.rpc.send": 30601,
+      "mas.rpc.transport": 3,
+      "mas.server.delivery.deliver_entry": 29258,
+      "mas.server.delivery.handle_ack": 29258,
+      "mas.server.ingress.send": 30601,
+      "mas.server.policy.check_admission": 30600,
+      "mas.server.policy.ingest": 30601,
+      "mas.server.start": 1,
+      "mas.server.stop": 1,
+      "mas.server.transport.write": 29258
+    },
+    "mas-load-broker-1": {
+      "mas.gateway.audit.append_batch": 7315,
+      "mas.gateway.audit.commit_batch": 4368,
+      "mas.gateway.audit.confirm_batch": 4368,
+      "mas.gateway.audit.log_message": 30600,
+      "mas.rpc.get_state": 2,
+      "mas.rpc.send": 30600,
+      "mas.rpc.transport": 2,
+      "mas.server.delivery.deliver_entry": 31942,
+      "mas.server.delivery.handle_ack": 31942,
+      "mas.server.ingress.send": 30600,
+      "mas.server.policy.check_admission": 30600,
+      "mas.server.policy.ingest": 30600,
+      "mas.server.start": 1,
+      "mas.server.stop": 1,
+      "mas.server.transport.write": 31942
+    },
+    "mas-load-driver": {
+      "mas.agent.handle_message": 61200,
+      "mas.agent.load_state": 5,
+      "mas.agent.send": 61201,
+      "mas.agent.start": 5,
+      "mas.agent.stop": 5,
+      "mas.agent.transport.receive": 61200,
+      "mas.agent.transport_loop": 5
+    }
+  },
+  "exported_spans": {
+    "mas.agent.handle_message": 61200,
+    "mas.agent.load_state": 5,
+    "mas.agent.send": 61201,
+    "mas.agent.start": 5,
+    "mas.agent.stop": 5,
+    "mas.agent.transport.receive": 61200,
+    "mas.agent.transport_loop": 5,
+    "mas.gateway.audit.append_batch": 14317,
+    "mas.gateway.audit.commit_batch": 8340,
+    "mas.gateway.audit.confirm_batch": 8340,
+    "mas.gateway.audit.log_message": 61201,
+    "mas.rpc.get_state": 5,
+    "mas.rpc.send": 61201,
+    "mas.rpc.transport": 5,
+    "mas.server.delivery.deliver_entry": 61200,
+    "mas.server.delivery.handle_ack": 61200,
+    "mas.server.ingress.send": 61201,
+    "mas.server.policy.check_admission": 61200,
+    "mas.server.policy.ingest": 61201,
+    "mas.server.start": 2,
+    "mas.server.stop": 2,
+    "mas.server.transport.write": 61200
+  },
+  "fleet_observation": {
+    "alerts": [
+      {
+        "alert_id": "latency_slo",
+        "detail": "Measured 369ms; target 300ms",
+        "kind": "latency_slo",
+        "opened_at": 1791127135.3787673,
+        "resolved_at": null,
+        "severity": "warning",
+        "status": "active",
+        "title": "Delivery p95 exceeds target",
+        "updated_at": 1791127180.9572392
+      }
+    ],
+    "brokers": [
+      {
+        "age_seconds": 0.03458118438720703,
+        "fresh": true,
+        "observation": {
+          "broker_id": "7106458d66804489ab1b9aecccabdfdd",
+          "counters": {
+            "accepted_messages": 30600,
+            "delivery_acks": 31942,
+            "delivery_nacks": 0,
+            "dropped_scope_updates": 0,
+            "dropped_spans": 0,
+            "redis_errors": 0,
+            "rejected_messages": 0,
+            "scope_complete": true
+          },
+          "exporters": [
+            {
+              "age_seconds": 0.531076192855835,
+              "attempts": 517,
+              "configured": true,
+              "exported_items": 264704,
+              "failures": 0,
+              "last_attempt_at": 1791127180.38122,
+              "last_error": null,
+              "last_success_at": 1791127180.3916607,
+              "signal": "traces",
+              "status": "healthy",
+              "successes": 517
+            },
+            {
+              "age_seconds": 0.5306158065795898,
+              "attempts": 60,
+              "configured": true,
+              "exported_items": 300,
+              "failures": 0,
+              "last_attempt_at": 1791127180.3899136,
+              "last_error": null,
+              "last_success_at": 1791127180.3921726,
+              "signal": "metrics",
+              "status": "healthy",
+              "successes": 60
+            }
+          ],
+          "grpc_address": "127.0.0.1:45075",
+          "instance_id": "c3d36dc2458e47efb42bce5eebc039bf",
+          "issues": [],
+          "management_url": null,
+          "observed_at": 1791127180.922658,
+          "redis_available": true,
+          "redis_latency_ms": 0.4070450086146593,
+          "sequence": 56,
+          "sessions": [],
+          "started_at": 1791127120.1564293,
+          "status": "healthy"
+        },
+        "status": "healthy"
+      },
+      {
+        "age_seconds": 0.3232302665710449,
+        "fresh": true,
+        "observation": {
+          "broker_id": "e99014229aec4eaea8116db6597d9583",
+          "counters": {
+            "accepted_messages": 30600,
+            "delivery_acks": 29258,
+            "delivery_nacks": 0,
+            "dropped_scope_updates": 0,
+            "dropped_spans": 0,
+            "redis_errors": 0,
+            "rejected_messages": 1,
+            "scope_complete": true
+          },
+          "exporters": [
+            {
+              "age_seconds": 0.3168020248413086,
+              "attempts": 499,
+              "configured": true,
+              "exported_items": 255488,
+              "failures": 0,
+              "last_attempt_at": 1791127180.3052127,
+              "last_error": null,
+              "last_success_at": 1791127180.3172238,
+              "signal": "traces",
+              "status": "healthy",
+              "successes": 499
+            },
+            {
+              "age_seconds": 0.3165626525878906,
+              "attempts": 60,
+              "configured": true,
+              "exported_items": 420,
+              "failures": 0,
+              "last_attempt_at": 1791127180.3104665,
+              "last_error": null,
+              "last_success_at": 1791127180.3174772,
+              "signal": "metrics",
+              "status": "healthy",
+              "successes": 60
+            }
+          ],
+          "grpc_address": "127.0.0.1:46631",
+          "instance_id": "c81a206fd56343dc9b731cc063c4bde1",
+          "issues": [],
+          "management_url": null,
+          "observed_at": 1791127180.634009,
+          "redis_available": true,
+          "redis_latency_ms": 0.08362496737390757,
+          "sequence": 48,
+          "sessions": [
+            {
+              "agent_id": "load_worker",
+              "inflight": 0,
+              "instance_id": "24b44da8",
+              "outbound": 0,
+              "worker_running": true
+            }
+          ],
+          "started_at": 1791127119.8100946,
+          "status": "healthy"
+        },
+        "status": "healthy"
+      }
+    ],
+    "complete": true,
+    "generated_at": 1791127180.9572392,
+    "latency_window_seconds": 60,
+    "performance": {
+      "accepted_messages": 60677,
+      "accepted_rate": 1015.4805747927069,
+      "clock_scope": "Rolling delivery window: client send/request/reply span start to handler entry or validated reply receipt. P95 uses 1ms upper-bound bins. Cross-process wall clocks require synchronization. Application scheduling before the send API is outside this interval.",
+      "complete": false,
+      "counter_complete": true,
+      "delivery_acks": 60428,
+      "delivery_nacks": 0,
+      "end_to_end_p95_ms": 369.0,
+      "finished_at": 1791127180.6388953,
+      "latency_coverage": 0.9991265224055244,
+      "latency_samples": 60624,
+      "redis_errors": 0,
+      "rejected_messages": 0,
+      "started_at": 1791127120.8868906
+    },
+    "retention_seconds": 3600,
+    "scope": "Broker heartbeats, accepted-message counters and retained observations are shared through Redis. Missing or stale members reduce coverage. Trace details retain a deterministic sample plus errors, bounded by count and time. Latency includes all successfully correlated retained deliveries; coverage can lag while exported parent spans arrive.",
+    "stale_after_seconds": 5.0,
+    "status": "degraded",
+    "targets": {
+      "accepted_rate": 1000.0,
+      "end_to_end_p95_ms": 300.0
+    },
+    "trace_limit": 10000,
+    "trace_sample_every": 100
+  },
+  "gates": {
+    "all_planned_accepted": true,
+    "broker_isolation": true,
+    "broker_shutdown": true,
+    "broker_tracing_exported": true,
+    "latency": false,
+    "no_accepted_loss": true,
+    "no_rpc_errors": true,
+    "observability_delivery_latency": false,
+    "observability_fleet": true,
+    "observability_history": true,
+    "observability_latency_coverage": true,
+    "observability_traces": true,
+    "rbac_enforced": true,
+    "throughput": true,
+    "tracing_exported": true,
+    "tracing_propagated": true
+  },
+  "host_platform": "Linux-7.0.14-orbstack-00380-ga7e0a2dc9535-aarch64-with-glibc2.41",
+  "latency_limit_ms": 300.0,
+  "lost_accepted_messages": 0,
+  "metric_points": 793,
+  "offered_rate": 1020,
+  "passed": false,
+  "payload_bytes_max": 19,
+  "planned_messages": 61200,
+  "process_cpu_percent": 55.24027122427557,
+  "process_cpu_seconds": 33.180769252,
+  "producer_count": 2,
+  "python_version": "3.14.8",
+  "rbac_denied_probe": true,
+  "received_messages": 61200,
+  "redis_version": "8.10.2",
+  "required_replica_confirmations": 1,
+  "retained_history_points": 62,
+  "retained_trace_details": 30,
+  "sample_ratio": 1.0,
+  "send_rpc_p95_ms": 157.4180698953569,
+  "span_latency": {
+    "mas.agent.handle_message": {
+      "count": 61200,
+      "mean_ms": 0.029628977450980393,
+      "p95_ms": 0.03425
+    },
+    "mas.agent.load_state": {
+      "count": 5,
+      "mean_ms": 4.1306018,
+      "p95_ms": 7.287464
+    },
+    "mas.agent.send": {
+      "count": 61201,
+      "mean_ms": 68.04299046054803,
+      "p95_ms": 157.390904
+    },
+    "mas.agent.start": {
+      "count": 5,
+      "mean_ms": 32.3678114,
+      "p95_ms": 37.142368
+    },
+    "mas.agent.stop": {
+      "count": 5,
+      "mean_ms": 0.41155299999999995,
+      "p95_ms": 0.947631
+    },
+    "mas.agent.transport.receive": {
+      "count": 61200,
+      "mean_ms": 0.009592235767973857,
+      "p95_ms": 0.014
+    },
+    "mas.agent.transport_loop": {
+      "count": 5,
+      "mean_ms": 60199.916191200005,
+      "p95_ms": 60265.198568
+    },
+    "mas.gateway.audit.append_batch": {
+      "count": 14317,
+      "mean_ms": 5.31587908528323,
+      "p95_ms": 11.501451
+    },
+    "mas.gateway.audit.commit_batch": {
+      "count": 8340,
+      "mean_ms": 25.60369388621103,
+      "p95_ms": 50.536288
+    },
+    "mas.gateway.audit.confirm_batch": {
+      "count": 8340,
+      "mean_ms": 10.881200806115107,
+      "p95_ms": 19.000208
+    },
+    "mas.gateway.audit.log_message": {
+      "count": 61201,
+      "mean_ms": 44.52986377431741,
+      "p95_ms": 98.843937
+    },
+    "mas.rpc.get_state": {
+      "count": 5,
+      "mean_ms": 3.5157731999999995,
+      "p95_ms": 6.377667
+    },
+    "mas.rpc.send": {
+      "count": 61201,
+      "mean_ms": 61.57569669212921,
+      "p95_ms": 136.49035
+    },
+    "mas.rpc.transport": {
+      "count": 5,
+      "mean_ms": 60178.247199800004,
+      "p95_ms": 60242.776213
+    },
+    "mas.server.delivery.deliver_entry": {
+      "count": 61200,
+      "mean_ms": 0.015373242303921569,
+      "p95_ms": 0.026083
+    },
+    "mas.server.delivery.handle_ack": {
+      "count": 61200,
+      "mean_ms": 12.617418835571897,
+      "p95_ms": 22.364147
+    },
+    "mas.server.ingress.send": {
+      "count": 61201,
+      "mean_ms": 59.963447887044325,
+      "p95_ms": 133.8115
+    },
+    "mas.server.policy.check_admission": {
+      "count": 61200,
+      "mean_ms": 7.075519212941177,
+      "p95_ms": 15.661185
+    },
+    "mas.server.policy.ingest": {
+      "count": 61201,
+      "mean_ms": 59.89580671779873,
+      "p95_ms": 133.744373
+    },
+    "mas.server.start": {
+      "count": 2,
+      "mean_ms": 36.6128225,
+      "p95_ms": 38.329875
+    },
+    "mas.server.stop": {
+      "count": 2,
+      "mean_ms": 24.6634115,
+      "p95_ms": 37.795122
+    },
+    "mas.server.transport.write": {
+      "count": 61200,
+      "mean_ms": 1.3980350609313725,
+      "p95_ms": 3.695982
+    }
+  },
+  "started_at_utc": "2026-10-04T15:18:40.344151+00:00",
+  "target_rate": 1000,
+  "trace_requests": 1377,
+  "traced_messages": 61200,
+  "wait_for_aof": true
+}

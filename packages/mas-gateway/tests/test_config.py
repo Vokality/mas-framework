@@ -5,6 +5,7 @@ import tempfile
 
 import pytest
 import yaml
+from mas_core.redis_client import RedisPoolSettings
 from mas_gateway.config import (
     CircuitBreakerSettings,
     FeaturesSettings,
@@ -26,6 +27,7 @@ class TestRedisSettings:
 
         assert settings.url == "redis://localhost:6379"
         assert settings.socket_timeout is None
+        assert settings.pool == RedisPoolSettings(512, 5.0)
 
     def test_custom_settings(self):
         """Test custom Redis settings."""
@@ -36,6 +38,29 @@ class TestRedisSettings:
 
         assert settings.url == "redis://prod:6379"
         assert settings.socket_timeout == 30.0
+
+    def test_nested_pool_settings_validate_and_round_trip(self) -> None:
+        settings = RedisSettings.model_validate(
+            {"pool": {"max_connections": 16, "acquire_timeout_seconds": 0.25}}
+        )
+        assert settings.pool == RedisPoolSettings(16, 0.25)
+        assert RedisSettings.model_validate(settings.model_dump()) == settings
+
+    @pytest.mark.parametrize(
+        "pool",
+        [
+            {"max_connections": 0},
+            {"max_connections": 65_537},
+            {"acquire_timeout_seconds": 0},
+            {"acquire_timeout_seconds": float("nan")},
+            {"acquire_timeout_seconds": float("inf")},
+        ],
+    )
+    def test_invalid_nested_pool_settings_fail_closed(
+        self, pool: dict[str, int | float]
+    ) -> None:
+        with pytest.raises(ValueError):
+            RedisSettings.model_validate({"pool": pool})
 
 
 class TestRateLimitSettings:
