@@ -46,8 +46,10 @@ jobs:
           packages/mas-core/tests/test_durability.py
           packages/mas-server/tests/test_multi_broker.py
           packages/mas-server/tests/test_reply_crash_consistency.py
-      - name: Sustained 1k/sec with RBAC and exported tracing
-        run: uv run python -m tools.validate_production --output artifacts/ci-production-load.json
+      - name: Sustained CPU-scaled throughput with RBAC and exported tracing
+        run: >-
+          uv run python -m tools.validate_production --rate-per-cpu 62.5
+          --output artifacts/ci-production-load.json
       - name: Preserve measured acceptance evidence
         if: always()
         uses: actions/upload-artifact@v7.0.1

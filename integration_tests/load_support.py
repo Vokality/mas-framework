@@ -50,7 +50,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 )
 from opentelemetry.trace import get_current_span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from redis.asyncio import Redis
 
 from integration_tests.broker_support import BrokerProcess
@@ -493,6 +493,62 @@ class SpanLatency:
     p95_ms: float | None
 
 
+class CapacityTarget(BaseModel):
+    """Explicit workload scaling policy, independent of CPU model performance."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    basis: Literal["absolute", "per_cpu"]
+    target_rate: int = Field(gt=0)
+    rate_per_cpu: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    usable_cpu_count: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_basis(self) -> CapacityTarget:
+        if self.basis == "per_cpu":
+            if self.rate_per_cpu is None or self.usable_cpu_count is None:
+                raise ValueError(
+                    "per-CPU capacity requires a rate and usable CPU count"
+                )
+            scaled = self.rate_per_cpu * self.usable_cpu_count
+            if not math.isfinite(scaled) or self.target_rate != math.ceil(scaled):
+                raise ValueError("target rate must equal the rounded-up per-CPU rate")
+        elif self.rate_per_cpu is not None:
+            raise ValueError("absolute capacity cannot specify a per-CPU rate")
+        return self
+
+    @classmethod
+    def resolve(
+        cls,
+        *,
+        rate: int | None = None,
+        rate_per_cpu: float | None = None,
+        usable_cpu_count: int | None,
+    ) -> CapacityTarget:
+        """Select the absolute default or round up a known per-CPU budget."""
+        if rate is not None and rate_per_cpu is not None:
+            raise ValueError("rate and rate_per_cpu are mutually exclusive")
+        if rate_per_cpu is None:
+            return cls(
+                basis="absolute",
+                target_rate=1000 if rate is None else rate,
+                usable_cpu_count=usable_cpu_count,
+            )
+        if usable_cpu_count is None or usable_cpu_count <= 0:
+            raise ValueError(
+                "per-CPU capacity requires a known positive usable CPU count"
+            )
+        scaled = rate_per_cpu * usable_cpu_count
+        if not math.isfinite(scaled) or scaled <= 0:
+            raise ValueError("per-CPU capacity must be finite and positive")
+        return cls(
+            basis="per_cpu",
+            target_rate=math.ceil(scaled),
+            rate_per_cpu=rate_per_cpu,
+            usable_cpu_count=usable_cpu_count,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class LoadReport:
     """Self-contained measured evidence and explicit acceptance gates."""
@@ -528,6 +584,7 @@ class LoadReport:
     duration_seconds: float
     elapsed_seconds: float
     target_rate: int
+    capacity: CapacityTarget
     latency_limit_ms: float
     offered_rate: int
     accepted_rate: float
@@ -566,6 +623,7 @@ class LoadReport:
     def as_dict(self) -> dict[str, object]:
         """Return clean report data for JSON output."""
         data = asdict(self)
+        data["capacity"] = self.capacity.model_dump(mode="json")
         data["fleet_observation"] = self.fleet_observation.model_dump(mode="json")
         return TypeAdapter(dict[str, object]).validate_python(data)
 
@@ -595,6 +653,7 @@ async def run_sustained_load(
     latency_limit_ms: float = 300,
     diagnostics: bool = False,
     broker_mode: Literal["process", "in_process"] = "process",
+    capacity: CapacityTarget | None = None,
 ) -> LoadReport:
     """Exercise actual mTLS, RBAC, tracing, audit and durable replicated routing.
 
@@ -615,6 +674,12 @@ async def run_sustained_load(
         )
     if diagnostics and broker_mode != "in_process":
         raise ValueError("monkeypatch diagnostics require in_process broker mode")
+    if capacity is None:
+        capacity = CapacityTarget.resolve(
+            rate=target_rate, usable_cpu_count=os.process_cpu_count()
+        )
+    elif capacity.target_rate != target_rate:
+        raise ValueError("capacity metadata must match the actual target rate")
     offered_rate = target_rate + max(1, math.ceil(target_rate * 0.02))
     planned = math.ceil(duration * offered_rate)
     directory.mkdir(parents=True, exist_ok=True)
@@ -1024,6 +1089,7 @@ async def run_sustained_load(
             duration_seconds=duration,
             elapsed_seconds=elapsed,
             target_rate=target_rate,
+            capacity=capacity,
             latency_limit_ms=latency_limit_ms,
             offered_rate=offered_rate,
             accepted_rate=rate,

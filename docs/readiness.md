@@ -1,7 +1,8 @@
 # Production readiness evidence
 
-The required sustained workload is 1,000 accepted messages per second for 60
-seconds, scheduled admission to handler entry p95 below 300 ms, RBAC authorization
+The reference sustained workload is 1,000 accepted messages per second for 60
+seconds on the measured 16-CPU host. Scheduled admission to handler entry p95
+must remain below 300 ms, with RBAC authorization
 exercised on every send, 100% trace sampling and verified OTLP export. Recovery
 target is at most 10 seconds, with no lost accepted messages in the tested failure
 scenarios.
@@ -28,7 +29,8 @@ establish a minimum achievable latency.
 Subsequent dashboard-only styling and layout changes are pinned in the
 [UI refinement record](../artifacts/dashboard-density.json), including the current
 authored frontend, packaged assets, server wheel and paper/ink screenshots.
-Every non-asset file in the accepted runtime/test manifest remains unchanged.
+Runtime source in the accepted manifest remains unchanged; subsequent benchmark
+changes add explicit CPU-relative workload selection and reporting.
 The original capacity report and environment record retain their measured source
 and image bindings; their frontend and wheel checksums describe that earlier run.
 
@@ -100,7 +102,17 @@ accepted-message coverage. The transport write interval includes server
 authentication and lease validation; it overlaps the write-start-to-receive
 interval. Stage percentiles cannot be added to derive end-to-end latency.
 Run the test suite, Ruff, formatting and `ty` before release. The dedicated
-production validation workflow applies the same capacity and recovery gates.
+production validation workflow scales its throughput target to the available
+CPU budget using `--rate-per-cpu 62.5`: the reference 1,000/sec divided by 16 CPUs.
+The [standard public Ubuntu runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+has four vCPUs, producing a 250/sec target. CPU count is a resource scaling policy,
+not a claim of equivalent speed across CPU models or linear capacity scaling.
+The report retains the selected workload basis, usable CPU count, per-CPU budget
+and actual target before the run starts. The default absolute `--rate 1000`
+profile remains available for the reference hardware and target deployments.
+Both profiles apply the same 300 ms latency, authorization, tracing, delivery,
+observability, isolation, shutdown and recovery requirements. Hardware-relative
+CI does not establish 1,000/sec capacity on its smaller runner.
 
 The [Linux validation image](../tools/Dockerfile.validation) pins its Python/uv
 base by digest and verifies the Redis source checksum. It runs the same gate
