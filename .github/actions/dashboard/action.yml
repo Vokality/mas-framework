@@ -1,0 +1,31 @@
+name: Verify dashboard
+description: Typecheck, test, and verify the committed Svelte dashboard bundle
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+        cache: npm
+        cache-dependency-path: dashboard/package-lock.json
+        package-manager-cache: false
+    - name: Install dashboard dependencies
+      shell: bash
+      run: npm ci --prefix dashboard
+    - name: Check dashboard types
+      shell: bash
+      run: npm run check --prefix dashboard
+    - name: Check dashboard formatting
+      shell: bash
+      run: npm run format:check --prefix dashboard
+    - name: Check generated dashboard contracts
+      shell: bash
+      env:
+        UV_FROZEN: "true"
+      run: npm run contracts:check --prefix dashboard
+    - name: Test dashboard contracts
+      shell: bash
+      run: npm test --prefix dashboard
+    - name: Verify dashboard build freshness
+      shell: bash
+      run: uv run --no-project python tools/check_dashboard_bundle.py --rebuild

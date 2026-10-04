@@ -67,7 +67,7 @@ async def redis():
     Provides a Redis connection that is cleaned up after each test.
     Flushes the database before and after each test to ensure isolation.
     """
-    r: Redis[str] = Redis.from_url("redis://localhost:6379", decode_responses=True)
+    r: Redis = Redis.from_url("redis://localhost:6379", decode_responses=True)
     # Ensure a clean DB at the start of each test.
     await r.flushdb()
     yield r
@@ -90,7 +90,7 @@ async def cleanup_agent_keys():
     This runs before the redis fixture cleanup, so it's safe for tests
     that use the redis fixture.
     """
-    redis: Redis[str] = Redis.from_url("redis://localhost:6379", decode_responses=True)
+    redis: Redis = Redis.from_url("redis://localhost:6379", decode_responses=True)
 
     # Collect all keys/streams to delete
     keys_to_delete = []

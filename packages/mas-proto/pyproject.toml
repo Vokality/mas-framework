@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,8 +8,8 @@ version = "0.5.0"
 description = "MAS runtime protobuf definitions"
 requires-python = ">=3.13"
 dependencies = [
-    "grpcio>=1.81.1",
-    "protobuf>=6.33.6",
+    "grpcio>=1.84.0",
+    "protobuf>=7.36.2",
 ]
 
 [tool.hatch.build.targets.wheel]

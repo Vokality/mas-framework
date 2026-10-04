@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter
 
@@ -57,4 +58,4 @@ class EnvelopeMessage(BaseModel):
     data: JsonObject
     meta: MessageMeta = Field(default_factory=MessageMeta)
     timestamp: float = Field(default_factory=time.time)
-    message_id: str = Field(default_factory=lambda: str(time.time_ns()))
+    message_id: str = Field(default_factory=lambda: str(uuid4()))

@@ -121,14 +121,16 @@ message GetStateRequest {}
 
 message GetStateResponse {
   map<string, string> state = 1;
+  uint64 revision = 2;
 }
 
 message UpdateStateRequest {
   map<string, string> updates = 1;
+  optional uint64 expected_revision = 2;
 }
 
-message UpdateStateResponse {}
+message UpdateStateResponse { uint64 revision = 1; }
 
-message ResetStateRequest {}
+message ResetStateRequest { optional uint64 expected_revision = 1; }
 
-message ResetStateResponse {}
+message ResetStateResponse { uint64 revision = 1; }

@@ -1,0 +1,116 @@
+{
+  "bundle_manifest": {
+    "packages/mas-server/src/mas_server/dashboard_assets/assets/dashboard.css": "62fb2dbb9f89c6d8c088eed02c9910fb603e063b92ddf0ef251ae21f9121386f",
+    "packages/mas-server/src/mas_server/dashboard_assets/assets/dashboard.js": "a1391800b7b85b8ef54b5c550b8abc4f9900897fd7d414eed146c6f8640dc657",
+    "packages/mas-server/src/mas_server/dashboard_assets/index.html": "cea1e494b7c134b9fa6c2101d1362936fe75ff3c146fe59c0347e247b655c017"
+  },
+  "capacity_evidence_preserved": {
+    "acceptance_report": "artifacts/production-load.json",
+    "acceptance_report_sha256": "7aec92016ae872692d0c6e021f56bff6e27f16368cddc5f0650523719628d8f3",
+    "all_non_asset_runtime_sources_match_acceptance": true,
+    "capacity_rerun_for_ui_polish": false,
+    "changed_runtime_manifest_entries": [
+      "packages/mas-server/src/mas_server/dashboard_assets/assets/dashboard.css",
+      "packages/mas-server/src/mas_server/dashboard_assets/assets/dashboard.js"
+    ],
+    "environment": "artifacts/validation-environment.json",
+    "environment_sha256": "2d0ad348a1330c13f8176c812c3527d79fcf03357af70420b778378dd2ce193d",
+    "original_image_id": "sha256:20e27d14da336d04667c019c8ecd910ef7813e7534df24e10f2f3866b58393f0",
+    "runtime_manifest_entries_verified": 149
+  },
+  "changes": [
+    "Removed decorative eyebrow markup and styles across all nine pages.",
+    "Retained useful scope descriptions below headings and normal field/metric labels.",
+    "Themed native select controls, picker menus, selected options, hover and keyboard focus in paper and ink.",
+    "Corrected visible Alerts and Telemetry wording that exposed an internal variable name."
+  ],
+  "frontend_source_manifest": {
+    "dashboard/.prettierignore": "57654d2ef9a0370fa4555438ab7c868991da52d76b540b4d116ba5d4f15f9c55",
+    "dashboard/.prettierrc.json": "2e1ced7e325b095d96d35a789e5ca0bf287041e713280874be8df40ac6ea40d5",
+    "dashboard/index.html": "b9d9206b39696ddd77b3aaad991b0261b6244da0fb451b8a315cd50dbbf487bf",
+    "dashboard/package-lock.json": "502f6f2fe3c9f25ef9d6e5d4ef58229c8b1b6b17a33ec9e69cbb2b7aa254e7e8",
+    "dashboard/package.json": "d5867cd615fab867fb917639e003407fe4472ff3c5ce3567801adc0c8b7f7f55",
+    "dashboard/playwright.config.ts": "c563702d6d88d40e53ab61bfe68899722c933dbfaefe7d857aff685d3113b2ac",
+    "dashboard/scripts/generate-contracts.mjs": "aa7000a56f028ffaacde141fca260b6f704d5460afcd6497a605a0b46dc17dec",
+    "dashboard/src/App.svelte": "d57068be7830d28dcba128538821fd07b6494b4e289925c535d6ad8033af065f",
+    "dashboard/src/components/Button.svelte": "b9046bfe5cf20c35201b4b03aa063e5cac67766c91bdeb065e28557f248041b3",
+    "dashboard/src/components/FilterBar.svelte": "ecdce106a03fba8f1f926c3fc9a7f43320499e7b201839c660e022dfcde9bc11",
+    "dashboard/src/components/MetricCard.svelte": "e72469583706ac89a87e28359a3c4e4f6c9e4b36e179b2e8c9f5e80b6f3b3f7a",
+    "dashboard/src/components/Notice.svelte": "5334ee7c65ff158365425e2e0a73ee8971494c778437e6f9ad0cd6de295d48ae",
+    "dashboard/src/components/PageHeader.svelte": "b91b114da3b7438fa55cc0a46f8ea02d239f6564a0771aaff1502c45d34d7174",
+    "dashboard/src/components/Pagination.svelte": "cddad5f2c726ba946d4739a20714d845aa97968d0979180d7b383d09977c653d",
+    "dashboard/src/components/Panel.svelte": "de445d94eba5db9877681af0868ae76083a054362b4828d8ab2f4c21740db1f2",
+    "dashboard/src/components/StatusBadge.svelte": "adcde476195a0c4d13a2d7bd38cfb0b31554927d5c11a5c587925aab4b9dbec8",
+    "dashboard/src/components/Table.svelte": "005de0d245df7b450f97a68dbe1b6978aea0b96bc62a6109a508c9838446ccba",
+    "dashboard/src/components/TrendChart.svelte": "d8aeeb0c6647687b06c1c5d5c73cd7966a6e484cfca470210e825472b9f0e836",
+    "dashboard/src/lib/api.ts": "57b9fa766ce1d6e6ebd3224ab498d1f32c91c61429204ca34233bf5f4eaf14f9",
+    "dashboard/src/lib/contracts.schema.json": "e8832806552116b23430d70a7955f3f1c3e155be2048aea3a7fcd119251e50cb",
+    "dashboard/src/lib/contracts.ts": "dab0b2379fc8f8340f50bdef8de019d21b2040ba7e42bffbaf834c4559fb739c",
+    "dashboard/src/lib/dashboard.svelte.ts": "cb61d681c767468ecf26a7fe173336c33741f582f3c10872d53129fd46bd68ab",
+    "dashboard/src/lib/format.ts": "248a29284f6a262c3a5705d6cbca2403d5b602b1a2ab98d794f09cb6f5a3156b",
+    "dashboard/src/lib/router.ts": "e75aeaadad192854cccaee5157d8e1e7db79ed4144dfe4d78d0bce9019964177",
+    "dashboard/src/lib/validators.d.ts": "9e8e679207e94dd850ab377e6e6aa3161765b4f7284c77a671849a9475437649",
+    "dashboard/src/lib/validators.js": "58b27225deb669aed5778cd16796c8508d031cd35ab615a491cfc99175c545f5",
+    "dashboard/src/main.ts": "d402f93146db3c369d8398155a2f3c06b6949f16c3e0ba565e01b3e747555d00",
+    "dashboard/src/pages/Activity.svelte": "cf0fe13eec5ba637224d6538010b9e4faf3c645feb538a1c95786396c6abf1a5",
+    "dashboard/src/pages/Agents.svelte": "59694a09a75a20a2364a711bad790a6300bdc277192a0b45f792cf79e785f1a4",
+    "dashboard/src/pages/Alerts.svelte": "d733890669d9effab64054ba4519e50d69a62ad9e72ca1536c2c644c7d77daea",
+    "dashboard/src/pages/Fleet.svelte": "364f167d56dfc79e3231e32fbfe823016c3732cfed6aa1c75c2d754f86a3109c",
+    "dashboard/src/pages/Overview.svelte": "ed06cd70a6ef1fdccff411c75f9d845c398895eed91f0389a04dfd5da4127198",
+    "dashboard/src/pages/Performance.svelte": "06c80cd0bdf1d6319cfef07d68e9349d7c8114a1d082a811053b5448886451cb",
+    "dashboard/src/pages/Queues.svelte": "04abab7b1d2bcc0c390da84a58c03dbf6888961c743eb2ab77b7ceb10e84f865",
+    "dashboard/src/pages/Telemetry.svelte": "372a120eabce8a6c05e8bf857e4e2767eca33a883b164b6ab7bb700f0d3575d4",
+    "dashboard/src/pages/TraceDetail.svelte": "a7958e1c7769560fab62172ea86f4e95847da13b6def347bf3299664f18b60aa",
+    "dashboard/src/pages/Traces.svelte": "81f29bb9a46d389b3109fc437c34323e267c68bf5c0ed236b4c257b88a02da97",
+    "dashboard/src/theme.css": "64a7e7e696e6c225f76754951b5bc8cb3f61ef447444352f94b4729178d30d63",
+    "dashboard/src/vite-env.d.ts": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5",
+    "dashboard/svelte.config.js": "3c328d509de22605aa7d1bcfd4a34941b99c2ecaea7026dde935785d8b6661e4",
+    "dashboard/tests/api.test.ts": "c4efc06b45ac5286360d9e5273a4575317491262ced8e159c3eeec14b486ab03",
+    "dashboard/tests/browser-fixtures.json": "f861e642e7d7b342d20a1360a0411636b4a7a55279430c8a626cae9966546dc1",
+    "dashboard/tests/browser.spec.ts": "f0751ab51d89a79b57b15ea77b54476f9ff5e6c368be60079fe1d18c008dadcd",
+    "dashboard/tests/contracts.test.ts": "b344000dfe56e0fddb6cfcb7e68a7a095ce9a0a61a3cdf6db5b1ceb899f212cd",
+    "dashboard/tests/fixtures.json": "d8b2d4b9fa675235b4c749f3fc7cf673dad17d878ff236ce3864e29a9eef64f2",
+    "dashboard/tests/generate_browser_fixtures.py": "08b0c068f917306dbac10d2abf1504e1cb8cb0076edef5237fad3f74935c0caa",
+    "dashboard/tests/serve_dashboard.py": "0f4a54424eef190814678d508862a162993b612705774f770f7b48e07a64c339",
+    "dashboard/tsconfig.json": "1ef7ff506be164b31eb0ebb4ef0277eb73d78fcea483193827b836bd478f59f5",
+    "dashboard/vite.config.ts": "0ff0230f2fb2ae946b5ab4411aed7b4e967baffae7c1de41c85fc52273a08b0f"
+  },
+  "live_dashboard": {
+    "broker_count": 2,
+    "fleet_status": "healthy",
+    "scope": "Local low-rate mTLS/RBAC request/reply demo, restarted after final bundle build. External exporters are not configured in this demo.",
+    "screenshot_sha256": {
+      "artifacts/dashboard-dropdown-ink.png": "149257a8c893e8e9a44af1230f5ed0d04949e7a0f9ef94131848761251874b30",
+      "artifacts/dashboard-dropdown-paper.png": "f8f2019a0f270746f5cb386416a79776087a85d0fd1c203ac7aaf7e19dd41eaa"
+    },
+    "url": "http://127.0.0.1:8080/telemetry"
+  },
+  "scope": "UI-only polish after the recorded capacity acceptance run; preserves that run's source, image, environment and report bindings.",
+  "verification": {
+    "bundled_assets_match_fresh_build_and_server_wheel": true,
+    "chromium_browser_tests": 26,
+    "exact_narrow_viewport_width": 390,
+    "generated_contract_freshness": "passed",
+    "generated_protobuf_lint_exclusion": "Existing pyproject.toml setting retained.",
+    "git_diff_check": "passed",
+    "lint_format_typecheck_exclusions": [
+      "doekupay_test.py",
+      "scripts/"
+    ],
+    "live_dropdown": "Paper and ink menus visually verified; ArrowDown+Return selects Traces and filters actual rows; Escape closes with focus returned to Signal.",
+    "native_select_fallback": "CSS enhancement is gated by appearance:base-select support; unsupported browsers retain native select controls. Cross-browser visual parity not asserted.",
+    "no_decorative_eyebrow_markup": true,
+    "node_tests": 19,
+    "prettier": "passed",
+    "python_management_asset_security_tests": 43,
+    "ruff_format": "passed; 140 Python files formatted",
+    "ruff_lint": "passed",
+    "svelte_check": "0 errors, 0 warnings",
+    "ty": "passed",
+    "unscoped_ruff_check": "Fails only in unrelated existing doekupay_test.py; preserved without edits."
+  },
+  "verified_at_utc": "2026-10-04T16:02:15.471773+00:00",
+  "wheel_sha256": {
+    "dist/mas_server-0.5.0-py3-none-any.whl": "4c1bea520c3bf1573efa0e3fb5b062372f9cad7969aecedba413f3d5d3389d33"
+  }
+}

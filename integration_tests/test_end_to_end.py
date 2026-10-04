@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 import grpc
 import grpc.aio as grpc_aio
 import pytest
 from mas_agent import Agent
-from mas_server import AgentDefinition
+from mas_core.sessions import SessionLeaseStore
+from mas_server.runtime import MASServer
+from mas_server.types import AgentDefinition
+from redis.asyncio import Redis
+
+from conftest import TestTlsPaths as TlsPaths
 
 pytestmark = pytest.mark.asyncio
 
 
-async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
+async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> None:
     start = asyncio.get_running_loop().time()
     while True:
         if predicate():
@@ -21,7 +27,9 @@ async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
         await asyncio.sleep(0.02)
 
 
-async def _wait_until_async(predicate, *, timeout: float = 2.0) -> None:
+async def _wait_until_async(
+    predicate: Callable[[], Awaitable[bool]], *, timeout: float = 2.0
+) -> None:
     start = asyncio.get_running_loop().time()
     while True:
         if await predicate():
@@ -31,10 +39,20 @@ async def _wait_until_async(predicate, *, timeout: float = 2.0) -> None:
         await asyncio.sleep(0.02)
 
 
-async def test_agent_status_transitions(redis, mas_server_factory, test_tls) -> None:
+async def test_agent_status_transitions(
+    redis: Redis,
+    mas_server_factory: Callable[
+        [dict[str, AgentDefinition] | None], Awaitable[MASServer]
+    ],
+    test_tls: TlsPaths,
+) -> None:
     server = await mas_server_factory(
         {"worker": AgentDefinition(agent_id="worker", capabilities=[], metadata={})}
     )
+    leases = SessionLeaseStore(redis)
+    await server.authz.set_permissions("worker", allowed_targets=["worker"])
+    assert not await leases.active("worker")
+    assert await server.discover(agent_id="worker", capabilities=[]) == []
 
     agent = Agent(
         "worker",
@@ -46,16 +64,20 @@ async def test_agent_status_transitions(redis, mas_server_factory, test_tls) -> 
     try:
 
         async def status_is_active() -> bool:
-            return await redis.hget("agent:worker", "status") == "ACTIVE"
+            return await leases.active("worker")
 
         await _wait_until_async(status_is_active, timeout=2.0)
+        assert await agent.discover() == [
+            {"id": "worker", "capabilities": [], "metadata": {}, "status": "ACTIVE"}
+        ]
     finally:
         await agent.stop()
 
     async def status_is_inactive() -> bool:
-        return await redis.hget("agent:worker", "status") == "INACTIVE"
+        return not await leases.active("worker")
 
     await _wait_until_async(status_is_inactive, timeout=2.0)
+    assert await server.discover(agent_id="worker", capabilities=[]) == []
 
 
 async def test_dlq_written_on_handler_error(

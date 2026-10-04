@@ -51,6 +51,41 @@ async def test_request_timeout_cleans_pending_correlation() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_request_timeout_includes_rpc_submission() -> None:
+    class SlowStub(_RequestStub):
+        async def Request(
+            self,
+            request: mas_pb2.RequestRequest,
+            metadata: list[tuple[str, str]] | None = None,
+        ) -> mas_pb2.RequestResponse:
+            await asyncio.sleep(0.1)
+            return await super().Request(request, metadata)
+
+    agent = Agent("sender")
+    agent._stub = SlowStub("slow")
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(TimeoutError):
+        await agent.request("target", "test", {}, timeout=0.01)
+    assert loop.time() - started < 0.08
+    assert not agent._pending_requests
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stop_resolves_pending_requests_promptly() -> None:
+    agent = Agent("sender")
+    agent._stub = _RequestStub("stopped")
+    request = asyncio.create_task(agent.request("target", "test", {}, timeout=1))
+    await asyncio.sleep(0)
+    await agent.stop()
+    assert not agent._pending_requests
+    with pytest.raises(ConnectionError, match="stopped"):
+        await request
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_request_early_reply_cleans_pending_correlation() -> None:
     agent = Agent("sender")
     correlation_id = "corr-early"

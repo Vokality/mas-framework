@@ -75,8 +75,11 @@ class Agent[AgentState: BaseModel = BaseModel](
 
         self._state_model: type[AgentState] | None = state_model
         self._state: AgentState | None = None
+        self._state_revision = 0
 
         self._running = False
+        self._lifecycle_lock: asyncio.Lock = asyncio.Lock()
+        self._state_lock: asyncio.Lock = asyncio.Lock()
         self._channel: grpc_aio.Channel | None = None
         self._stub: mas_pb2_grpc.RuntimeServiceStub | None = None
 
@@ -104,53 +107,81 @@ class Agent[AgentState: BaseModel = BaseModel](
 
     async def start(self) -> None:
         """Connect to the server and begin transport loop."""
-        if self.tls is None:
-            raise RuntimeError(
-                "TLS config required. Agents must connect via mTLS to MAS server."
-            )
+        async with self._lifecycle_lock:
+            if self._channel is not None:
+                raise RuntimeError("Agent already started")
+            if self.tls is None:
+                raise RuntimeError(
+                    "TLS config required. Agents must connect via mTLS to MAS server."
+                )
+            tls = self.tls
 
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.start",
-            kind=SpanKind.INTERNAL,
-            attributes={"mas.agent_id": self.id, "mas.instance_id": self.instance_id},
-        ):
-            with open(self.tls.root_ca_path, "rb") as f:
-                root_certificates = f.read()
-            with open(self.tls.client_key_path, "rb") as f:
-                private_key = f.read()
-            with open(self.tls.client_cert_path, "rb") as f:
-                certificate_chain = f.read()
+            telemetry = get_telemetry()
+            with telemetry.start_span(
+                "mas.agent.start",
+                kind=SpanKind.INTERNAL,
+                attributes={
+                    "mas.agent_id": self.id,
+                    "mas.instance_id": self.instance_id,
+                },
+            ):
 
-            creds = grpc.ssl_channel_credentials(
-                root_certificates=root_certificates,
-                private_key=private_key,
-                certificate_chain=certificate_chain,
-            )
-            channel = grpc_aio.secure_channel(self.server_addr, creds)
-            self._channel = channel
-            self._stub = mas_pb2_grpc.RuntimeServiceStub(channel)
+                def load_credentials() -> grpc.ChannelCredentials:
+                    with open(tls.root_ca_path, "rb") as f:
+                        root_certificates = f.read()
+                    with open(tls.client_key_path, "rb") as f:
+                        private_key = f.read()
+                    with open(tls.client_cert_path, "rb") as f:
+                        certificate_chain = f.read()
+                    return grpc.ssl_channel_credentials(
+                        root_certificates=root_certificates,
+                        private_key=private_key,
+                        certificate_chain=certificate_chain,
+                    )
 
-            try:
-                self._running = True
-                self._transport_task = asyncio.create_task(self._transport_loop())
+                creds = await asyncio.to_thread(load_credentials)
+                channel = grpc_aio.secure_channel(self.server_addr, creds)
+                self._channel = channel
+                self._stub = mas_pb2_grpc.RuntimeServiceStub(channel)
+                self._transport_ready.clear()
+                self._outgoing = asyncio.Queue(maxsize=2000)
 
-                await self.wait_transport_ready(timeout=10)
-                await self._load_state()
-                await self.on_start()
-            except Exception:
-                # Don't leak the transport task / open channel if startup fails
-                # partway (e.g. _load_state raising on corrupt persisted state).
-                await self.stop()
-                raise
+                try:
+                    self._running = True
+                    self._transport_task = asyncio.create_task(self._transport_loop())
 
-            logger.info(
-                "Agent started",
-                extra={"agent_id": self.id, "instance_id": self.instance_id},
-            )
+                    await self.wait_transport_ready(timeout=10)
+                    await self._load_state()
+                    await self.on_start()
+                except BaseException:
+                    # Don't leak the transport task / open channel if startup fails
+                    # partway (e.g. _load_state raising on corrupt persisted state).
+                    try:
+                        await self.on_stop()
+                    except BaseException:
+                        logger.exception("Stop hook failed during startup cleanup")
+                    finally:
+                        await self._shutdown()
+                    raise
+
+                logger.info(
+                    "Agent started",
+                    extra={"agent_id": self.id, "instance_id": self.instance_id},
+                )
 
     async def stop(self) -> None:
         """Stop the transport loop and close the channel."""
+        async with self._lifecycle_lock:
+            if self._stub is None and self._transport_task is None:
+                return
+            self._running = False
+            try:
+                await self.on_stop()
+            finally:
+                await self._shutdown()
+
+    async def _shutdown(self) -> None:
+        """Release resources even after cancellation or a lifecycle hook fails."""
         telemetry = get_telemetry()
         with telemetry.start_span(
             "mas.agent.stop",
@@ -158,29 +189,32 @@ class Agent[AgentState: BaseModel = BaseModel](
             attributes={"mas.agent_id": self.id, "mas.instance_id": self.instance_id},
         ):
             self._running = False
-            await self.on_stop()
+            self._transport_ready.clear()
+            self._fail_pending_requests("Agent stopped")
 
             # Drain in-flight handlers and flush queued ACK/NACK events *before*
             # tearing down the transport. Cancelling the transport first would
             # drop acknowledgements for already-completed work and force the
             # server to redeliver those messages.
-            await self._drain_handler_tasks()
-            await self._drain_outgoing()
+            try:
+                await self._drain_handler_tasks()
+                await self._drain_outgoing()
+            finally:
+                if self._transport_task is not None:
+                    self._transport_task.cancel()
+                    await asyncio.gather(self._transport_task, return_exceptions=True)
+                    self._transport_task = None
 
-            if self._transport_task is not None:
-                self._transport_task.cancel()
-                await asyncio.gather(self._transport_task, return_exceptions=True)
-                self._transport_task = None
+                # No new deliveries can spawn handlers after transport teardown.
+                await self._cancel_handler_tasks()
 
-            # The transport loop is stopped now, so no new deliveries can spawn
-            # handlers. Cancel any that slipped in during the drain window above
-            # rather than leaking them past shutdown.
-            await self._cancel_handler_tasks()
-
-            if self._channel is not None:
-                await self._channel.close()
-                self._channel = None
+                if self._channel is not None:
+                    await self._channel.close()
+                    self._channel = None
                 self._stub = None
+                self._state = None
+                self._early_replies.clear()
+                self._outgoing = asyncio.Queue(maxsize=2000)
 
             logger.info(
                 "Agent stopped",
@@ -189,64 +223,78 @@ class Agent[AgentState: BaseModel = BaseModel](
 
     async def update_state(self, updates: Mapping[str, JsonValue]) -> None:
         """Update the remote state with provided fields."""
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.update_state",
-            kind=SpanKind.CLIENT,
-            attributes={"mas.agent_id": self.id},
-        ):
-            stub = self._require_stub()
+        async with self._state_lock:
+            telemetry = get_telemetry()
+            with telemetry.start_span(
+                "mas.agent.update_state",
+                kind=SpanKind.CLIENT,
+                attributes={"mas.agent_id": self.id},
+            ):
+                stub = self._require_stub()
 
-            if self._state_model is None:
-                raise RuntimeError(
-                    "Agent state updates require a Pydantic state_model."
+                if self._state_model is None:
+                    raise RuntimeError(
+                        "Agent state updates require a Pydantic state_model."
+                    )
+
+                # Reject unknown fields and re-validate the merged state through the
+                # model, so an out-of-type or misspelled update is refused rather
+                # than silently persisted (and later surfacing as a StateReloadError).
+                # Commit to self._state only after the RPC succeeds, so a failed
+                # UpdateState never leaves in-memory state ahead of persisted state.
+                unknown = set(updates) - set(self._state_model.model_fields)
+                if unknown:
+                    raise ValueError(f"Unknown state field(s): {sorted(unknown)}")
+
+                merged = self.state.model_dump()
+                merged.update(updates)
+                updated = self._state_model.model_validate(merged, by_name=True)
+                state_dict = updated.model_dump(mode="json")
+                previous = self.state.model_dump(mode="json")
+
+                # JSON-encode every field so it reloads symmetrically in
+                # ``_load_state``. Encoding scalars with ``str()`` would lose
+                # fidelity: ``None`` -> ``"None"``, ``True`` -> ``"True"``, and
+                # nested values would not round-trip through the typed model.
+                redis_data = {
+                    key: json.dumps(value)
+                    for key, value in state_dict.items()
+                    if key in updates or value != previous.get(key)
+                }
+
+                response = await stub.UpdateState(
+                    mas_pb2.UpdateStateRequest(
+                        updates=redis_data, expected_revision=self._state_revision
+                    ),
+                    metadata=telemetry.grpc_metadata(),
                 )
-
-            # Reject unknown fields and re-validate the merged state through the
-            # model, so an out-of-type or misspelled update is refused rather
-            # than silently persisted (and later surfacing as a StateReloadError).
-            # Commit to self._state only after the RPC succeeds, so a failed
-            # UpdateState never leaves in-memory state ahead of persisted state.
-            unknown = set(updates) - set(self._state_model.model_fields)
-            if unknown:
-                raise ValueError(f"Unknown state field(s): {sorted(unknown)}")
-
-            merged = self.state.model_dump()
-            merged.update(updates)
-            updated = self._state_model.model_validate(merged)
-            state_dict = updated.model_dump(mode="json")
-
-            # JSON-encode every field so it reloads symmetrically in
-            # ``_load_state``. Encoding scalars with ``str()`` would lose
-            # fidelity: ``None`` -> ``"None"``, ``True`` -> ``"True"``, and
-            # nested values would not round-trip through the typed model.
-            redis_data = {k: json.dumps(v) for k, v in state_dict.items()}
-
-            await stub.UpdateState(
-                mas_pb2.UpdateStateRequest(updates=redis_data),
-                metadata=telemetry.grpc_metadata(),
-            )
-            self._state = updated
+                self._state = updated
+                self._state_revision = response.revision
 
     async def reset_state(self) -> None:
         """Reset remote state to defaults."""
-        telemetry = get_telemetry()
-        with telemetry.start_span(
-            "mas.agent.reset_state",
-            kind=SpanKind.CLIENT,
-            attributes={"mas.agent_id": self.id},
-        ):
-            stub = self._require_stub()
-            await stub.ResetState(
-                mas_pb2.ResetStateRequest(),
-                metadata=telemetry.grpc_metadata(),
-            )
-            if self._state_model is not None:
-                self._state = self._state_model()
+        async with self._state_lock:
+            telemetry = get_telemetry()
+            with telemetry.start_span(
+                "mas.agent.reset_state",
+                kind=SpanKind.CLIENT,
+                attributes={"mas.agent_id": self.id},
+            ):
+                stub = self._require_stub()
+                defaults = (
+                    self._state_model() if self._state_model is not None else None
+                )
+                response = await stub.ResetState(
+                    mas_pb2.ResetStateRequest(expected_revision=self._state_revision),
+                    metadata=telemetry.grpc_metadata(),
+                )
+                self._state = defaults
+                self._state_revision = response.revision
 
     async def refresh_state(self) -> None:
         """Reload state from the server."""
-        await self._load_state()
+        async with self._state_lock:
+            await self._load_state()
 
     async def _load_state(self) -> None:
         """Load agent state from the server, decoding it symmetrically.
@@ -270,15 +318,18 @@ class Agent[AgentState: BaseModel = BaseModel](
             data = dict(resp.state)
 
             if self._state_model is None:
+                self._state_revision = resp.revision
                 return
 
             if not data:
                 self._state = self._state_model()
+                self._state_revision = resp.revision
                 return
 
             try:
                 decoded = {key: json.loads(raw) for key, raw in data.items()}
-                self._state = self._state_model(**decoded)
+                self._state = self._state_model.model_validate(decoded, by_name=True)
+                self._state_revision = resp.revision
             except Exception as exc:
                 # Do not silently reset: that would discard persisted state and
                 # mask the corruption. Surface it so the caller can react.

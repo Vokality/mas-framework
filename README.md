@@ -31,7 +31,7 @@ path, not bolted on beside it:
 | **Durable state** | per-agent Pydantic state model, persisted server-side, restored on restart |
 | **Reliability** | at-least-once delivery, ACK/NACK, redelivery, dead-letter queue, in-flight limits, graceful-shutdown ACK draining |
 | **Governance** | RBAC authorization, DLP (PII/secret scan + redaction), rate limiting, circuit breaking, hash-chained tamper-evident audit |
-| **Observability** | OpenTelemetry traces, with context propagated across messages |
+| **Observability** | Fleet dashboard, retained history, delivery p95, trace explorer, alerts and exporter health, OpenTelemetry traces and metrics |
 
 A reply is bound to the agent the request targeted, so an unrelated agent can't
 resolve your pending call by guessing a correlation id. Many instances can share
@@ -64,18 +64,22 @@ the framework handles the wire, the correlation, the acks, and the persistence.
 from mas_agent import Agent, AgentMessage, TlsClientConfig
 from pydantic import BaseModel
 
+
 class Ask(BaseModel):
     question: str
+
 
 class DeskState(BaseModel):
     answered: int = 0
 
+
 class HelpDesk(Agent[DeskState]):
     @Agent.on("ask", model=Ask)
     async def handle_ask(self, message: AgentMessage, payload: Ask) -> None:
-        answer = await my_llm(payload.question)            # your logic
+        answer = await my_llm(payload.question)  # your logic
         await self.update_state({"answered": self.state.answered + 1})
         await self.send_reply_envelope(message, "answer", {"text": answer})
+
 
 tls = TlsClientConfig(
     root_ca_path="ca.pem",
@@ -83,7 +87,7 @@ tls = TlsClientConfig(
     client_key_path="desk.key",
 )
 desk = HelpDesk("helpdesk", capabilities=["qa"], state_model=DeskState, tls=tls)
-await desk.start()      # connects over mTLS, restores state, begins handling
+await desk.start()  # connects over mTLS, restores state, begins handling
 ```
 
 Another agent calls it. Request/reply is one line, and the payload is validated
@@ -93,7 +97,7 @@ into your model *before* your handler runs:
 router = Agent("router", tls=tls)
 await router.start()
 
-matches = await router.discover(capabilities=["qa"])       # find agents by capability
+matches = await router.discover(capabilities=["qa"])  # find agents by capability
 reply = await router.request("helpdesk", "ask", {"question": "..."}, timeout=10)
 print(reply.data["text"])
 ```
@@ -101,7 +105,9 @@ print(reply.data["text"])
 When `timeout` is omitted, request/reply uses a 60-second client and server
 budget. The server stores pending correlation state in Redis for the same TTL.
 
-A handler that raises is NACKed and redelivered, so handlers should be idempotent
+A handler that raises is NACKed and retried up to `max_delivery_attempts`
+(default 5), then preserved in the dead-letter queue. Invalid typed payloads
+go directly to the dead-letter queue. Handlers should be idempotent
 (dedupe on `message.message_id`). State is a typed model — an out-of-type update
 is rejected, not silently persisted.
 
@@ -123,11 +129,13 @@ server = MASServer(
             client_ca_path="certs/ca.pem",
         ),
         agents={
-            "helpdesk": AgentDefinition(agent_id="helpdesk", capabilities=["qa"], metadata={}),
+            "helpdesk": AgentDefinition(
+                agent_id="helpdesk", capabilities=["qa"], metadata={}
+            ),
             "router": AgentDefinition(agent_id="router", capabilities=[], metadata={}),
         },
     ),
-    gateway=GatewaySettings(),     # DLP, rate limits, circuit breaker, audit
+    gateway=GatewaySettings(),  # DLP, rate limits, circuit breaker, audit
 )
 
 await server.start()
@@ -166,8 +174,63 @@ Individual packages (for lighter or selective installs):
 - `mas-server` — the gRPC broker runtime (routing, delivery, sessions, registry, policy).
 - `mas-agent` — the agent client runtime.
 
-There are no bundled application entrypoints or ops UI; you compose `MASServer`,
-`GatewaySettings`, and `Agent` from your own code.
+You compose `MASServer`, `GatewaySettings`, and `Agent` from your own code.
+The broker includes an optional management dashboard.
+
+## Management dashboard
+
+Enable the dashboard on your existing broker settings:
+
+```python
+from dataclasses import replace
+from mas_server.management import ManagementSettings
+
+settings = replace(settings, management=ManagementSettings(port=8080))
+server = MASServer(settings=settings, gateway=gateway)
+await server.start()
+print(server.management_url)  # http://127.0.0.1:8080
+```
+
+The dashboard shows fleet health, live accepted traffic and delivery p95,
+retained performance charts, trace waterfalls, active/resolved alerts and actual
+exporter outcomes alongside local sessions, workers, queues, dead letters and
+policy decisions. Broker heartbeats continue without a browser. Queue counts
+use consumer-group lag and pending entries. Message payloads, state contents,
+Redis credentials, and exporter headers are excluded.
+
+`GET /api/snapshot` returns typed JSON; `GET /healthz` returns 503 when Redis or a
+local delivery worker is unavailable. Snapshot reads are bounded and cached for
+two seconds. Sessions are local to the broker; queue and audit data belong to its
+Redis database. Fleet counters are scoped to individual broker incarnations and work with OTLP
+disabled. Retained trace details are bounded and sampled; delivery latency
+requires correlated client spans and synchronized clocks. Configure
+`GatewaySettings.telemetry` for external
+trace and metric export. A host may call `await get_telemetry().shutdown()` at process
+teardown; stopping one broker leaves shared telemetry running.
+
+The listener defaults to loopback. Use
+`ManagementSettings(auth_mode="token", token=...)` for a local development token.
+Remote listeners require `auth_mode="oidc"`, an explicitly configured issuer,
+audience and read scope or role, and HTTPS certificate paths. The dashboard accepts
+an operator's signed access token and holds it in browser memory. Operator APIs
+are read-only; optional OTLP ingestion requires separate write authorization. See [operator configuration](docs/operations.md) for deployment,
+credential rotation, storage durability and recovery procedures.
+
+Production acceptance requires 1,000 accepted messages/sec for 60 seconds, handler
+p95 below 300 ms, RBAC checks on every send, and 100% trace sampling with verified
+OTLP export. Run `uv run python -m tools.validate_production` on your target host.
+The [readiness record](docs/readiness.md) distinguishes tested behavior from
+environment-specific deployment requirements.
+
+To try the dashboard with real local message traffic:
+
+```bash
+uv run examples/control_room.py
+```
+
+The example uses Redis database 15 by default and generates temporary development
+mTLS credentials. It does not flush Redis. Set `MAS_REDIS_URL` or use `--port` to
+change its endpoints. Press Ctrl-C to stop the agents and broker.
 
 ## Running locally
 

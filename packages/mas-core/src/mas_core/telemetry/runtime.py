@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -31,11 +33,20 @@ from opentelemetry.trace import (
     SpanKind as OTelSpanKind,
 )
 
+from ..observability import ExportHealth, ObservationSettings, ObservedSpan
 from ..protocol import MessageMeta
+from .observations import (
+    ExportTracker,
+    ObservedMetricExporter,
+    ObservedSpanExporter,
+    SpanJournal,
+    current_broker_id,
+)
 
 logger = logging.getLogger(__name__)
 
 _TRACE_HEADER_KEYS: Final[tuple[str, ...]] = ("traceparent", "tracestate")
+_MAX_BROKER_SCOPES: Final[int] = 256
 
 
 class SpanKind(Enum):
@@ -61,6 +72,46 @@ class TelemetryConfig:
     export_metrics: bool = True
     metrics_export_interval_ms: int = 60_000
     headers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetrySnapshot:
+    """Bounded process counters available even when OTLP export is disabled."""
+
+    ingress: dict[str, int]
+    delivery_acks: int
+    delivery_nacks: int
+    retryable_nacks: int
+    dead_letter_writes: int
+    dead_letter_errors: int
+    redis_errors: int
+    active_sessions: int
+    policy_samples: int
+    policy_latency_mean_ms: float
+    policy_latency_max_ms: float
+    export_enabled: bool
+    scope_complete: bool = True
+    dropped_scope_updates: int = 0
+
+
+@dataclass(slots=True)
+class _TelemetryCounters:
+    """Shared process counters retained through exporter reconfiguration."""
+
+    lock: Lock = field(default_factory=Lock)
+    ingress_counts: dict[str, int] = field(default_factory=dict)
+    acks: int = 0
+    nacks: int = 0
+    retryable_nacks: int = 0
+    dlq_writes: int = 0
+    dlq_errors: int = 0
+    redis_errors: int = 0
+    session_count: int = 0
+    policy_samples: int = 0
+    policy_latency_sum: float = 0.0
+    policy_latency_max: float = 0.0
+    brokers: dict[str, _TelemetryCounters] = field(default_factory=dict)
+    dropped_scope_updates: int = 0
 
 
 _SPAN_KIND_MAP: Final[dict[SpanKind, OTelSpanKind]] = {
@@ -141,16 +192,39 @@ class TelemetryRuntime:
         tracer: Tracer | None,
         tracer_provider: TracerProvider | None,
         meter_provider: MeterProvider | None,
+        counters: _TelemetryCounters | None = None,
+        export_enabled: bool = False,
+        journal: SpanJournal | None = None,
+        exporters: tuple[ExportTracker, ExportTracker] | None = None,
     ) -> None:
         """Initialize runtime with concrete OTel providers/instruments."""
         self._enabled = enabled
+        self._export_enabled = export_enabled
         self._tracer = tracer
         self._tracer_provider = tracer_provider
         self._meter_provider = meter_provider
         self._shutdown = False
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._drain_lock = asyncio.Lock()
+        self._drain_task: asyncio.Task[list[ObservedSpan]] | None = None
+        self._drained_spans: deque[ObservedSpan] = deque()
+        self._counters = counters if counters is not None else _TelemetryCounters()
+        self._journal = journal if journal is not None else SpanJournal()
+        self._exporters = (
+            exporters
+            if exporters is not None
+            else (
+                ExportTracker("traces", configured=False),
+                ExportTracker("metrics", configured=False),
+            )
+        )
+        if tracer_provider is not None:
+            tracer_provider.add_span_processor(self._journal)
 
         if enabled:
-            meter = metrics.get_meter("mas.telemetry")
+            if meter_provider is None:
+                raise ValueError("Enabled telemetry requires a meter provider")
+            meter = meter_provider.get_meter("mas.telemetry")
             self._messages_ingress_total: CounterInstrument = meter.create_counter(
                 name="mas_messages_ingress_total",
                 unit="1",
@@ -194,6 +268,10 @@ class TelemetryRuntime:
             self._dlq_write_total = _NoopCounter()
             self._redis_errors_total = _NoopCounter()
             self._active_sessions = _NoopCounter()
+
+        if enabled:
+            with self._counters.lock:
+                self._active_sessions.add(self._counters.session_count)
 
     @property
     def enabled(self) -> bool:
@@ -288,39 +366,179 @@ class TelemetryRuntime:
 
         return propagate.extract(carrier)
 
+    def _counter_targets(self) -> tuple[_TelemetryCounters, ...]:
+        """Select process and broker counters while the process lock is held."""
+        broker_id = current_broker_id()
+        if broker_id is None:
+            return (self._counters,)
+        scoped = self._counters.brokers.get(broker_id)
+        if scoped is None:
+            if len(self._counters.brokers) >= _MAX_BROKER_SCOPES:
+                self._counters.dropped_scope_updates += 1
+                return (self._counters,)
+            scoped = _TelemetryCounters()
+            self._counters.brokers[broker_id] = scoped
+        return self._counters, scoped
+
+    def _metric_attributes(self, **attributes: str) -> dict[str, str]:
+        broker_id = current_broker_id()
+        if broker_id is not None:
+            attributes["mas.broker_id"] = broker_id
+        return attributes
+
     def record_ingress(self, *, decision: str) -> None:
-        """Record ingress decision metric."""
-        self._messages_ingress_total.add(1, attributes={"decision": decision})
+        """Record a bounded ingress decision globally and for this broker."""
+        label = (
+            decision
+            if decision
+            in {
+                "ALLOWED",
+                "ALERT",
+                "DLP_REDACTED",
+                "AUTHZ_DENIED",
+                "RATE_LIMITED",
+                "CIRCUIT_OPEN",
+                "DLP_BLOCKED",
+            }
+            else "OTHER"
+        )
+        with self._counters.lock:
+            for counters in self._counter_targets():
+                counters.ingress_counts[label] = (
+                    counters.ingress_counts.get(label, 0) + 1
+                )
+        self._messages_ingress_total.add(
+            1, attributes=self._metric_attributes(decision=label)
+        )
 
     def record_policy_latency(self, *, latency_ms: float, decision: str) -> None:
-        """Record policy pipeline latency."""
-        self._policy_latency_ms.record(latency_ms, attributes={"decision": decision})
+        """Record policy pipeline latency globally and for this broker."""
+        with self._counters.lock:
+            for counters in self._counter_targets():
+                counters.policy_samples += 1
+                counters.policy_latency_sum += latency_ms
+                counters.policy_latency_max = max(
+                    counters.policy_latency_max, latency_ms
+                )
+        self._policy_latency_ms.record(
+            latency_ms, attributes=self._metric_attributes(decision=decision)
+        )
 
     def record_delivery_ack(self) -> None:
-        """Record delivery ACK metric."""
-        self._delivery_ack_total.add(1)
+        """Record delivery ACK globally and for this broker."""
+        with self._counters.lock:
+            for counters in self._counter_targets():
+                counters.acks += 1
+        self._delivery_ack_total.add(1, attributes=self._metric_attributes())
 
     def record_delivery_nack(self, *, retryable: bool) -> None:
-        """Record delivery NACK metric."""
+        """Record delivery NACK globally and for this broker."""
+        with self._counters.lock:
+            for counters in self._counter_targets():
+                counters.nacks += 1
+                counters.retryable_nacks += int(retryable)
         self._delivery_nack_total.add(
             1,
-            attributes={"retryable": "true" if retryable else "false"},
+            attributes=self._metric_attributes(
+                retryable="true" if retryable else "false"
+            ),
         )
 
     def record_dlq_write(self, *, result: str) -> None:
-        """Record DLQ write result metric."""
-        self._dlq_write_total.add(1, attributes={"result": result})
+        """Record DLQ write results globally and for this broker."""
+        with self._counters.lock:
+            for counters in self._counter_targets():
+                if result == "success":
+                    counters.dlq_writes += 1
+                else:
+                    counters.dlq_errors += 1
+        self._dlq_write_total.add(1, attributes=self._metric_attributes(result=result))
 
     def record_redis_error(self, *, component: str, operation: str) -> None:
-        """Record Redis operation error metric."""
+        """Record Redis errors globally and for this broker."""
+        with self._counters.lock:
+            for counters in self._counter_targets():
+                counters.redis_errors += 1
         self._redis_errors_total.add(
             1,
-            attributes={"component": component, "operation": operation},
+            attributes=self._metric_attributes(
+                component=component, operation=operation
+            ),
         )
 
     def update_active_sessions(self, *, delta: int) -> None:
-        """Record active session changes."""
-        self._active_sessions.add(delta)
+        """Record active session changes globally and for this broker."""
+        with self._counters.lock:
+            for counters in self._counter_targets():
+                counters.session_count += delta
+        self._active_sessions.add(delta, attributes=self._metric_attributes())
+
+    def snapshot(self, broker_id: str | None = None) -> TelemetrySnapshot:
+        """Copy process or isolated broker counters, with explicit scope overflow."""
+        with self._counters.lock:
+            counters = self._counters
+            complete = True
+            if broker_id is not None:
+                scoped = counters.brokers.get(broker_id)
+                if scoped is None:
+                    scoped = _TelemetryCounters()
+                    if len(counters.brokers) >= _MAX_BROKER_SCOPES:
+                        complete = False
+                counters = scoped
+            return TelemetrySnapshot(
+                ingress=dict(counters.ingress_counts),
+                delivery_acks=counters.acks,
+                delivery_nacks=counters.nacks,
+                retryable_nacks=counters.retryable_nacks,
+                dead_letter_writes=counters.dlq_writes,
+                dead_letter_errors=counters.dlq_errors,
+                redis_errors=counters.redis_errors,
+                active_sessions=counters.session_count,
+                policy_samples=counters.policy_samples,
+                policy_latency_mean_ms=counters.policy_latency_sum
+                / counters.policy_samples
+                if counters.policy_samples
+                else 0.0,
+                policy_latency_max_ms=counters.policy_latency_max,
+                export_enabled=self._export_enabled and not self._shutdown,
+                scope_complete=complete,
+                dropped_scope_updates=self._counters.dropped_scope_updates,
+            )
+
+    async def drain_spans(
+        self, limit: int = 1000, *, policy: ObservationSettings | None = None
+    ) -> list[ObservedSpan]:
+        """Convert spans off-loop and retain completed work if a caller cancels."""
+        if limit <= 0:
+            raise ValueError("span drain limit must be positive")
+        async with self._drain_lock:
+            if not self._drained_spans:
+                if self._drain_task is None:
+                    self._drain_task = asyncio.create_task(
+                        asyncio.to_thread(
+                            self._journal.drain, min(limit, 32_768), policy=policy
+                        )
+                    )
+                try:
+                    records = await asyncio.shield(self._drain_task)
+                except Exception:
+                    self._drain_task = None
+                    raise
+                self._drained_spans.extend(records)
+                self._drain_task = None
+            return [
+                self._drained_spans.popleft()
+                for _ in range(min(limit, len(self._drained_spans)))
+            ]
+
+    @property
+    def dropped_spans(self) -> int:
+        """Return journal overflow and invalid span records explicitly."""
+        return self._journal.dropped
+
+    def export_health(self) -> list[ExportHealth]:
+        """Report actual trace and metric exporter outcomes independently."""
+        return [exporter.snapshot() for exporter in self._exporters]
 
     def install_log_correlation(self) -> None:
         """Attach trace context fields to log records."""
@@ -334,15 +552,29 @@ class TelemetryRuntime:
             if not any(isinstance(f, TraceContextFilter) for f in handler.filters):
                 handler.addFilter(TraceContextFilter())
 
-    def shutdown(self) -> None:
-        """Flush and shutdown telemetry providers."""
-        if self._shutdown:
-            return
-        if self._tracer_provider is not None:
-            self._tracer_provider.shutdown()
-        if self._meter_provider is not None:
-            self._meter_provider.shutdown()
+    def _shutdown_providers(self) -> None:
+        errors: list[Exception] = []
+        for provider in (self._tracer_provider, self._meter_provider):
+            if provider is not None:
+                try:
+                    provider.shutdown()
+                except Exception as error:
+                    errors.append(error)
         self._shutdown = True
+        if errors:
+            raise ExceptionGroup("Telemetry provider shutdown failed", errors)
+
+    async def shutdown(self) -> None:
+        """Flush both SDK providers off-loop once, preserving shared cleanup."""
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(
+                asyncio.to_thread(self._shutdown_providers)
+            )
+        try:
+            await asyncio.shield(self._shutdown_task)
+        except asyncio.CancelledError:
+            await asyncio.shield(self._shutdown_task)
+            raise
 
 
 _runtime_lock = Lock()
@@ -358,6 +590,9 @@ _runtime = _TelemetryRuntimeRef()
 
 def get_telemetry() -> TelemetryRuntime:
     """Return process telemetry runtime (disabled by default)."""
+    runtime = _runtime.value
+    if runtime is not None:
+        return runtime
     with _runtime_lock:
         if _runtime.value is None:
             _runtime.value = TelemetryRuntime(
@@ -369,20 +604,21 @@ def get_telemetry() -> TelemetryRuntime:
         return _runtime.value
 
 
-def configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
-    """Configure global telemetry runtime once per process."""
+def _configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
     with _runtime_lock:
         runtime = _runtime.value
         if runtime is not None and runtime.enabled and not runtime.is_shutdown:
             return runtime
 
         if not settings.enabled:
-            if _runtime.value is None:
+            if _runtime.value is None or _runtime.value.is_shutdown:
                 _runtime.value = TelemetryRuntime(
                     enabled=False,
                     tracer=None,
                     tracer_provider=None,
                     meter_provider=None,
+                    counters=runtime._counters if runtime is not None else None,
+                    journal=runtime._journal if runtime is not None else None,
                 )
             return _runtime.value
 
@@ -396,37 +632,48 @@ def configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
 
         sampler = ParentBased(TraceIdRatioBased(settings.sample_ratio))
         tracer_provider = TracerProvider(resource=resource, sampler=sampler)
+        trace_health = ExportTracker("traces", configured=bool(settings.otlp_endpoint))
+        metric_health = ExportTracker(
+            "metrics",
+            configured=bool(settings.otlp_endpoint and settings.export_metrics),
+            stale_after_seconds=max(120.0, settings.metrics_export_interval_ms / 500),
+        )
 
         if settings.otlp_endpoint:
             trace_exporter = OTLPSpanExporter(
                 endpoint=settings.otlp_endpoint.rstrip("/") + "/v1/traces",
                 headers=dict(settings.headers),
             )
-            tracer_provider.add_span_processor(BatchSpanProcessor(trace_exporter))
+            tracer_provider.add_span_processor(
+                BatchSpanProcessor(ObservedSpanExporter(trace_exporter, trace_health))
+            )
 
-        meter_provider = MeterProvider(resource=resource)
+        metric_readers: list[PeriodicExportingMetricReader] = []
         if settings.otlp_endpoint and settings.export_metrics:
             metric_exporter = OTLPMetricExporter(
                 endpoint=settings.otlp_endpoint.rstrip("/") + "/v1/metrics",
                 headers=dict(settings.headers),
             )
             metric_reader = PeriodicExportingMetricReader(
-                exporter=metric_exporter,
+                exporter=ObservedMetricExporter(metric_exporter, metric_health),
                 export_interval_millis=settings.metrics_export_interval_ms,
             )
-            meter_provider = MeterProvider(
-                resource=resource, metric_readers=[metric_reader]
-            )
+            metric_readers.append(metric_reader)
+        meter_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
 
         trace.set_tracer_provider(tracer_provider)
         metrics.set_meter_provider(meter_provider)
-        tracer = trace.get_tracer("mas.telemetry")
+        tracer = tracer_provider.get_tracer("mas.telemetry")
 
         _runtime.value = TelemetryRuntime(
             enabled=True,
             tracer=tracer,
             tracer_provider=tracer_provider,
             meter_provider=meter_provider,
+            counters=runtime._counters if runtime is not None else None,
+            export_enabled=bool(settings.otlp_endpoint),
+            journal=runtime._journal if runtime is not None else None,
+            exporters=(trace_health, metric_health),
         )
         _runtime.value.install_log_correlation()
 
@@ -436,8 +683,23 @@ def configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
                 "service_name": settings.service_name,
                 "service_namespace": settings.service_namespace,
                 "environment": settings.environment,
-                "otlp_endpoint": settings.otlp_endpoint,
+                "export_configured": bool(settings.otlp_endpoint),
                 "export_metrics": settings.export_metrics,
             },
         )
         return _runtime.value
+
+
+async def configure_telemetry(settings: TelemetryConfig) -> TelemetryRuntime:
+    """Bootstrap SDK resources/providers off-loop once per process."""
+    runtime = get_telemetry()
+    if runtime._shutdown_task is not None:
+        await runtime.shutdown()
+    if not runtime.is_shutdown and (runtime.enabled or not settings.enabled):
+        return runtime
+    task = asyncio.create_task(asyncio.to_thread(_configure_telemetry, settings))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await asyncio.shield(task)
+        raise

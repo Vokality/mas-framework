@@ -15,6 +15,7 @@ from opentelemetry.context import Context
 
 from ._core import AgentCore, AgentMessage
 from .config import HANDLER_DRAIN_TIMEOUT, OUTGOING_DRAIN_TIMEOUT
+from .handlers import InvalidPayloadError
 
 logger = logging.getLogger(__name__)
 
@@ -30,44 +31,59 @@ class TransportMixin(AgentCore):
             await asyncio.wait_for(self._transport_ready.wait(), timeout)
 
     async def _transport_loop(self) -> None:
-        """Stream client events and handle server deliveries."""
+        """Reconnect interrupted streams and reset session-bound work."""
         stub = self._require_stub()
         telemetry = get_telemetry()
 
         async def outgoing_iter() -> AsyncIterator[mas_pb2.ClientEvent]:
-            """Yield outbound events from the client queue."""
+            """Start each stream with its greeting before any queued events."""
+            yield mas_pb2.ClientEvent(hello=mas_pb2.Hello(instance_id=self.instance_id))
             while True:
                 event = await self._outgoing.get()
                 yield event
 
-        await self._outgoing.put(
-            mas_pb2.ClientEvent(hello=mas_pb2.Hello(instance_id=self.instance_id))
-        )
+        retry_delay = 0.1
+        while self._running:
+            with telemetry.start_span(
+                "mas.agent.transport_loop",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "mas.agent_id": self.id,
+                    "mas.instance_id": self.instance_id,
+                },
+            ) as span:
+                try:
+                    call = stub.Transport(
+                        outgoing_iter(), metadata=telemetry.grpc_metadata()
+                    )
+                    async for event in call:
+                        if event.HasField("welcome"):
+                            self._transport_ready.set()
+                            retry_delay = 0.1
+                            continue
 
-        call = stub.Transport(outgoing_iter(), metadata=telemetry.grpc_metadata())
+                        if event.HasField("delivery"):
+                            await self._handle_delivery(event.delivery)
+                except asyncio.CancelledError:
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise
+                except Exception as exc:
+                    span.record_exception(exc)
+                    logger.warning(
+                        "Transport interrupted; reconnecting",
+                        exc_info=exc,
+                        extra={"agent_id": self.id, "instance_id": self.instance_id},
+                    )
+                finally:
+                    self._transport_ready.clear()
+                    self._fail_pending_requests("Agent transport disconnected")
+                    await self._cancel_handler_tasks()
+                    self._outgoing = asyncio.Queue(maxsize=2000)
 
-        with telemetry.start_span(
-            "mas.agent.transport_loop",
-            kind=SpanKind.CLIENT,
-            attributes={"mas.agent_id": self.id, "mas.instance_id": self.instance_id},
-        ) as span:
-            try:
-                async for event in call:
-                    if event.HasField("welcome"):
-                        self._transport_ready.set()
-                        continue
-
-                    if event.HasField("delivery"):
-                        await self._handle_delivery(event.delivery)
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                span.record_exception(exc)
-                logger.error(
-                    "Transport loop failed",
-                    exc_info=exc,
-                    extra={"agent_id": self.id, "instance_id": self.instance_id},
-                )
+            if self._running:
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 5.0)
 
     async def _handle_delivery(self, delivery: mas_pb2.Delivery) -> None:
         """Validate and dispatch a delivery message."""
@@ -82,37 +98,60 @@ class TransportMixin(AgentCore):
             )
             return
 
+        parent_context = telemetry.extract_message_meta_context(msg.meta)
+
         # Replies resolve pending requests immediately, but only when the reply
         # actually comes from the agent the request was sent to (see
         # _reply_authorized). A spoofed reply leaves the pending request in place
         # so the legitimate replier can still answer it.
         if msg.meta.is_reply and msg.meta.correlation_id:
-            pending = self._pending_requests.get(msg.meta.correlation_id)
-            if pending is not None:
-                if self._reply_authorized(
-                    msg, pending.target_id, source="live_delivery"
-                ):
-                    self._pending_requests.pop(msg.meta.correlation_id, None)
-                    if not pending.future.done():
-                        pending.future.set_result(msg)
-            else:
-                # No request registered yet: stash it (validated against the
-                # target once request() picks it up). Bounded + TTL'd so late
-                # replies for already-finished requests cannot accumulate.
-                self._early_replies[msg.meta.correlation_id] = msg
-            await self._send_ack(delivery.delivery_id)
-            return
+            with telemetry.start_span(
+                "mas.agent.transport.receive",
+                kind=SpanKind.CONSUMER,
+                context=parent_context,
+                attributes={
+                    "mas.agent_id": self.id,
+                    "mas.message_id": msg.message_id,
+                    "mas.delivery_id": delivery.delivery_id,
+                    "mas.is_reply": True,
+                },
+            ):
+                pending = self._pending_requests.get(msg.meta.correlation_id)
+                if pending is not None:
+                    if self._reply_authorized(
+                        msg, pending.target_id, source="live_delivery"
+                    ):
+                        self._pending_requests.pop(msg.meta.correlation_id, None)
+                        if not pending.future.done():
+                            pending.future.set_result(msg)
+                else:
+                    # No request registered yet: stash it (validated against the
+                    # target once request() picks it up). Bounded + TTL'd so late
+                    # replies for already-finished requests cannot accumulate.
+                    self._early_replies[msg.meta.correlation_id] = msg
+                await self._send_ack(delivery.delivery_id)
+                return
 
-        parent_context = telemetry.extract_message_meta_context(msg.meta)
-        task = asyncio.create_task(
-            self._handle_message_and_ack(
-                delivery.delivery_id,
-                msg,
-                parent_context=parent_context,
+        with telemetry.start_span(
+            "mas.agent.transport.receive",
+            kind=SpanKind.CONSUMER,
+            context=parent_context,
+            attributes={
+                "mas.agent_id": self.id,
+                "mas.message_id": msg.message_id,
+                "mas.delivery_id": delivery.delivery_id,
+                "mas.is_reply": False,
+            },
+        ):
+            task = asyncio.create_task(
+                self._handle_message_and_ack(
+                    delivery.delivery_id,
+                    msg,
+                    parent_context=parent_context,
+                )
             )
-        )
-        self._handler_tasks.add(task)
-        task.add_done_callback(self._handler_tasks.discard)
+            self._handler_tasks.add(task)
+            task.add_done_callback(self._handler_tasks.discard)
 
     async def _handle_message_and_ack(
         self,
@@ -130,6 +169,7 @@ class TransportMixin(AgentCore):
             attributes={
                 "mas.agent_id": self.id,
                 "mas.message_id": msg.message_id,
+                "mas.delivery_id": delivery_id,
                 "mas.sender_id": msg.sender_id,
                 "mas.message_type": msg.message_type,
             },
@@ -154,7 +194,7 @@ class TransportMixin(AgentCore):
                 await self._send_nack(
                     delivery_id,
                     reason=f"handler_error:{type(exc).__name__}",
-                    retryable=False,
+                    retryable=not isinstance(exc, InvalidPayloadError),
                 )
 
     async def _send_ack(self, delivery_id: str) -> None:
